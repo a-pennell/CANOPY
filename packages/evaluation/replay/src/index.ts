@@ -13,22 +13,40 @@ export interface GoldenReplayResult {
   readonly projections: readonly ObjectPageProjection[];
 }
 
+export interface CanonicalReplayInput {
+  readonly objectRefs: readonly ObjectRef[];
+  readonly events: readonly CanopyEvent[];
+}
+
 export function replayGoldenFixtureManifest(
   manifest: GoldenFixtureManifest,
+  projectionRefs: readonly ObjectRef[]
+): GoldenReplayResult {
+  return replayCanonicalEventStream(
+    {
+      objectRefs: manifest.objects.map((object) => object.ref),
+      events: manifest.events
+    },
+    projectionRefs
+  );
+}
+
+export function replayCanonicalEventStream(
+  input: CanonicalReplayInput,
   projectionRefs: readonly ObjectRef[]
 ): GoldenReplayResult {
   const registry = createObjectRegistry();
   const memory = createInMemoryCivicMemory();
 
-  for (const object of manifest.objects) {
-    registry.register(object.ref);
+  for (const objectRef of input.objectRefs) {
+    registry.register(objectRef);
 
-    if (object.ref.source !== undefined) {
-      registry.mapSource(object.ref.source, object.ref);
+    if (objectRef.source !== undefined) {
+      registry.mapSource(objectRef.source, objectRef);
     }
   }
 
-  for (const event of manifest.events) {
+  for (const event of input.events) {
     memory.appendEvent(event);
   }
 

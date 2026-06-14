@@ -12,6 +12,7 @@
     "@canopy/contracts-database": "0.0.0",
     "@canopy/contracts-kernel": "0.0.0",
     "@canopy/database-runtime": "0.0.0",
+    "@canopy/workflows-projection-rebuild": "0.0.0",
     "@canopy/workflows-outbox": "0.0.0"
   },
   "devDependencies": {

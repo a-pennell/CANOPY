@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { CanopyEvent } from "@canopy/contracts-kernel";
 import {
+  foldedSourceSampleCanonicalEvents,
+  foldedSourceSampleCanonicalObjects,
+  foldedSourceSampleRefs,
+  foldedSourceSampleExportBundles
+} from "@canopy/database-import-plans";
+import {
   firstReplayableGoldenFixtureManifest,
   goldenFixtureRefs
 } from "@canopy/contracts-testing";
@@ -98,6 +104,67 @@ describe("fold-in validation", () => {
       "stewardship"
     ]);
     expect(report.shellLeakage.status).toBe("pass");
+  });
+
+  it("validates canonical events mapped from realistic folded-source export bundles", () => {
+    const report = validateFoldIn({
+      events: foldedSourceSampleCanonicalEvents,
+      expectedRefs: foldedSourceSampleCanonicalObjects,
+      expectedEventTypes: foldedSourceSampleCanonicalEvents.map((event) => event.type),
+      objectPageRefs: [
+        foldedSourceSampleRefs.claimRiparianStress,
+        foldedSourceSampleRefs.useRightIrrigationGate,
+        foldedSourceSampleRefs.ledgerEntryFoodHubCorrection
+      ],
+      resourceRefs: [foldedSourceSampleRefs.resourceIrrigationGate],
+      importPlans: foldedSourceSampleExportBundles.map((bundle) => ({
+        sourceProject: bundle.sourceProject,
+        planId: `${bundle.sourceProject}-fold-in`
+      })),
+      shellNavigation: [
+        { label: "Objects", href: "/objects" },
+        { label: "Capabilities", href: "/capabilities" }
+      ],
+      capabilityPackageNames: [
+        "@canopy/capabilities-governance",
+        "@canopy/capabilities-resource-care",
+        "@canopy/capabilities-allocation-accounting"
+      ]
+    });
+
+    expect(report.status).toBe("pass");
+    expect(report.mappingCoverage.missingRefIds).toEqual([]);
+    expect(report.mappingCoverage.importPlanSourceProjects).toEqual([
+      "common-credit",
+      "icos",
+      "sensemaking",
+      "stewardship"
+    ]);
+    expect(report.eventCoverage.missingEventTypes).toEqual([]);
+    expect(report.authorityCoverage.missingAuthorityEventIds).toEqual([]);
+    expect(report.dataStewardshipCoverage.uncoveredEventIds).toEqual([]);
+    expect(report.ecologicalHookCoverage.stewardshipResourcesWithHooks).toEqual([
+      foldedSourceSampleRefs.resourceIrrigationGate.id
+    ]);
+    expect(report.shellLeakage.findings).toEqual([]);
+    expect(
+      report.projections.objectPages
+        .find((page) => page.objectRef.id === foldedSourceSampleRefs.useRightIrrigationGate.id)
+        ?.authorityRefs.map((ref) => ref.id)
+    ).toEqual(
+      expect.arrayContaining([
+        foldedSourceSampleRefs.mandateIrrigationWindow.id,
+        foldedSourceSampleRefs.decisionIrrigationWindow.id
+      ])
+    );
+    expect(
+      report.projections.resourceStewardship[0]?.useRights[0]
+    ).toMatchObject({
+      useRightRef: { id: foldedSourceSampleRefs.useRightIrrigationGate.id },
+      holderRefId: foldedSourceSampleRefs.personKai.id,
+      permissions: ["open_gate.dawn_window"],
+      decisionRefIds: [foldedSourceSampleRefs.decisionIrrigationWindow.id]
+    });
   });
 
   it("flags source project names in shell navigation and capability package names", () => {

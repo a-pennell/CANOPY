@@ -9,6 +9,7 @@ export type AdapterProviderTargetRole =
 export type AdapterProviderTargetStatus =
   | "implemented"
   | "planned"
+  | "prototype"
   | "deferred";
 
 export interface AdapterProviderTarget {
@@ -107,7 +108,7 @@ export const candidateProviderTargets = [
     kind: "document-store",
     provider: "postgres",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/postgres-document-store",
     conformanceSuiteKind: "document-store",
     requiredBeforeProductionUse: [
@@ -121,7 +122,7 @@ export const candidateProviderTargets = [
     kind: "object-storage",
     provider: "s3-compatible",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/s3-object-storage",
     conformanceSuiteKind: "object-storage",
     requiredBeforeProductionUse: [

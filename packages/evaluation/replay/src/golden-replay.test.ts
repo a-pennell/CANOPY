@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  foldedSourceSampleCanonicalEvents,
+  foldedSourceSampleCanonicalObjects,
+  foldedSourceSampleRefs
+} from "@canopy/database-import-plans";
+import {
   firstReplayableGoldenFixtureManifest,
   goldenFixtureRefs
 } from "@canopy/contracts-testing";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import { createObjectRegistry } from "@canopy/kernel-object-registry";
 import { buildObjectPageProjection } from "@canopy/projections-object-page";
-import { replayGoldenFixtureManifest } from "./index.js";
+import {
+  replayCanonicalEventStream,
+  replayGoldenFixtureManifest
+} from "./index.js";
 
 describe("first replayable golden fixture", () => {
   it("registers canonical refs and source mappings before replay", () => {
@@ -225,5 +233,73 @@ describe("first replayable golden fixture", () => {
     expect(mappingPage?.timelineEvents.map((event) => event.type)).toContain(
       "federation.import.received"
     );
+  });
+
+  it("replays canonical events mapped from realistic folded-source export bundles", () => {
+    const result = replayCanonicalEventStream(
+      {
+        objectRefs: foldedSourceSampleCanonicalObjects,
+        events: foldedSourceSampleCanonicalEvents
+      },
+      [
+        foldedSourceSampleRefs.claimRiparianStress,
+        foldedSourceSampleRefs.useRightIrrigationGate,
+        foldedSourceSampleRefs.ledgerEntryFoodHubCorrection
+      ]
+    );
+    const [claimPage, useRightPage, correctionPage] = result.projections;
+
+    expect(result.registeredRefs).toHaveLength(foldedSourceSampleCanonicalObjects.length);
+    expect(result.replayedEvents.map((event) => event.id)).toEqual(
+      foldedSourceSampleCanonicalEvents.map((event) => event.id)
+    );
+    expect(
+      result.registeredRefs
+        .filter((ref) => ref.source?.sourceProject !== "canopy")
+        .map((ref) => ref.source?.sourceProject)
+    ).toEqual(
+      expect.arrayContaining([
+        "common-credit",
+        "icos",
+        "sensemaking",
+        "stewardship"
+      ])
+    );
+    expect(claimPage?.timelineEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "claim.contested",
+        "evidence.linked_to_claim",
+        "model.created",
+        "governance.issue.created",
+        "governance.decision.recorded"
+      ])
+    );
+    expect(useRightPage?.timelineEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "governance.proposal.created",
+        "stewardship.use_right.granted",
+        "stewardship.task.completed"
+      ])
+    );
+    expect(useRightPage?.authorityRefs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([
+        foldedSourceSampleRefs.mandateIrrigationWindow.id,
+        foldedSourceSampleRefs.decisionIrrigationWindow.id
+      ])
+    );
+    expect(correctionPage?.timelineEvents[0]).toMatchObject({
+      id: "event.sample.accounting.ledger-entry.reversed.food-hub-correction",
+      supersedesEventId: "event.sample.accounting.ledger-entry.posted.food-hub"
+    });
+    expect(
+      result.replayedEvents.find(
+        (event) => event.id === "event.sample.accounting.ledger-entry.reversed.food-hub-correction"
+      )
+    ).toMatchObject({
+      payload: {
+        appendOnlyCorrection: true,
+        reversesLedgerEntryRefId: foldedSourceSampleRefs.ledgerEntryFoodHub.id
+      }
+    });
   });
 });

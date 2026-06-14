@@ -110,12 +110,67 @@ export interface InMemoryCanonicalPersistenceOptions {
   readonly records?: readonly CanonicalDatabaseRecord[];
 }
 
+export type CanonicalSqlTableName =
+  | "canopy_object_refs"
+  | "canopy_canonical_mappings"
+  | "canopy_events"
+  | "canopy_outbox"
+  | "canopy_projection_state"
+  | "canopy_adapter_audit";
+
+export interface CanonicalSqlStatement {
+  readonly tableName: CanonicalSqlTableName;
+  readonly operation: "insert";
+  readonly text: string;
+  readonly params: readonly JsonValue[];
+  readonly recordId: CanopyId;
+  readonly appendOnly: boolean;
+}
+
+export interface CanonicalSqlExecutionPlan {
+  readonly dialect: "postgres";
+  readonly migrationArtifact: "packages/database/migrations/sql/0000_canonical_homes.sql";
+  readonly statements: readonly CanonicalSqlStatement[];
+  readonly appendOnlyTables: readonly CanonicalSqlTableName[];
+}
+
+export interface CanonicalSqlExecutor {
+  execute(statement: CanonicalSqlStatement): Promise<void>;
+}
+
 const defaultNow = (): IsoDateTime => new Date().toISOString();
+const canonicalSqlMigrationArtifact =
+  "packages/database/migrations/sql/0000_canonical_homes.sql" as const;
+const appendOnlySqlTables: readonly CanonicalSqlTableName[] = [
+  "canopy_events",
+  "canopy_outbox",
+  "canopy_adapter_audit"
+];
 
 export function createInMemoryCanonicalPersistence(
   options: InMemoryCanonicalPersistenceOptions = {}
 ): CanonicalPersistenceRuntime {
   return new InMemoryCanonicalPersistence(options);
+}
+
+export function createCanonicalSqlExecutionPlan(
+  records: readonly CanonicalDatabaseRecord[]
+): CanonicalSqlExecutionPlan {
+  return {
+    dialect: "postgres",
+    migrationArtifact: canonicalSqlMigrationArtifact,
+    statements: records.map(canonicalRecordToSqlStatement),
+    appendOnlyTables: appendOnlySqlTables
+  };
+}
+
+export async function executeCanonicalSqlPlan(
+  executor: CanonicalSqlExecutor,
+  plan: CanonicalSqlExecutionPlan
+): Promise<void> {
+  for (const statement of plan.statements) {
+    await executor.execute(statement);
+  }
 }
 
 export class InMemoryCanonicalPersistence implements CanonicalPersistenceRuntime {
@@ -366,6 +421,211 @@ export class InMemoryCanonicalPersistence implements CanonicalPersistenceRuntime
       this.adapterAudits.set(record.id, freezeRecord(record));
     }
   }
+}
+
+function canonicalRecordToSqlStatement(record: CanonicalDatabaseRecord): CanonicalSqlStatement {
+  if (record.kind === "canonical-object-ref") {
+    return sqlInsert(
+      "canopy_object_refs",
+      record.id,
+      {
+        object_ref: refKey(record.ref),
+        object_kind: record.objectType,
+        namespace: record.namespace,
+        created_at: record.createdAt,
+        created_by:
+          record.source === undefined
+            ? undefined
+            : `${record.source.sourceProject}:${record.source.sourceEntity}:${record.source.sourceId}`,
+        metadata_text: stableStringify({
+          id: record.id,
+          lifecycleStatus: record.lifecycleStatus,
+          source: record.source,
+          supersedes: record.supersedes,
+          relationshipRefs: record.relationshipRefs,
+          scope: record.scope,
+          contentHash: record.contentHash,
+          updatedAt: record.updatedAt
+        })
+      },
+      false
+    );
+  }
+
+  if (record.kind === "canonical-mapping") {
+    return sqlInsert(
+      "canopy_canonical_mappings",
+      record.id,
+      {
+        mapping_ref: record.id,
+        source_system: record.source.sourceProject,
+        source_ref: `${record.source.sourceEntity}:${record.source.sourceId}`,
+        object_ref: refKey(record.canonicalRef),
+        mapping_kind: record.disposition,
+        valid_from: record.createdAt,
+        valid_to: record.status === "retired" ? record.reviewedAt : undefined,
+        metadata_text: stableStringify({
+          source: record.source,
+          sourcePointer: record.sourcePointer,
+          localLabel: record.localLabel,
+          localType: record.localType,
+          canonicalType: record.canonicalType,
+          status: record.status,
+          confidence: record.confidence,
+          mappedByRef: record.mappedByRef,
+          authorityRefs: record.authorityRefs,
+          evidenceRefs: record.evidenceRefs,
+          supersedesMappingId: record.supersedesMappingId,
+          reviewedAt: record.reviewedAt
+        })
+      },
+      false
+    );
+  }
+
+  if (record.kind === "event") {
+    return sqlInsert(
+      "canopy_events",
+      record.id,
+      {
+        event_ref: record.eventId,
+        object_ref: refKey(record.objectRef),
+        event_type: record.eventType,
+        event_version: record.schemaVersion,
+        occurred_at: record.occurredAt,
+        recorded_at: record.recordedAt,
+        causation_ref: record.supersedesEventId,
+        correlation_ref: record.redactionEventId ?? record.supersededByEventId,
+        actor_ref: record.actorRef === undefined ? record.systemActor : refKey(record.actorRef),
+        payload_text: stableStringify(record.payload),
+        metadata_text: stableStringify({
+          id: record.id,
+          relatedRefs: record.relatedRefs,
+          authorityRefs: record.authorityRefs,
+          scope: record.scope,
+          sourceCapability: record.sourceCapability,
+          visibility: record.visibility,
+          dataState: record.dataState,
+          supersededByEventId: record.supersededByEventId,
+          redactionEventId: record.redactionEventId,
+          contentHash: record.contentHash,
+          event: record.event
+        })
+      },
+      true
+    );
+  }
+
+  if (record.kind === "outbox") {
+    return sqlInsert(
+      "canopy_outbox",
+      record.id,
+      {
+        outbox_ref: record.id,
+        event_ref: record.eventId,
+        destination: `${record.destination.kind}:${record.destination.name}`,
+        message_type: record.eventType,
+        message_text: stableStringify(record.payload),
+        status: record.status,
+        available_at: record.nextAttemptAt ?? record.createdAt,
+        claimed_at: record.leasedAt,
+        completed_at: record.acknowledgedAt ?? record.publishedAt,
+        failure_text: record.lastError,
+        metadata_text: stableStringify({
+          destination: record.destination,
+          dedupeKey: record.dedupeKey,
+          attemptCount: record.attemptCount,
+          maxAttempts: record.maxAttempts,
+          leasedBy: record.leasedBy,
+          contentHash: record.contentHash,
+          updatedAt: record.updatedAt
+        })
+      },
+      true
+    );
+  }
+
+  if (record.kind === "projection-state") {
+    return sqlInsert(
+      "canopy_projection_state",
+      record.id,
+      {
+        projector_ref: record.id,
+        projection_name: record.projectionName,
+        last_event_ref: record.checkpoint.eventId,
+        last_event_recorded_at: record.checkpoint.processedAt,
+        rebuild_ref: record.rebuildRequestedAt,
+        checkpoint_text: stableStringify({
+          projectionVersion: record.projectionVersion,
+          status: record.status,
+          scope: record.scope,
+          checkpoint: record.checkpoint,
+          processedEventCount: record.processedEventCount,
+          lastError: record.lastError,
+          rebuiltAt: record.rebuiltAt,
+          contentHash: record.contentHash
+        }),
+        updated_at: record.updatedAt ?? record.createdAt
+      },
+      false
+    );
+  }
+
+  return sqlInsert(
+    "canopy_adapter_audit",
+    record.id,
+    {
+      audit_ref: record.id,
+      adapter_ref: record.adapterName,
+      operation_kind: record.operation,
+      object_ref: record.targetRef === undefined ? undefined : refKey(record.targetRef),
+      external_ref:
+        record.externalRef === undefined
+          ? undefined
+          : `${record.externalRef.provider}:${record.externalRef.resourceType}:${record.externalRef.resourceId}`,
+      event_ref: record.eventIds[0],
+      occurred_at: record.startedAt,
+      evidence_text: stableStringify({
+        status: record.status,
+        direction: record.direction,
+        completedAt: record.completedAt,
+        actorRef: record.actorRef,
+        systemActor: record.systemActor,
+        eventIds: record.eventIds,
+        outboxIds: record.outboxIds,
+        requestHash: record.requestHash,
+        responseHash: record.responseHash,
+        warnings: record.warnings,
+        errors: record.errors,
+        metadata: record.metadata
+      }),
+      metadata_text: stableStringify({
+        id: record.id,
+        contentHash: record.contentHash,
+        updatedAt: record.updatedAt
+      })
+    },
+    true
+  );
+}
+
+function sqlInsert(
+  tableName: CanonicalSqlTableName,
+  recordId: CanopyId,
+  columns: Readonly<Record<string, JsonValue | undefined>>,
+  appendOnly: boolean
+): CanonicalSqlStatement {
+  const entries = Object.entries(columns).filter(([, value]) => value !== undefined);
+  return {
+    tableName,
+    operation: "insert",
+    text: `INSERT INTO ${tableName} (${entries.map(([column]) => column).join(", ")}) VALUES (${entries
+      .map((_entry, index) => `$${index + 1}`)
+      .join(", ")})`,
+    params: entries.map(([, value]) => value ?? null),
+    recordId,
+    appendOnly
+  };
 }
 
 function eventScope(event: CanopyEvent): CanonicalScope {

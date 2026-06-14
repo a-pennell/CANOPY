@@ -361,6 +361,55 @@ export interface CanopyUiShellSurfaces {
   readonly importReview?: CanopyUiImportReviewViewModel;
 }
 
+export type CanopyUiShellRouteSurfaceKind =
+  | CanopyUiSurfaceKind
+  | "scope-overview"
+  | "objects-index"
+  | "command-help";
+
+export type CanopyUiShellRouteStatus = "available" | "current" | "unavailable";
+
+export interface CanopyUiShellRoute {
+  readonly id: CanopyId;
+  readonly path: string;
+  readonly label: string;
+  readonly surfaceKind: CanopyUiShellRouteSurfaceKind;
+  readonly status: CanopyUiShellRouteStatus;
+  readonly selectedObjectRef?: ObjectRef;
+  readonly summary?: string;
+  readonly disabledReason?: string;
+}
+
+export interface CanopyUiShellBreadcrumb {
+  readonly label: string;
+  readonly path: string;
+}
+
+export interface CanopyUiShellNavigation {
+  readonly activeRouteId: CanopyId;
+  readonly activePath: string;
+  readonly routes: readonly CanopyUiShellRoute[];
+  readonly breadcrumbs: readonly CanopyUiShellBreadcrumb[];
+}
+
+export interface CanopyUiShellScreen {
+  readonly kind: "shell-screen";
+  readonly title: string;
+  readonly route: CanopyUiShellRoute;
+  readonly navigation: CanopyUiShellNavigation;
+  readonly lines: readonly string[];
+  readonly text: string;
+}
+
+export type CanopyUiShellCommandStatus = "handled" | "not-found" | "unavailable";
+
+export interface CanopyUiShellCommandResult {
+  readonly status: CanopyUiShellCommandStatus;
+  readonly command: string;
+  readonly message: string;
+  readonly screen: CanopyUiShellScreen;
+}
+
 export const defaultImportReviewDisposition = (input: {
   readonly status: "pass" | "warn" | "blocked";
   readonly candidateDisposition?: "create" | "alias" | "needs-review";

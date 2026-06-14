@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  dryRunSampleExportBundle,
+  foldedSourceSampleExportBundles,
   dryRunCommonCreditImport,
   dryRunIcosImport,
   dryRunSensemakingImport,
@@ -403,6 +405,96 @@ describe("folded source import dry runs", () => {
     ).toMatchObject({
       preservesUncertainty: true,
     });
+  });
+
+  it("dry-runs realistic source export bundles into canonical mapping candidates", () => {
+    const results = foldedSourceSampleExportBundles.map((bundle) => ({
+      bundle,
+      result: dryRunSampleExportBundle(bundle),
+    }));
+
+    expect(results.map(({ result }) => result.status)).toEqual([
+      "pass",
+      "pass",
+      "pass",
+      "pass",
+    ]);
+    expect(results.map(({ bundle, result }) => [bundle.sourceProject, result.sourceProject])).toEqual([
+      ["common-credit", "common-credit"],
+      ["icos", "icos"],
+      ["sensemaking", "sensemaking"],
+      ["stewardship", "stewardship"],
+    ]);
+    expect(
+      results.flatMap(({ bundle }) =>
+        bundle.files.map((item) => [bundle.sourceProject, item.path, item.contentHash]),
+      ),
+    ).toEqual([
+      ["common-credit", "exports/common-credit/members.json", "sha256:sample-common-credit-members"],
+      ["common-credit", "exports/common-credit/accounts.json", "sha256:sample-common-credit-accounts"],
+      ["common-credit", "exports/common-credit/allocation-agreements.json", "sha256:sample-common-credit-agreements"],
+      ["common-credit", "exports/common-credit/ledger.jsonl", "sha256:sample-common-credit-ledger"],
+      ["icos", "exports/icos/actors.json", "sha256:sample-icos-actors"],
+      ["icos", "exports/icos/authority.json", "sha256:sample-icos-authority"],
+      ["icos", "exports/icos/governance-items.jsonl", "sha256:sample-icos-governance"],
+      ["sensemaking", "exports/sensemaking/sources.json", "sha256:sample-sensemaking-sources"],
+      ["sensemaking", "exports/sensemaking/claims.json", "sha256:sample-sensemaking-claims"],
+      ["sensemaking", "exports/sensemaking/evidence-links.csv", "sha256:sample-sensemaking-evidence-links"],
+      ["sensemaking", "exports/sensemaking/models.json", "sha256:sample-sensemaking-models"],
+      ["stewardship", "exports/stewardship/places.json", "sha256:sample-stewardship-places"],
+      ["stewardship", "exports/stewardship/living-systems.json", "sha256:sample-stewardship-living-systems"],
+      ["stewardship", "exports/stewardship/resources.json", "sha256:sample-stewardship-resources"],
+      ["stewardship", "exports/stewardship/use-rights.json", "sha256:sample-stewardship-use-rights"],
+      ["stewardship", "exports/stewardship/tasks.jsonl", "sha256:sample-stewardship-tasks"],
+    ]);
+    expect(results.flatMap(({ result }) => result.warnings)).toEqual([]);
+    expect(results.flatMap(({ result }) => result.prohibitedOutcomes)).toEqual([]);
+    expect(
+      results.flatMap(({ result }) =>
+        result.mappingCandidates.map((candidate) => [
+          candidate.source.sourceProject,
+          candidate.source.sourceEntity,
+          candidate.source.sourceId,
+          candidate.canonicalType,
+          candidate.canonicalRef.namespace,
+        ]),
+      ),
+    ).toEqual([
+      ["common-credit", "member", "cc-member-kai", "person", "canopy"],
+      ["common-credit", "member", "cc-member-food-hub", "organization", "canopy"],
+      ["common-credit", "account", "cc-account-food-hub-reserve", "ledger-account", "canopy"],
+      ["common-credit", "allocation agreement", "agreement-food-hub-distribution", "agreement", "canopy"],
+      ["common-credit", "transaction", "cc-tx-food-hub-1", "ledger-entry", "canopy"],
+      ["common-credit", "transaction", "cc-tx-food-hub-1-correction", "ledger-entry", "canopy"],
+      ["icos", "actor", "icos-council-riverbend", "organization", "canopy"],
+      ["icos", "role assignment", "role-watershed-steward-2026", "role", "canopy"],
+      ["icos", "mandate", "mandate-irrigation-window", "mandate", "canopy"],
+      ["icos", "governance item", "issue-irrigation-window", "issue", "canopy"],
+      ["icos", "governance item", "proposal-irrigation-window", "proposal", "canopy"],
+      ["icos", "governance item", "decision-irrigation-window", "decision", "canopy"],
+      ["sensemaking", "source", "source-riparian-survey", "source", "canopy"],
+      ["sensemaking", "claim", "claim-riparian-stress", "claim", "canopy"],
+      ["sensemaking", "evidence link", "link-survey-qualifies-claim", "evidence", "canopy"],
+      ["sensemaking", "model", "model-riparian-scenario", "model", "canopy"],
+      ["stewardship", "place", "place-south-canal", "place", "canopy"],
+      ["stewardship", "living system", "living-system-riparian-corridor", "living-system", "canopy"],
+      ["stewardship", "resource", "resource-irrigation-gate", "resource", "canopy"],
+      ["stewardship", "use right", "use-right-irrigation-gate-window", "use-right", "canopy"],
+      ["stewardship", "stewardship activity", "task-south-canal-check", "task", "canopy"],
+    ]);
+    expect(results.flatMap(({ result }) => result.candidateEvents.map((event) => event.type))).toEqual(
+      expect.arrayContaining([
+        "accounting.ledger_entry.posted",
+        "accounting.ledger_entry.reversed",
+        "authority.role.assigned",
+        "authority.mandate.granted",
+        "claim.contested",
+        "evidence.source.ingested",
+        "ecology.living_system.created",
+        "stewardship.use_right.granted",
+        "stewardship.task.completed",
+      ]),
+    );
   });
 });
 

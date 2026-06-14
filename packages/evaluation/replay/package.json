@@ -10,6 +10,7 @@
   "dependencies": {
     "@canopy/contracts-kernel": "0.0.0",
     "@canopy/contracts-testing": "0.0.0",
+    "@canopy/database-import-plans": "0.0.0",
     "@canopy/kernel-civic-memory": "0.0.0",
     "@canopy/kernel-object-registry": "0.0.0",
     "@canopy/projections-object-page": "0.0.0"

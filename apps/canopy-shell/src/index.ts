@@ -25,6 +25,10 @@ import type {
   CanopyUiResourceContextSummary,
   CanopyUiResourceStewardshipViewModel,
   CanopyUiResourceUseRightSummary,
+  CanopyUiShellCommandResult,
+  CanopyUiShellNavigation,
+  CanopyUiShellRoute,
+  CanopyUiShellScreen,
   CanopyUiShellSurfaces,
   CanopyUiSourceProvenancePanelViewModel,
   CanopyUiTimelineEntry
@@ -164,6 +168,21 @@ export interface PersistedCanopyShellSnapshotResult {
   readonly persistedProjectionStateIds: readonly CanopyId[];
 }
 
+export interface BuildCanopyShellSessionInput extends BuildCanopyShellSnapshotInput {
+  readonly route?: string;
+}
+
+export interface CanopyShellSession {
+  readonly snapshot: CanopyShellSnapshot;
+  readonly navigation: CanopyUiShellNavigation;
+  readonly screen: CanopyUiShellScreen;
+  readonly prompt: string;
+}
+
+export interface CanopyShellCommandExecution extends CanopyUiShellCommandResult {
+  readonly session: CanopyShellSession;
+}
+
 export function buildCanopyShellSnapshot(
   input: BuildCanopyShellSnapshotInput
 ): CanopyShellSnapshot {
@@ -264,6 +283,734 @@ export function buildPersistedCanopyShellSnapshot(
     persistedProjectionStateIds:
       projectionRebuild?.persistedStates.map((state) => state.id) ?? []
   });
+}
+
+export function buildCanopyShellSession(
+  input: BuildCanopyShellSessionInput
+): CanopyShellSession {
+  return buildCanopyShellSessionFromSnapshot(
+    buildCanopyShellSnapshot(input),
+    input.route
+  );
+}
+
+export function buildCanopyShellSessionFromSnapshot(
+  snapshot: CanopyShellSnapshot,
+  route?: string
+): CanopyShellSession {
+  const navigation = buildCanopyShellNavigation(snapshot, route);
+  const activeRoute =
+    routeById(navigation.routes, navigation.activeRouteId) ??
+    navigation.routes[0] ??
+    shellRoute({
+      id: "route.scope",
+      path: "/scope",
+      label: "Scope",
+      surfaceKind: "scope-overview",
+      status: "current"
+    });
+  const screen = renderCanopyShellScreen(snapshot, activeRoute, navigation);
+
+  return {
+    snapshot,
+    navigation,
+    screen,
+    prompt: `${snapshot.scope.label} ${activeRoute.path}>`
+  };
+}
+
+export function buildCanopyShellNavigation(
+  snapshot: CanopyShellSnapshot,
+  route?: string
+): CanopyUiShellNavigation {
+  const routes = buildShellRoutes(snapshot, route);
+  const defaultRoute = defaultRouteForSnapshot(snapshot);
+  const activeRoute =
+    resolveRoute(routes, route) ??
+    resolveRoute(routes, defaultRoute) ??
+    routes[0] ??
+    shellRoute({
+      id: "route.scope",
+      path: "/scope",
+      label: "Scope",
+      surfaceKind: "scope-overview",
+      status: "current"
+    });
+  const activeRoutes = routes.map((entry) =>
+    entry.id === activeRoute.id
+      ? shellRoute({
+          ...entry,
+          status: entry.status === "unavailable" ? "unavailable" : "current"
+        })
+      : shellRoute({
+          ...entry,
+          status: entry.status === "current" ? "available" : entry.status
+        })
+  );
+
+  return {
+    activeRouteId: activeRoute.id,
+    activePath: activeRoute.path,
+    routes: activeRoutes,
+    breadcrumbs: breadcrumbsForRoute(activeRoute)
+  };
+}
+
+export function renderCanopyShell(
+  snapshot: CanopyShellSnapshot,
+  route?: string
+): string {
+  return buildCanopyShellSessionFromSnapshot(snapshot, route).screen.text;
+}
+
+export function executeCanopyShellCommand(
+  snapshot: CanopyShellSnapshot,
+  command: string
+): CanopyShellCommandExecution {
+  const normalized = command.trim();
+  const routes = buildShellRoutes(snapshot);
+  const target = resolveCommandRoute(snapshot, routes, normalized);
+  const status = target?.status === "unavailable"
+    ? "unavailable"
+    : target === undefined
+      ? "not-found"
+      : "handled";
+  const session = buildCanopyShellSessionFromSnapshot(
+    snapshot,
+    target?.path ?? "/help"
+  );
+  const message =
+    status === "handled"
+      ? `Opened ${session.screen.route.label}.`
+      : status === "unavailable"
+        ? `${target?.label ?? normalized} is not available in this shell state.`
+        : `Unknown shell command: ${normalized || "(empty)"}.`;
+
+  return {
+    status,
+    command,
+    message,
+    screen: session.screen,
+    session
+  };
+}
+
+function buildShellRoutes(
+  snapshot: CanopyShellSnapshot,
+  activeRoute?: string
+): readonly CanopyUiShellRoute[] {
+  const baseRoutes: CanopyUiShellRoute[] = [
+    shellRoute({
+      id: "route.scope",
+      path: "/scope",
+      label: "Scope",
+      surfaceKind: "scope-overview",
+      status: "available",
+      summary: `${snapshot.civicMemory.timeline.length} events in ${snapshot.scope.label}`
+    }),
+    shellRoute({
+      id: "route.objects",
+      path: "/objects",
+      label: "Objects",
+      surfaceKind: "objects-index",
+      status: "available",
+      summary: `${collectNavigableRefs(snapshot).length} navigable refs`
+    }),
+    shellRoute({
+      id: "route.memory",
+      path: "/memory",
+      label: "Civic memory",
+      surfaceKind: "civic-memory-stream",
+      status: "available",
+      summary: `${snapshot.surfaces.civicMemoryStream.timeline.length} timeline entries`
+    }),
+    shellRoute({
+      id: "route.claims-evidence",
+      path: "/claims-evidence",
+      label: "Claims and evidence",
+      surfaceKind: "claim-evidence",
+      status: "available",
+      summary: `${snapshot.surfaces.claimEvidence.counts.claims} claims, ${snapshot.surfaces.claimEvidence.counts.evidence} evidence records`
+    }),
+    shellRoute({
+      id: "route.decisions",
+      path: "/decisions",
+      label: "Decisions",
+      surfaceKind: "decision-packet",
+      status: snapshot.surfaces.decisionPacket === undefined ? "unavailable" : "available",
+      summary: snapshot.surfaces.decisionPacket?.decisionRef.id,
+      disabledReason: snapshot.surfaces.decisionPacket === undefined
+        ? "Select a decision object to hydrate a decision packet."
+        : undefined
+    }),
+    shellRoute({
+      id: "route.stewardship",
+      path: "/stewardship",
+      label: "Stewardship",
+      surfaceKind: "resource-stewardship",
+      status: snapshot.surfaces.resourceStewardship === undefined ? "unavailable" : "available",
+      summary: snapshot.surfaces.resourceStewardship?.resourceRef.id,
+      disabledReason: snapshot.surfaces.resourceStewardship === undefined
+        ? "Select a resource object to hydrate stewardship state."
+        : undefined
+    }),
+    shellRoute({
+      id: "route.imports",
+      path: "/imports",
+      label: "Imports",
+      surfaceKind: "import-review",
+      status: snapshot.surfaces.importReview === undefined ? "unavailable" : "available",
+      summary: snapshot.surfaces.importReview?.importPlanId,
+      disabledReason: snapshot.surfaces.importReview === undefined
+        ? "Provide an import dry run to review folded-source candidates."
+        : undefined
+    }),
+    shellRoute({
+      id: "route.federation",
+      path: "/federation",
+      label: "Federation",
+      surfaceKind: "federation-export-state",
+      status: snapshot.surfaces.federationExportState === undefined ? "unavailable" : "available",
+      summary: snapshot.surfaces.federationExportState?.status,
+      disabledReason: snapshot.surfaces.federationExportState === undefined
+        ? "No federation export state is visible in this shell state."
+        : undefined
+    }),
+    shellRoute({
+      id: "route.authority",
+      path: "/authority",
+      label: "Authority",
+      surfaceKind: "authority-trace",
+      status: "available",
+      summary: snapshot.surfaces.authorityTrace.status
+    }),
+    shellRoute({
+      id: "route.provenance",
+      path: "/provenance",
+      label: "Source provenance",
+      surfaceKind: "source-provenance-panel",
+      status: "available",
+      summary: snapshot.surfaces.sourceProvenancePanel.sourceTreatment
+    }),
+    shellRoute({
+      id: "route.help",
+      path: "/help",
+      label: "Help",
+      surfaceKind: "command-help",
+      status: "available",
+      summary: "CLI-like shell commands"
+    })
+  ];
+  const objectRoutes = collectNavigableRefs(snapshot).map((ref) =>
+    shellRoute({
+      id: `route.object.${ref.type}.${ref.id}`,
+      path: `/objects/${ref.type}/${ref.id}`,
+      label: `${ref.type}: ${ref.id}`,
+      surfaceKind: "object-page",
+      status: "available",
+      selectedObjectRef: ref,
+      summary: ref.namespace
+    })
+  );
+  const active = resolveRoute([...baseRoutes, ...objectRoutes], activeRoute);
+
+  return [...baseRoutes, ...objectRoutes].map((route) =>
+    route.id === active?.id
+      ? shellRoute({
+          ...route,
+          status: route.status === "unavailable" ? "unavailable" : "current"
+        })
+      : route
+  );
+}
+
+function renderCanopyShellScreen(
+  snapshot: CanopyShellSnapshot,
+  route: CanopyUiShellRoute | undefined,
+  navigation: CanopyUiShellNavigation
+): CanopyUiShellScreen {
+  const activeRoute =
+    route ??
+    shellRoute({
+      id: "route.scope",
+      path: "/scope",
+      label: "Scope",
+      surfaceKind: "scope-overview",
+      status: "current"
+    });
+  const lines =
+    activeRoute.status === "unavailable"
+      ? renderUnavailableRoute(activeRoute)
+      : renderRouteLines(snapshot, activeRoute);
+  const title = lines[0] ?? activeRoute.label;
+
+  return {
+    kind: "shell-screen",
+    title,
+    route: activeRoute,
+    navigation,
+    lines,
+    text: lines.join("\n")
+  };
+}
+
+function renderRouteLines(
+  snapshot: CanopyShellSnapshot,
+  route: CanopyUiShellRoute
+): readonly string[] {
+  switch (route.surfaceKind) {
+    case "scope-overview":
+      return renderScopeOverview(snapshot);
+    case "objects-index":
+      return renderObjectsIndex(snapshot);
+    case "civic-memory-stream":
+      return renderCivicMemory(snapshot);
+    case "claim-evidence":
+      return renderClaimEvidence(snapshot);
+    case "decision-packet":
+      return renderDecisionPacket(snapshot);
+    case "resource-stewardship":
+      return renderResourceStewardship(snapshot);
+    case "import-review":
+      return renderImportReview(snapshot);
+    case "federation-export-state":
+      return renderFederationExportState(snapshot);
+    case "authority-trace":
+      return renderAuthorityTrace(snapshot);
+    case "source-provenance-panel":
+      return renderSourceProvenance(snapshot);
+    case "object-page":
+      return renderObjectRoute(snapshot, route);
+    case "command-help":
+      return renderHelp(snapshot);
+  }
+}
+
+function renderScopeOverview(snapshot: CanopyShellSnapshot): readonly string[] {
+  return compactLines([
+    `Canopy Shell: ${snapshot.scope.label}`,
+    `Active mode: ${snapshot.activeMode}`,
+    `Events: ${snapshot.civicMemory.timeline.length}`,
+    `Modes: ${snapshot.availableModes.join(", ") || "none"}`,
+    `Capabilities: ${snapshot.sourceCapabilities.join(", ") || "none"}`,
+    `Attention: ${snapshot.attention.length === 0 ? "clear" : snapshot.attention.map((item) => item.kind).join(", ")}`,
+    "Routes: /objects, /claims-evidence, /decisions, /stewardship, /imports, /federation, /memory"
+  ]);
+}
+
+function renderObjectsIndex(snapshot: CanopyShellSnapshot): readonly string[] {
+  const refs = collectNavigableRefs(snapshot);
+
+  return compactLines([
+    "Objects",
+    `Selected: ${snapshot.selectedObjectRef === undefined ? "none" : formatRef(snapshot.selectedObjectRef)}`,
+    ...refs.slice(0, 16).map((ref) => `- ${formatRef(ref)} -> /objects/${ref.type}/${ref.id}`),
+    refs.length > 16 ? `- ${refs.length - 16} more refs hidden` : undefined
+  ]);
+}
+
+function renderCivicMemory(snapshot: CanopyShellSnapshot): readonly string[] {
+  const stream = snapshot.surfaces.civicMemoryStream;
+
+  return compactLines([
+    `Civic Memory: ${stream.scopeLabel}`,
+    `Projection: ${stream.projectionRead.kind}/${stream.projectionRead.freshness}`,
+    ...stream.timeline.slice(0, 12).map(
+      (entry) => `- ${entry.occurredAt} ${entry.type} ${formatRef(entry.objectRef)}`
+    ),
+    stream.timeline.length > 12 ? `- ${stream.timeline.length - 12} more events hidden` : undefined
+  ]);
+}
+
+function renderClaimEvidence(snapshot: CanopyShellSnapshot): readonly string[] {
+  const surface = snapshot.surfaces.claimEvidence;
+
+  return compactLines([
+    "Claims and Evidence",
+    `Counts: ${surface.counts.claims} claims, ${surface.counts.evidence} evidence, ${surface.counts.aiNonAuthorityIndicators} AI indicators`,
+    surface.selectedClaim === undefined ? undefined : `Selected claim: ${formatRef(surface.selectedClaim.claimRef)} (${surface.selectedClaim.status})`,
+    surface.selectedEvidence === undefined ? undefined : `Selected evidence: ${formatRef(surface.selectedEvidence.evidenceRef)}`,
+    ...surface.claims.slice(0, 8).map((claim) =>
+      `- claim ${formatRef(claim.claimRef)} status=${claim.status} evidence=${claim.evidenceRefs.length}`
+    ),
+    ...surface.evidence.slice(0, 8).map((evidence) =>
+      `- evidence ${formatRef(evidence.evidenceRef)} ai=${String(evidence.isAiOrModelOutput)} claims=${evidence.claimRefs.length}`
+    )
+  ]);
+}
+
+function renderDecisionPacket(snapshot: CanopyShellSnapshot): readonly string[] {
+  const packet = snapshot.surfaces.decisionPacket;
+
+  if (packet === undefined) {
+    return renderUnavailableRoute(
+      shellRoute({
+        id: "route.decisions",
+        path: "/decisions",
+        label: "Decisions",
+        surfaceKind: "decision-packet",
+        status: "unavailable",
+        disabledReason: "Select a decision object to hydrate a decision packet."
+      })
+    );
+  }
+
+  return compactLines([
+    `Decision Packet: ${formatRef(packet.decisionRef)}`,
+    packet.status === undefined ? undefined : `Status: ${packet.status}`,
+    packet.outcome === undefined ? undefined : `Outcome: ${packet.outcome}`,
+    `Authority refs: ${packet.authorityRefs.map(formatRef).join(", ") || "none"}`,
+    `Claims: ${packet.claimRefs.map(formatRef).join(", ") || "none"}`,
+    `Evidence: ${packet.evidenceRefs.map(formatRef).join(", ") || "none"}`,
+    `Stewardship outcomes: ${packet.stewardshipOutcomes.length}`,
+    ...packet.timeline.slice(0, 8).map((entry) => `- ${entry.type} ${formatRef(entry.objectRef)}`)
+  ]);
+}
+
+function renderResourceStewardship(snapshot: CanopyShellSnapshot): readonly string[] {
+  const stewardship = snapshot.surfaces.resourceStewardship;
+
+  if (stewardship === undefined) {
+    return renderUnavailableRoute(
+      shellRoute({
+        id: "route.stewardship",
+        path: "/stewardship",
+        label: "Stewardship",
+        surfaceKind: "resource-stewardship",
+        status: "unavailable",
+        disabledReason: "Select a resource object to hydrate stewardship state."
+      })
+    );
+  }
+
+  return compactLines([
+    `Resource Stewardship: ${stewardship.title ?? stewardship.resourceRef.id}`,
+    `Resource: ${formatRef(stewardship.resourceRef)}`,
+    stewardship.resourceKind === undefined ? undefined : `Kind: ${stewardship.resourceKind}`,
+    `Use rights: ${stewardship.useRights.length}`,
+    `Ecological contexts: ${stewardship.ecologicalContextIds.join(", ") || "none"}`,
+    ...stewardship.useRights.map((right) =>
+      `- ${right.state} ${formatRef(right.useRightRef)} holder=${right.holderRef === undefined ? "unknown" : formatRef(right.holderRef)} permissions=${right.permissions.join(",") || "none"}`
+    )
+  ]);
+}
+
+function renderImportReview(snapshot: CanopyShellSnapshot): readonly string[] {
+  const review = snapshot.surfaces.importReview;
+
+  if (review === undefined) {
+    return renderUnavailableRoute(
+      shellRoute({
+        id: "route.imports",
+        path: "/imports",
+        label: "Imports",
+        surfaceKind: "import-review",
+        status: "unavailable",
+        disabledReason: "Provide an import dry run to review folded-source candidates."
+      })
+    );
+  }
+
+  return compactLines([
+    `Import Review: ${review.importPlanId}`,
+    `Source: ${review.sourceProject} (${review.sourceTreatment})`,
+    `Status: ${review.status}; default disposition: ${review.defaultDisposition}`,
+    `Candidates: ${review.candidates.length}; warnings: ${review.warnings.length}; prohibited outcomes: ${review.prohibitedOutcomes.length}`,
+    ...review.candidates.map((candidate) =>
+      `- ${candidate.source.sourceEntity}:${candidate.source.sourceId} -> ${formatRef(candidate.canonicalRef)} ${candidate.reviewDisposition}/${candidate.confidence}`
+    ),
+    ...review.warnings.map((warning) => `- warning ${warning.code}: ${warning.message}`)
+  ]);
+}
+
+function renderFederationExportState(snapshot: CanopyShellSnapshot): readonly string[] {
+  const state = snapshot.surfaces.federationExportState;
+
+  if (state === undefined) {
+    return renderUnavailableRoute(
+      shellRoute({
+        id: "route.federation",
+        path: "/federation",
+        label: "Federation",
+        surfaceKind: "federation-export-state",
+        status: "unavailable",
+        disabledReason: "No federation export state is visible in this shell state."
+      })
+    );
+  }
+
+  return compactLines([
+    `Federation Export: ${state.status}`,
+    `Envelope: ${state.envelopeId}`,
+    `Format: ${state.format}; schema: ${state.schemaVersion}`,
+    `Events: ${state.includedEventIds.length}; objects: ${state.includedObjectRefs.length}`,
+    `Data stewardship agreements: ${state.dataStewardshipAgreementRefs.map(formatRef).join(", ") || "none"}`,
+    `Local mappings: ${state.localMappingIds.join(", ") || "none"}`,
+    ...state.readinessWarnings.map((warning) => `- readiness ${warning.code}: ${warning.message}`)
+  ]);
+}
+
+function renderAuthorityTrace(snapshot: CanopyShellSnapshot): readonly string[] {
+  const trace = snapshot.surfaces.authorityTrace;
+
+  return compactLines([
+    `Authority Trace: ${trace.status}`,
+    trace.objectRef === undefined ? undefined : `Object: ${formatRef(trace.objectRef)}`,
+    `Authority refs: ${trace.authorityRefs.map(formatRef).join(", ") || "none"}`,
+    ...trace.events.slice(0, 10).map((event) =>
+      `- ${event.type} ${formatRef(event.objectRef)} binding=${String(event.isBinding)} authority=${String(event.hasAuthority)}`
+    ),
+    ...trace.findings.map((finding) => `- finding ${finding.kind}: ${finding.message}`)
+  ]);
+}
+
+function renderSourceProvenance(snapshot: CanopyShellSnapshot): readonly string[] {
+  const provenance = snapshot.surfaces.sourceProvenancePanel;
+
+  return compactLines([
+    `Source Provenance: ${provenance.sourceTreatment}`,
+    `Projects: ${provenance.sourceProjects.join(", ") || "none"}`,
+    `Capabilities: ${provenance.sourceCapabilities.join(", ") || "none"}`,
+    ...provenance.entries.slice(0, 12).map((entry) =>
+      `- ${entry.eventId} -> ${formatRef(entry.canonicalRef)} via ${entry.sourceCapability}`
+    )
+  ]);
+}
+
+function renderObjectRoute(
+  snapshot: CanopyShellSnapshot,
+  route: CanopyUiShellRoute
+): readonly string[] {
+  const objectPage = snapshot.surfaces.objectPage;
+
+  if (
+    objectPage === undefined ||
+    route.selectedObjectRef === undefined ||
+    !sameRef(objectPage.objectRef, route.selectedObjectRef)
+  ) {
+    return compactLines([
+      `Object: ${route.selectedObjectRef === undefined ? route.label : formatRef(route.selectedObjectRef)}`,
+      "Object route is navigable from this shell state.",
+      route.selectedObjectRef === undefined
+        ? undefined
+        : `Hydrate the object page by rebuilding the shell with selectedObjectRef=${formatRef(route.selectedObjectRef)}.`
+    ]);
+  }
+
+  return compactLines([
+    `Object Page: ${objectPage.title ?? objectPage.objectRef.id}`,
+    `Object: ${formatRef(objectPage.objectRef)}`,
+    objectPage.summary === undefined ? undefined : `Summary: ${objectPage.summary}`,
+    `Related refs: ${objectPage.relatedRefs.map(formatRef).join(", ") || "none"}`,
+    `Authority refs: ${objectPage.authorityRefs.map(formatRef).join(", ") || "none"}`,
+    ...objectPage.timeline.map((entry) => `- ${entry.type} ${entry.occurredAt}`)
+  ]);
+}
+
+function renderHelp(snapshot: CanopyShellSnapshot): readonly string[] {
+  return [
+    "Canopy Shell Commands",
+    "open /path",
+    "scope | objects | memory | claims | decisions | stewardship | imports | federation",
+    "authority | provenance | routes | help",
+    `Available routes: ${buildShellRoutes(snapshot).map((route) => route.path).join(", ")}`
+  ];
+}
+
+function renderUnavailableRoute(route: CanopyUiShellRoute): readonly string[] {
+  return compactLines([
+    `${route.label}: unavailable`,
+    route.disabledReason ?? "This surface is not available in the current shell state."
+  ]);
+}
+
+function resolveCommandRoute(
+  snapshot: CanopyShellSnapshot,
+  routes: readonly CanopyUiShellRoute[],
+  command: string
+): CanopyUiShellRoute | undefined {
+  if (command.length === 0 || command === "help" || command === "?") {
+    return resolveRoute(routes, "/help");
+  }
+
+  if (command === "routes" || command === "nav") {
+    return resolveRoute(routes, "/objects");
+  }
+
+  const openPrefix = "open ";
+  const target = command.startsWith(openPrefix) ? command.slice(openPrefix.length).trim() : command;
+  const commandRoute = commandRouteAlias(snapshot, target);
+
+  return resolveRoute(routes, commandRoute ?? target);
+}
+
+function commandRouteAlias(
+  snapshot: CanopyShellSnapshot,
+  command: string
+): string | undefined {
+  const aliases: Readonly<Record<string, string>> = {
+    scope: "/scope",
+    objects: "/objects",
+    object: snapshot.selectedObjectRef === undefined
+      ? "/objects"
+      : `/objects/${snapshot.selectedObjectRef.type}/${snapshot.selectedObjectRef.id}`,
+    memory: "/memory",
+    claims: "/claims-evidence",
+    evidence: "/claims-evidence",
+    "claims-evidence": "/claims-evidence",
+    decisions: "/decisions",
+    decision: "/decisions",
+    stewardship: "/stewardship",
+    steward: "/stewardship",
+    imports: "/imports",
+    import: "/imports",
+    federation: "/federation",
+    export: "/federation",
+    authority: "/authority",
+    provenance: "/provenance",
+    help: "/help"
+  };
+
+  return aliases[command];
+}
+
+function defaultRouteForSnapshot(snapshot: CanopyShellSnapshot): string {
+  if (snapshot.selectedObjectRef !== undefined) {
+    return `/objects/${snapshot.selectedObjectRef.type}/${snapshot.selectedObjectRef.id}`;
+  }
+
+  if (snapshot.activeMode === "memory") {
+    return "/memory";
+  }
+
+  if (snapshot.activeMode === "decisions") {
+    return "/decisions";
+  }
+
+  if (snapshot.activeMode === "stewardship") {
+    return "/stewardship";
+  }
+
+  if (snapshot.activeMode === "federation") {
+    return "/federation";
+  }
+
+  if (snapshot.activeMode === "objects") {
+    return "/objects";
+  }
+
+  return "/scope";
+}
+
+function resolveRoute(
+  routes: readonly CanopyUiShellRoute[],
+  route: string | undefined
+): CanopyUiShellRoute | undefined {
+  if (route === undefined) {
+    return undefined;
+  }
+
+  const normalized = route.startsWith("/") ? route : `/${route}`;
+
+  return routes.find(
+    (entry) =>
+      entry.path === normalized ||
+      entry.id === route ||
+      entry.label.toLowerCase() === route.toLowerCase()
+  );
+}
+
+function routeById(
+  routes: readonly CanopyUiShellRoute[],
+  id: CanopyId
+): CanopyUiShellRoute | undefined {
+  return routes.find((route) => route.id === id);
+}
+
+function breadcrumbsForRoute(route: CanopyUiShellRoute): readonly { label: string; path: string }[] {
+  if (route.path.startsWith("/objects/")) {
+    return [
+      { label: "Objects", path: "/objects" },
+      { label: route.label, path: route.path }
+    ];
+  }
+
+  return [{ label: route.label, path: route.path }];
+}
+
+function collectNavigableRefs(snapshot: CanopyShellSnapshot): readonly ObjectRef[] {
+  return sortedRefs(
+    dedupeRefs([
+      ...(snapshot.selectedObjectRef === undefined ? [] : [snapshot.selectedObjectRef]),
+      ...snapshot.surfaces.civicMemoryStream.timeline.flatMap((entry) => [
+        entry.objectRef,
+        ...entry.relatedRefs,
+        ...entry.authorityRefs
+      ]),
+      ...snapshot.surfaces.claimEvidence.claims.map((claim) => claim.claimRef),
+      ...snapshot.surfaces.claimEvidence.evidence.map((evidence) => evidence.evidenceRef),
+      ...(snapshot.surfaces.decisionPacket === undefined
+        ? []
+        : [
+            snapshot.surfaces.decisionPacket.decisionRef,
+            ...snapshot.surfaces.decisionPacket.claimRefs,
+            ...snapshot.surfaces.decisionPacket.evidenceRefs,
+            ...snapshot.surfaces.decisionPacket.authorityRefs
+          ]),
+      ...(snapshot.surfaces.resourceStewardship === undefined
+        ? []
+        : [
+            snapshot.surfaces.resourceStewardship.resourceRef,
+            ...snapshot.surfaces.resourceStewardship.useRights.map((right) => right.useRightRef),
+            ...snapshot.surfaces.resourceStewardship.authorityRefs
+          ]),
+      ...(snapshot.surfaces.federationExportState?.includedObjectRefs ?? []),
+      ...(snapshot.surfaces.importReview?.candidates.map((candidate) => candidate.canonicalRef) ?? [])
+    ])
+  );
+}
+
+function shellRoute(
+  route: Omit<CanopyUiShellRoute, "selectedObjectRef" | "summary" | "disabledReason"> & {
+    readonly selectedObjectRef?: ObjectRef | undefined;
+    readonly summary?: string | undefined;
+    readonly disabledReason?: string | undefined;
+  }
+): CanopyUiShellRoute {
+  const optionalFields: {
+    selectedObjectRef?: ObjectRef;
+    summary?: string;
+    disabledReason?: string;
+  } = {};
+
+  if (route.selectedObjectRef !== undefined) {
+    optionalFields.selectedObjectRef = route.selectedObjectRef;
+  }
+
+  if (route.summary !== undefined) {
+    optionalFields.summary = route.summary;
+  }
+
+  if (route.disabledReason !== undefined) {
+    optionalFields.disabledReason = route.disabledReason;
+  }
+
+  return {
+    id: route.id,
+    path: route.path,
+    label: route.label,
+    surfaceKind: route.surfaceKind,
+    status: route.status,
+    ...optionalFields
+  };
+}
+
+function compactLines(lines: readonly (string | undefined)[]): readonly string[] {
+  return lines.filter(isDefined);
+}
+
+function formatRef(ref: ObjectRef): string {
+  return `${ref.type}:${ref.id}`;
 }
 
 function availableModesForCapabilities(
@@ -1025,6 +1772,14 @@ function isBindingEvent(event: CanopyEvent): boolean {
 
 function dedupeRefs(refs: readonly ObjectRef[]): readonly ObjectRef[] {
   return [...new Map(refs.map((ref) => [`${ref.namespace}:${ref.type}:${ref.id}`, ref])).values()];
+}
+
+function sortedRefs(refs: readonly ObjectRef[]): readonly ObjectRef[] {
+  return [...refs].sort((left, right) =>
+    `${left.namespace}:${left.type}:${left.id}`.localeCompare(
+      `${right.namespace}:${right.type}:${right.id}`
+    )
+  );
 }
 
 const projectionRebuilderNames = [

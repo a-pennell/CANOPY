@@ -4,8 +4,12 @@ import type { ImportDryRunResult } from "@canopy/database-import-plans";
 import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
 import { createInMemoryMaterializedProjectionStore } from "@canopy/workflows-projection-rebuild";
 import {
+  buildCanopyShellNavigation,
+  buildCanopyShellSession,
   buildCanopyShellSnapshot,
-  buildPersistedCanopyShellSnapshot
+  buildPersistedCanopyShellSnapshot,
+  executeCanopyShellCommand,
+  renderCanopyShell
 } from "./index.js";
 
 const namespace = "canopy.shell.test";
@@ -293,6 +297,95 @@ describe("canopy shell snapshot", () => {
     expect(snapshot.surfaces.importReview?.warnings.map((warning) => warning.code)).toEqual([
       "missing-authority-hint"
     ]);
+  });
+
+  it("builds a runnable session with routes and a text renderer", () => {
+    const session = buildCanopyShellSession({
+      events: shellEvents,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      selectedObjectRef: decisionRef,
+      activeMode: "decisions",
+      route: "/federation"
+    });
+
+    expect(session.prompt).toBe("Riverbend Foodshed Commons /federation>");
+    expect(session.navigation.activePath).toBe("/federation");
+    expect(session.navigation.routes.map((route) => route.path)).toEqual(
+      expect.arrayContaining([
+        "/scope",
+        "/objects",
+        "/claims-evidence",
+        "/decisions",
+        "/stewardship",
+        "/imports",
+        "/federation",
+        `/objects/decision/${decisionRef.id}`,
+        `/objects/claim/${claimRef.id}`
+      ])
+    );
+    expect(session.screen.text).toContain("Federation Export: ready");
+    expect(session.screen.text).toContain("Data stewardship agreements: agreement:agreement.data-stewardship.foodshed");
+    expect(renderCanopyShell(session.snapshot, "/claims-evidence")).toContain(
+      "Counts: 1 claims, 1 evidence, 1 AI indicators"
+    );
+  });
+
+  it("executes CLI-like aliases over shell surfaces", () => {
+    const snapshot = buildCanopyShellSnapshot({
+      events: stewardshipEvents,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      selectedObjectRef: resourceRef,
+      activeMode: "stewardship",
+      importDryRun: importDryRunResult
+    });
+
+    expect(executeCanopyShellCommand(snapshot, "claims")).toMatchObject({
+      status: "handled",
+      message: "Opened Claims and evidence."
+    });
+    expect(executeCanopyShellCommand(snapshot, "claims").screen.text).toContain(
+      "Claims and Evidence"
+    );
+    expect(executeCanopyShellCommand(snapshot, "open /imports").screen.text).toContain(
+      "Import Review: common-credit-fold-in"
+    );
+    expect(executeCanopyShellCommand(snapshot, "stewardship").screen.text).toContain(
+      "Resource Stewardship: Cooling center"
+    );
+    expect(executeCanopyShellCommand(snapshot, "open /objects/resource/resource.cooling-center").screen.text).toContain(
+      "Object Page: Cooling center"
+    );
+  });
+
+  it("keeps unavailable routes navigable with an explanation", () => {
+    const snapshot = buildCanopyShellSnapshot({
+      events: shellEvents,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      selectedObjectRef: claimRef
+    });
+
+    const navigation = buildCanopyShellNavigation(snapshot, "/stewardship");
+    const stewardshipRoute = navigation.routes.find((route) => route.path === "/stewardship");
+    const command = executeCanopyShellCommand(snapshot, "stewardship");
+
+    expect(stewardshipRoute).toMatchObject({
+      status: "unavailable",
+      disabledReason: "Select a resource object to hydrate stewardship state."
+    });
+    expect(command).toMatchObject({
+      status: "unavailable",
+      message: "Stewardship is not available in this shell state."
+    });
+    expect(command.screen.text).toContain("Stewardship: unavailable");
   });
 });
 

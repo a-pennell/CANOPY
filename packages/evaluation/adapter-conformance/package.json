@@ -12,6 +12,8 @@
     "@canopy/contracts-kernel": "0.0.0"
   },
   "devDependencies": {
+    "@canopy/adapters-provider-postgres-document-store": "0.0.0",
+    "@canopy/adapters-provider-s3-object-storage": "0.0.0",
     "@canopy/adapters-reference-in-memory": "0.0.0"
   }
 }
