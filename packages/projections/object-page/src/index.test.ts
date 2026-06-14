@@ -55,7 +55,7 @@ describe("buildObjectPageProjection", () => {
 
     expect(projection.objectRef).toEqual(objectRef);
     expect(projection.title).toBe("North Pasture");
-    expect(projection.summary).toBe("Flow evidence is linked to the pasture.");
+    expect(projection.summary).toBe("Shared grazing resource.");
     expect(projection.timelineEvents.map((timelineEvent) => timelineEvent.id)).toEqual([
       "event.object",
       "event.claim"

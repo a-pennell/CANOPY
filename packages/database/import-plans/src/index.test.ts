@@ -407,6 +407,197 @@ describe("folded source import dry runs", () => {
     });
   });
 
+  it("dry-runs Phase 6 resource-care wrapper row kinds into canonical objects", () => {
+    const result = dryRunStewardshipImport(
+      freezeRecords([
+        {
+          sourceObject: "commons",
+          id: "community.riverbend",
+          name: "Riverbend Commons",
+          commonsKind: "watershed food commons",
+          commons_kind: "watershed food commons",
+          boundary: "generalized watershed boundary",
+        },
+        {
+          sourceObject: "resource",
+          id: "resource.north-pasture",
+          name: "North Pasture",
+          resourceKind: "pasture",
+          resource_kind: "pasture",
+          boundary: "generalized pasture boundary",
+        },
+        {
+          sourceObject: "use right",
+          id: "use-right.dawn-grazing-window",
+          holder: "person.kai",
+          resource: "resource.north-pasture",
+          permission: "graze.dawn_window",
+          state: "active",
+          policyRef: "policy.drought-care",
+        },
+        {
+          sourceObject: "policy",
+          id: "policy.drought-care",
+          title: "Drought Care Protocol",
+          status: "active",
+        },
+        {
+          sourceObject: "policy version",
+          id: "policy.drought-care.v2",
+          policy: "policy.drought-care",
+          version: "2",
+          status: "active",
+        },
+        {
+          sourceObject: "maintenance task",
+          id: "task.repair-north-fence",
+          activityType: "maintenance task",
+          activity_type: "maintenance task",
+          subject: "resource.north-pasture",
+          status: "completed",
+        },
+        {
+          sourceObject: "contribution",
+          id: "contribution.seedlings",
+          activityType: "contribution",
+          activity_type: "contribution",
+          subject: "resource.north-pasture",
+          status: "completed",
+        },
+        {
+          sourceObject: "decision",
+          id: "decision.dawn-grazing-window",
+          title: "Grant dawn grazing window",
+          status: "recorded",
+        },
+        {
+          sourceObject: "food flow",
+          id: "flow.food-hub-seedlings",
+          from: "organization.food-hub",
+          to: "community.riverbend",
+          quantity: "42 trays",
+        },
+      ]),
+    );
+
+    expect(result.warnings).toEqual([]);
+    expect(result.status).toBe("pass");
+    expect(result.mappingCandidates.map((candidate) => candidate.canonicalType)).toEqual([
+      "commons",
+      "resource",
+      "use-right",
+      "policy",
+      "policy",
+      "task",
+      "commitment",
+      "decision",
+      "flow",
+    ]);
+    expect(result.candidateEvents.map((event) => event.type)).toEqual([
+      "object.created",
+      "stewardship.resource.created",
+      "stewardship.use_right.granted",
+      "governance.policy.versioned",
+      "governance.policy.versioned",
+      "stewardship.task.completed",
+      "stewardship.contribution.logged",
+      "governance.decision.recorded",
+      "flow.food.recorded",
+    ]);
+  });
+
+  it("dry-runs Phase 6 claims/evidence wrapper row kinds while preserving uncertainty", () => {
+    const result = dryRunSensemakingImport(
+      freezeRecords([
+        {
+          sourceObject: "issue",
+          id: "issue.riparian-stress",
+          title: "Is the riparian corridor under stress?",
+          status: "open",
+        },
+        {
+          sourceObject: "source",
+          id: "source.riparian-survey",
+          kind: "field survey",
+          title: "Riparian survey",
+          contentHash: "sha256:riparian-survey",
+        },
+        {
+          sourceObject: "claim",
+          id: "claim.riparian-stress-medium",
+          statement: "The riparian corridor shows medium drought stress.",
+          status: "review_required",
+        },
+        {
+          sourceObject: "stakeholder group",
+          id: "group.growers",
+          name: "Growers circle",
+          status: "active",
+        },
+        {
+          sourceObject: "theme",
+          id: "theme.water-stress",
+          label: "Water stress",
+        },
+        {
+          sourceObject: "contribution",
+          id: "evidence.grower-observation",
+          contributor: "group.growers",
+          target: "claim.riparian-stress-medium",
+          status: "submitted",
+        },
+        {
+          sourceObject: "evidence link",
+          id: "link.survey-qualifies-claim",
+          claim: "claim.riparian-stress-medium",
+          source: "source.riparian-survey",
+          relation: "qualifies",
+        },
+        {
+          sourceObject: "review state",
+          id: "review.riparian-stress",
+          target: "claim.riparian-stress-medium",
+          status: "reviewed",
+        },
+        {
+          sourceObject: "AI extraction",
+          id: "ai.riparian-extraction",
+          model: "model.riparian-parser",
+          source: "source.riparian-survey",
+          status: "needs_review",
+        },
+      ]),
+    );
+
+    expect(result.status).toBe("pass");
+    expect(result.warnings).toEqual([]);
+    expect(result.mappingCandidates.map((candidate) => candidate.canonicalType)).toEqual([
+      "issue",
+      "source",
+      "claim",
+      "organization",
+      "source",
+      "evidence",
+      "evidence",
+      "claim",
+      "evidence",
+    ]);
+    expect(result.candidateEvents.map((event) => event.type)).toEqual([
+      "governance.issue.created",
+      "evidence.source.ingested",
+      "claim.created",
+      "identity.organization.created",
+      "evidence.source.ingested",
+      "evidence.created",
+      "evidence.linked_to_claim",
+      "claim.reviewed",
+      "evidence.created",
+    ]);
+    expect(result.candidateEvents.every((event) => event.payload.preservesUncertainty)).toBe(
+      true,
+    );
+  });
+
   it("dry-runs realistic source export bundles into canonical mapping candidates", () => {
     const results = foldedSourceSampleExportBundles.map((bundle) => ({
       bundle,

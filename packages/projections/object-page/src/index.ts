@@ -97,8 +97,8 @@ export const buildObjectPageProjection = (
     toTimelineEvent(event, relevance)
   );
 
-  const title = latestPayloadString(relevantEvents, ["title", "name", "label"]);
-  const summary = latestPayloadString(relevantEvents, ["summary", "description"]);
+  const title = latestPayloadString(objectRef, relevantEvents, ["title", "name", "label"]);
+  const summary = latestPayloadString(objectRef, relevantEvents, ["summary", "description"]);
   const relatedRefs = collectRelatedRefs(objectRef, relevantEvents.map(({ event }) => event));
   const authorityRefs = collectAuthorityRefs(relevantEvents.map(({ event }) => event));
   const sourceCapabilities = sortedCapabilities(
@@ -168,6 +168,26 @@ const getEventRelevance = (
 };
 
 const latestPayloadString = (
+  objectRef: ObjectRef,
+  relevantEvents: readonly {
+    readonly event: CanopyEvent;
+    readonly relevance: ObjectPageEventRelevance;
+  }[],
+  keys: readonly string[]
+): string | undefined => {
+  const directValue = latestPayloadStringInEvents(
+    relevantEvents.filter(({ event }) => sameRef(objectRef, event.objectRef)),
+    keys
+  );
+
+  if (directValue !== undefined) {
+    return directValue;
+  }
+
+  return latestPayloadStringInEvents(relevantEvents, keys);
+};
+
+const latestPayloadStringInEvents = (
   relevantEvents: readonly {
     readonly event: CanopyEvent;
     readonly relevance: ObjectPageEventRelevance;

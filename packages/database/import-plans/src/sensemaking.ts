@@ -85,6 +85,54 @@ export const sensemakingImportPlan = {
       optionalFields: ["assumptions", "parameters", "outputs", "audit notes"],
       authorityHints: ["model steward", "reviewer", "affected domain authority"],
     },
+    {
+      sourceObject: "issue",
+      description: "Question, controversy, investigation, or public problem under interpretation.",
+      identityKey: "issue identifier and scope",
+      requiredFields: ["source id", "title", "status"],
+      optionalFields: ["scope", "opened by", "related claims"],
+      authorityHints: ["issue steward", "governance context"],
+    },
+    {
+      sourceObject: "stakeholder group",
+      description: "Affected group, interpretive constituency, or knowledge-holder group.",
+      identityKey: "group identifier and represented scope",
+      requiredFields: ["source id", "name", "status"],
+      optionalFields: ["scope", "members", "role"],
+      authorityHints: ["membership authority", "group steward"],
+    },
+    {
+      sourceObject: "theme",
+      description: "Tag, pattern, frame, or synthesis theme used to organize claims and sources.",
+      identityKey: "theme identifier and vocabulary scope",
+      requiredFields: ["source id", "label"],
+      optionalFields: ["description", "scope", "parent theme"],
+      authorityHints: ["taxonomy steward", "reviewer"],
+    },
+    {
+      sourceObject: "contribution",
+      description: "Interpretive note, annotation, testimony, or contribution to a claim or issue.",
+      identityKey: "contribution identifier and target",
+      requiredFields: ["source id", "contributor", "target", "status"],
+      optionalFields: ["claim", "issue", "source", "note"],
+      authorityHints: ["contributor", "reviewer"],
+    },
+    {
+      sourceObject: "review state",
+      description: "Claim, source, issue, or extraction review disposition.",
+      identityKey: "review identifier and reviewed object",
+      requiredFields: ["source id", "target", "status"],
+      optionalFields: ["reviewer", "evidence", "review note"],
+      authorityHints: ["reviewer", "review policy"],
+    },
+    {
+      sourceObject: "AI extraction",
+      description: "Machine extraction, classification, summary, or suggested claim.",
+      identityKey: "extraction identifier and model/source context",
+      requiredFields: ["source id", "model", "source", "status"],
+      optionalFields: ["claim", "confidence", "output classification", "audit notes"],
+      authorityHints: ["model steward", "reviewer"],
+    },
   ],
   targetCanonicalObjects: [
     {
@@ -116,6 +164,18 @@ export const sensemakingImportPlan = {
       purpose: "Represent measured signals used by claims, thresholds, or governance.",
       requiredRelationships: ["observes living-system, resource, place, or commons"],
       eventTypes: ["ecology.indicator.recorded"],
+    },
+    {
+      objectType: "issue",
+      purpose: "Represent scoped questions and controversies as civic memory.",
+      requiredRelationships: ["related to claims, sources, perspectives, proposals, or decisions"],
+      eventTypes: ["governance.issue.created", "governance.issue.scoped"],
+    },
+    {
+      objectType: "organization",
+      purpose: "Represent stakeholder and knowledge-holder groups without making them separate apps.",
+      requiredRelationships: ["related to issues, claims, perspectives, or review duties"],
+      eventTypes: ["identity.organization.created"],
     },
   ],
   eventOrdering: [
@@ -337,8 +397,26 @@ export function dryRunSensemakingImport(
 
 function sensemakingSourceEntity(record: LegacySourceRecord): string {
   const kind = sourceObjectKind(record);
+  if (containsToken(kind, "ai extraction") || containsToken(kind, "ai_extraction")) {
+    return "AI extraction";
+  }
+  if (containsToken(kind, "review state") || containsToken(kind, "review_state")) {
+    return "review state";
+  }
   if (containsToken(kind, "evidence link") || containsToken(kind, "link")) {
     return "evidence link";
+  }
+  if (containsToken(kind, "issue")) {
+    return "issue";
+  }
+  if (containsToken(kind, "stakeholder") || containsToken(kind, "group")) {
+    return "stakeholder group";
+  }
+  if (containsToken(kind, "theme")) {
+    return "theme";
+  }
+  if (containsToken(kind, "contribution") || containsToken(kind, "annotation")) {
+    return "contribution";
   }
   if (containsToken(kind, "claim")) {
     return "claim";
@@ -356,7 +434,22 @@ function sensemakingCanonicalType(
   if (sourceEntity === "claim") {
     return "claim";
   }
+  if (sourceEntity === "review state") {
+    return "claim";
+  }
   if (sourceEntity === "evidence link") {
+    return "evidence";
+  }
+  if (sourceEntity === "issue") {
+    return "issue";
+  }
+  if (sourceEntity === "stakeholder group") {
+    return "organization";
+  }
+  if (sourceEntity === "theme") {
+    return "source";
+  }
+  if (sourceEntity === "contribution" || sourceEntity === "AI extraction") {
     return "evidence";
   }
   if (sourceEntity === "model") {
@@ -375,13 +468,29 @@ function sensemakingEventType(
     if (containsToken(status, "contested")) {
       return "claim.contested";
     }
-    if (containsToken(status, "review")) {
+    if (containsToken(status, "reviewed") || containsToken(status, "accepted") || containsToken(status, "qualified")) {
       return "claim.reviewed";
     }
     return "claim.created";
   }
+  if (sourceEntity === "review state") {
+    const status = textField(record, ["status", "reviewState", "review_state"]);
+    return containsToken(status, "contest") ? "claim.contested" : "claim.reviewed";
+  }
   if (sourceEntity === "evidence link") {
     return "evidence.linked_to_claim";
+  }
+  if (sourceEntity === "issue") {
+    return "governance.issue.created";
+  }
+  if (sourceEntity === "stakeholder group") {
+    return "identity.organization.created";
+  }
+  if (sourceEntity === "theme") {
+    return "evidence.source.ingested";
+  }
+  if (sourceEntity === "contribution" || sourceEntity === "AI extraction") {
+    return "evidence.created";
   }
   if (sourceEntity === "model") {
     return "model.created";

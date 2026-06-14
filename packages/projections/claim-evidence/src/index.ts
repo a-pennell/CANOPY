@@ -503,7 +503,7 @@ const isMachineOutputRef = (ref: ObjectRef): boolean =>
   ref.source?.sourceEntity === "ai_model_authority_guess";
 
 const modelish = (value: string): boolean =>
-  value.includes("model") || value.includes("ai") || value.includes("machine");
+  value.includes("model") || value.includes("machine") || /(^|[.-])ai([.-]|$)/u.test(value);
 
 const claimStatus = (
   events: readonly CanopyEvent[],

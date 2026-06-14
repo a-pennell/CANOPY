@@ -102,6 +102,38 @@ export const stewardshipImportPlan = {
       optionalFields: ["assigned actor", "completed at", "evidence", "outcome"],
       authorityHints: ["task assigner", "reviewer", "resource steward"],
     },
+    {
+      sourceObject: "policy",
+      description: "Commons rule, access policy, care protocol, or policy family.",
+      identityKey: "policy identifier and governed scope",
+      requiredFields: ["source id", "title", "status"],
+      optionalFields: ["scope", "policy version", "authority"],
+      authorityHints: ["governance decision", "policy authority", "commons steward"],
+    },
+    {
+      sourceObject: "policy version",
+      description: "Versioned policy text, amendment, or protocol revision.",
+      identityKey: "policy identifier plus version",
+      requiredFields: ["source id", "policy", "version", "status"],
+      optionalFields: ["supersedes", "effective date", "decision"],
+      authorityHints: ["governance decision", "policy authority"],
+    },
+    {
+      sourceObject: "decision",
+      description: "Recorded decision affecting a resource, right, policy, task, or flow.",
+      identityKey: "decision identifier and decision body",
+      requiredFields: ["source id", "title", "status"],
+      optionalFields: ["decision method", "policy", "resource", "outcome"],
+      authorityHints: ["decision body", "mandate", "policy"],
+    },
+    {
+      sourceObject: "food flow",
+      description: "Food, harvest, distribution, waste, or mutual-aid movement record.",
+      identityKey: "flow identifier and movement context",
+      requiredFields: ["source id", "from", "to", "quantity"],
+      optionalFields: ["resource", "agreement", "occurred at", "unit"],
+      authorityHints: ["allocation agreement", "resource steward", "commons policy"],
+    },
   ],
   targetCanonicalObjects: [
     {
@@ -146,6 +178,24 @@ export const stewardshipImportPlan = {
       requiredRelationships: ["reviews proposal, threshold, use right, or activity"],
       eventTypes: ["ecology.guardian.review_requested", "ecology.guardian.review_completed"],
     },
+    {
+      objectType: "policy",
+      purpose: "Represent commons rules, access protocols, and their version continuity.",
+      requiredRelationships: ["authorized by decision or mandate", "governs resource, commons, or use right"],
+      eventTypes: ["governance.policy.versioned"],
+    },
+    {
+      objectType: "decision",
+      purpose: "Represent governance outcomes that authorize rights, policies, care, and flows.",
+      requiredRelationships: ["authorized by mandate, role, or policy"],
+      eventTypes: ["governance.decision.recorded"],
+    },
+    {
+      objectType: "flow",
+      purpose: "Represent food, transport, waste, and material flows as canonical movement memory.",
+      requiredRelationships: ["scoped to resource, agreement, place, commons, or decision when known"],
+      eventTypes: ["flow.food.recorded", "flow.transport.recorded", "flow.waste.recorded"],
+    },
   ],
   eventOrdering: [
     {
@@ -186,11 +236,13 @@ export const stewardshipImportPlan = {
       order: 4,
       phase: "activities and outcomes",
       sourceObjects: ["stewardship activity"],
-      targetObjects: ["task", "commitment", "flow", "evidence"],
+      targetObjects: ["task", "commitment", "flow", "evidence", "decision", "policy"],
       emitsEvents: [
         "stewardship.task.created",
         "stewardship.task.completed",
         "stewardship.contribution.logged",
+        "governance.policy.versioned",
+        "governance.decision.recorded",
         "flow.food.recorded",
         "flow.transport.recorded",
         "flow.waste.recorded",
@@ -365,10 +417,27 @@ function stewardshipSourceEntity(record: LegacySourceRecord): string {
   if (containsToken(kind, "living")) {
     return "living system";
   }
+  if (containsToken(kind, "policy version") || containsToken(kind, "policy_version")) {
+    return "policy version";
+  }
+  if (containsToken(kind, "policy")) {
+    return "policy";
+  }
+  if (containsToken(kind, "decision")) {
+    return "decision";
+  }
+  if (containsToken(kind, "food flow") || containsToken(kind, "food_flow")) {
+    return "food flow";
+  }
   if (containsToken(kind, "use right") || containsToken(kind, "right")) {
     return "use right";
   }
-  if (containsToken(kind, "activity") || containsToken(kind, "task") || containsToken(kind, "contribution")) {
+  if (
+    containsToken(kind, "activity") ||
+    containsToken(kind, "task") ||
+    containsToken(kind, "maintenance") ||
+    containsToken(kind, "contribution")
+  ) {
     return "stewardship activity";
   }
   if (containsToken(kind, "commons")) {
@@ -390,9 +459,24 @@ function stewardshipCanonicalType(
   if (sourceEntity === "use right") {
     return "use-right";
   }
+  if (sourceEntity === "policy" || sourceEntity === "policy version") {
+    return "policy";
+  }
+  if (sourceEntity === "decision") {
+    return "decision";
+  }
+  if (sourceEntity === "food flow") {
+    return "flow";
+  }
   if (sourceEntity === "stewardship activity") {
     const activityType = textField(record, ["activityType", "activity_type", "kind", "type"]);
-    return containsToken(activityType, "review") ? "guardian-review" : "task";
+    if (containsToken(activityType, "review")) {
+      return "guardian-review";
+    }
+    if (containsToken(activityType, "contribution")) {
+      return "commitment";
+    }
+    return "task";
   }
   if (sourceEntity === "commons") {
     return "commons";
@@ -418,8 +502,21 @@ function stewardshipEventType(
       ? "stewardship.use_right.revoked"
       : "stewardship.use_right.granted";
   }
+  if (sourceEntity === "policy" || sourceEntity === "policy version") {
+    return "governance.policy.versioned";
+  }
+  if (sourceEntity === "decision") {
+    return "governance.decision.recorded";
+  }
+  if (sourceEntity === "food flow") {
+    return "flow.food.recorded";
+  }
   if (sourceEntity === "stewardship activity") {
     const status = textField(record, ["status", "state"]);
+    const activityType = textField(record, ["activityType", "activity_type", "kind", "type"]);
+    if (containsToken(activityType, "contribution")) {
+      return "stewardship.contribution.logged";
+    }
     return containsToken(status, "complete")
       ? "stewardship.task.completed"
       : "stewardship.task.created";
