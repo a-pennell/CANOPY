@@ -126,6 +126,43 @@ export interface RedactionSummary {
   readonly notes?: readonly string[];
 }
 
+export type FederationVerificationStatus = "verified" | "warning" | "rejected";
+
+export type FederationVerificationIssueCode =
+  | "duplicate_event_id"
+  | "content_hash_mismatch"
+  | "authority_refs_missing"
+  | "provenance_missing"
+  | "signature_required"
+  | "redaction_continuity_gap"
+  | "schema_version_mismatch"
+  | "unsupported_event_type";
+
+export interface FederationVerificationIssue {
+  readonly code: FederationVerificationIssueCode;
+  readonly severity: "info" | "warning" | "error";
+  readonly message: string;
+  readonly path: readonly string[];
+  readonly eventId?: CanopyId;
+  readonly affectedRef?: ObjectRef;
+}
+
+export interface FederationDedupeAuditEntry {
+  readonly eventId: CanopyId;
+  readonly occurrenceCount: number;
+  readonly disposition: "accepted" | "duplicate" | "quarantined";
+  readonly contentHashes: readonly ContentHash[];
+}
+
+export interface FederationVerificationSummary {
+  readonly status: FederationVerificationStatus;
+  readonly verifiedAt: IsoDateTime;
+  readonly issues: readonly FederationVerificationIssue[];
+  readonly dedupe: readonly FederationDedupeAuditEntry[];
+  readonly signedEventIds: readonly CanopyId[];
+  readonly unsignedRequiredEventIds: readonly CanopyId[];
+}
+
 export interface CanopyExportEnvelope {
   readonly id: CanopyId;
   readonly exportedAt: IsoDateTime;
@@ -141,6 +178,7 @@ export interface CanopyExportEnvelope {
   readonly contentHash: ContentHash;
   readonly contentHashFields: ContentHashFields;
   readonly redactionSummary?: RedactionSummary;
+  readonly verification?: FederationVerificationSummary;
 }
 
 export type ImportWarningSeverity = "info" | "warning" | "error";

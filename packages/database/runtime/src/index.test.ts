@@ -8,9 +8,11 @@ import type {
 import type { CanopyEvent, ObjectRef } from "@canopy/contracts-kernel";
 import {
   CanonicalPersistenceError,
+  checkPostgresCanonicalMigrationReadiness,
   createCanonicalSqlExecutionPlan,
   createInMemoryCanonicalPersistence,
-  executeCanonicalSqlPlan
+  executeCanonicalSqlPlan,
+  executeCanonicalSqlPlanWithPostgres
 } from "./index.js";
 
 const occurredAt = "2026-06-13T10:00:00.000Z";
@@ -118,7 +120,108 @@ describe("in-memory canonical persistence runtime", () => {
     ).toEqual(["canopy_events", "canopy_outbox", "canopy_adapter_audit"]);
     expect(executed.at(-1)).toBe("canopy_adapter_audit:adapter-audit.append");
   });
+
+  it("checks Postgres migration readiness before executing canonical SQL", async () => {
+    const missingClient = new FakePostgresClient(["canopy_events"]);
+
+    const readiness = await checkPostgresCanonicalMigrationReadiness(missingClient);
+
+    expect(readiness.status).toBe("missing");
+    expect(readiness.missingTables).toContain("canopy_events");
+    await expect(
+      executeCanonicalSqlPlanWithPostgres(
+        missingClient,
+        createCanonicalSqlExecutionPlan([]),
+        { requireMigrationReady: true }
+      )
+    ).rejects.toMatchObject({
+      code: "record-not-found"
+    });
+  });
+
+  it("executes canonical SQL in a transaction and normalizes append-only failures", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => recordedAt });
+    runtime.appendEvent(canopyEvent("event.claim.created", claimRef));
+    runtime.putOutbox(outboxRecord());
+
+    const plan = createCanonicalSqlExecutionPlan(runtime.listRecords());
+    const client = new FakePostgresClient([], {
+      failOnTable: "canopy_events",
+      error: Object.assign(new Error("Canopy historical facts are append-only"), {
+        code: "P0001",
+        routine: "canopy_reject_historical_mutation"
+      })
+    });
+
+    await expect(executeCanonicalSqlPlanWithPostgres(client, plan)).rejects.toMatchObject({
+      code: "append-only-violation"
+    });
+    expect(client.executed.map((entry) => entry.text)).toContain("BEGIN");
+    expect(client.executed.map((entry) => entry.text)).toContain("ROLLBACK");
+    expect(client.executed.map((entry) => entry.text)).not.toContain("COMMIT");
+  });
+
+  it("executes a ready Postgres canonical SQL plan through commit", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => recordedAt });
+    runtime.appendEvent(canopyEvent("event.claim.created", claimRef));
+    runtime.putOutbox(outboxRecord());
+
+    const client = new FakePostgresClient();
+    const plan = createCanonicalSqlExecutionPlan(runtime.listRecords());
+
+    await executeCanonicalSqlPlanWithPostgres(client, plan);
+
+    expect(client.executed.map((entry) => entry.text).at(-1)).toBe("COMMIT");
+    expect(
+      client.executed
+        .filter((entry) => entry.text.startsWith("INSERT INTO"))
+        .map((entry) => entry.text.match(/^INSERT INTO ([^(]+)/)?.[1])
+    ).toEqual([
+      "canopy_object_refs ",
+      "canopy_object_refs ",
+      "canopy_object_refs ",
+      "canopy_object_refs ",
+      "canopy_events ",
+      "canopy_outbox "
+    ]);
+  });
 });
+
+class FakePostgresClient {
+  readonly executed: { readonly text: string; readonly params?: readonly unknown[] }[] = [];
+
+  constructor(
+    private readonly missingTables: readonly string[] = [],
+    private readonly failure: {
+      readonly failOnTable: string;
+      readonly error: Error;
+    } | undefined = undefined
+  ) {}
+
+  async query(text: string, params?: readonly unknown[]): Promise<unknown> {
+    this.executed.push(params === undefined ? { text } : { text, params });
+
+    if (text === "SELECT to_regclass($1) AS table_name") {
+      const tableName = String(params?.[0]);
+      return {
+        rows: [
+          {
+            table_name: this.missingTables.includes(tableName) ? null : tableName
+          }
+        ]
+      };
+    }
+
+    if (
+      this.failure !== undefined &&
+      text.startsWith(`INSERT INTO ${this.failure.failOnTable}`)
+    ) {
+      throw this.failure.error;
+    }
+
+    return { rows: [] };
+  }
+}
 
 function canopyEvent(id: string, objectRef: ObjectRef): CanopyEvent {
   return {

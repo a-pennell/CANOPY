@@ -157,6 +157,7 @@ export interface CanopyUiClaimEvidenceClaimSummary {
   readonly title?: string;
   readonly summary?: string;
   readonly evidenceRefs: readonly ObjectRef[];
+  readonly contestRefs: readonly ObjectRef[];
   readonly authorityRefs: readonly ObjectRef[];
   readonly sourceCapabilities: readonly CanopyCapability[];
   readonly aiIndicatorEventIds: readonly CanopyId[];
@@ -189,6 +190,16 @@ export interface CanopyUiClaimEvidenceAiIndicator {
   readonly sourceCapability: CanopyCapability;
 }
 
+export interface CanopyUiClaimEvidenceContestSummary {
+  readonly claimRef: ObjectRef;
+  readonly contestRef: ObjectRef;
+  readonly eventId: CanopyId;
+  readonly occurredAt: IsoDateTime;
+  readonly evidenceRefs: readonly ObjectRef[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly sourceCapability: CanopyCapability;
+}
+
 export interface CanopyUiClaimEvidenceViewModel {
   readonly kind: "claim-evidence";
   readonly selectedClaim?: CanopyUiClaimEvidenceClaimSummary;
@@ -196,6 +207,7 @@ export interface CanopyUiClaimEvidenceViewModel {
   readonly claims: readonly CanopyUiClaimEvidenceClaimSummary[];
   readonly evidence: readonly CanopyUiClaimEvidenceEvidenceSummary[];
   readonly links: readonly CanopyUiClaimEvidenceLinkSummary[];
+  readonly contests: readonly CanopyUiClaimEvidenceContestSummary[];
   readonly aiNonAuthorityIndicators: readonly CanopyUiClaimEvidenceAiIndicator[];
   readonly counts: {
     readonly claims: number;

@@ -10,11 +10,16 @@ import type {
 } from "@canopy/contracts-kernel";
 import type {
   Appeal,
+  ConsentSignal,
   Decision,
   DecisionMethodConfig,
   DecisionPacket,
+  GovernanceHardeningEvaluation,
+  GovernanceControlEvaluation,
+  GovernanceControlIssue,
   Issue,
-  Proposal
+  Proposal,
+  QuorumState
 } from "@canopy/contracts-governance";
 import type {
   CivicMemoryAppendResult,
@@ -36,6 +41,12 @@ export type GovernanceCommandErrorCode =
   | "proposal-unresolved-blocking-objections"
   | "decision-missing-decider"
   | "decision-unresolved-objections"
+  | "decision-consent-blocked"
+  | "decision-quorum-not-met"
+  | "decision-contested-evidence-unhandled"
+  | "decision-missing-appeal-path"
+  | "authority-revoked"
+  | "delegation-revoked"
   | "appeal-missing-grounds"
   | "appeal-missing-reviewer"
   | "emergency-missing-authority"
@@ -79,6 +90,7 @@ export interface CreateProposalCommand extends GovernanceCommandContext {
 
 export interface RecordDecisionCommand extends GovernanceCommandContext {
   readonly decision: Decision;
+  readonly controls?: GovernanceRuntimeControls;
 }
 
 export interface RecordDecisionPacketCommand extends GovernanceCommandContext {
@@ -101,6 +113,17 @@ export interface GovernanceAuthorityValidationIssue {
 export interface GovernanceAuthorityValidationResult {
   readonly valid: boolean;
   readonly issues: readonly GovernanceAuthorityValidationIssue[];
+}
+
+export interface GovernanceRuntimeControls {
+  readonly evaluatedAt?: IsoDateTime;
+  readonly consentSignals?: readonly ConsentSignal[];
+  readonly quorumState?: QuorumState;
+  readonly delegatedAuthorityRefs?: readonly ObjectRef[];
+  readonly revokedAuthorityRefs?: readonly ObjectRef[];
+  readonly revokedDelegationRefs?: readonly ObjectRef[];
+  readonly contestedEvidenceRefs?: readonly ObjectRef[];
+  readonly appealPathRef?: ObjectRef;
 }
 
 export function createIssue(
@@ -191,6 +214,7 @@ export function recordDecision(
   command: RecordDecisionCommand
 ): GovernanceCommandResult<Decision> {
   assertValidAuthority(validateDecisionRecordingAuthority(command.decision));
+  assertValidAuthority(validateGovernanceRuntimeControls(command.decision, command.controls));
   const ref = refFor(command.decision, "decision");
   registerRefs(services.registry, [
     ref,
@@ -208,7 +232,10 @@ export function recordDecision(
     dataState: command.decision.dataState,
     payload: {
       command: "recordDecision",
-      decision: command.decision
+      decision: command.decision,
+      ...(command.controls === undefined
+        ? {}
+        : { governanceControls: evaluateGovernanceHardening(command.decision, command.controls) })
     },
     record: command.decision
   });
@@ -420,6 +447,273 @@ export function validateAppealAuthority(
         ]
       : [])
   ]);
+}
+
+export function evaluateGovernanceHardening(
+  decision: Decision,
+  controls: GovernanceRuntimeControls,
+  evaluatedAt: IsoDateTime = controls.evaluatedAt ?? decision.decidedAt
+): GovernanceHardeningEvaluation {
+  const controlEvaluations = [
+    evaluateConsentControl(controls, evaluatedAt),
+    evaluateQuorumControl(controls, evaluatedAt),
+    evaluateDelegationControl(decision, controls, evaluatedAt),
+    evaluateRevocationControl(decision, controls, evaluatedAt),
+    evaluateAppealControl(decision, controls, evaluatedAt),
+    evaluateContestedEvidenceControl(decision, controls, evaluatedAt)
+  ];
+  const issues = controlEvaluations.flatMap((control) => control.issues);
+  const hasBlocked = controlEvaluations.some((control) => control.status === "blocked");
+  const hasAttention = controlEvaluations.some(
+    (control) => control.status === "missing" || control.status === "contested" || control.status === "requires_review"
+  );
+
+  return {
+    targetRef: refFor(decision, "decision"),
+    decisionRef: refFor(decision, "decision"),
+    evaluatedAt,
+    status: hasBlocked ? "blocked" : hasAttention ? "attention" : "satisfied",
+    controls: controlEvaluations,
+    issues
+  };
+}
+
+export function validateGovernanceRuntimeControls(
+  decision: Decision,
+  controls: GovernanceRuntimeControls | undefined
+): GovernanceAuthorityValidationResult {
+  if (controls === undefined) {
+    return result([]);
+  }
+
+  return result(
+    evaluateGovernanceHardening(decision, controls).issues.map((controlIssue) =>
+      issue(commandCodeForControlIssue(controlIssue), controlIssue.message)
+    )
+  );
+}
+
+function evaluateConsentControl(
+  controls: GovernanceRuntimeControls,
+  evaluatedAt: IsoDateTime
+): GovernanceControlEvaluation {
+  const signals = controls.consentSignals ?? [];
+  const blockingSignals = signals.filter((signal) =>
+    signal.signal === "block" || signal.signal === "withhold"
+  );
+  const issues: GovernanceControlIssue[] = blockingSignals.map((signal) => ({
+    code: "consent_blocked",
+    message: "Consent signals include a block or withheld consent.",
+    sourceRefs: [refFor(signal, "source"), signal.participantRef],
+    safeToExplain: true
+  }));
+
+  return {
+    kind: "consent",
+    status:
+      blockingSignals.length > 0
+        ? "blocked"
+        : signals.length > 0
+          ? "satisfied"
+          : "missing",
+    required: false,
+    sourceRefs: signals.map((signal) => refFor(signal, "source")),
+    issues,
+    evaluatedAt
+  };
+}
+
+function evaluateQuorumControl(
+  controls: GovernanceRuntimeControls,
+  evaluatedAt: IsoDateTime
+): GovernanceControlEvaluation {
+  const quorum = controls.quorumState;
+  const met = quorum?.status === "met" || quorum?.status === "waived";
+  const issues: GovernanceControlIssue[] =
+    quorum !== undefined && !met
+      ? [
+          {
+            code: "quorum_not_met",
+            message: "Quorum must be met or explicitly waived before recording this decision.",
+            sourceRefs: [refFor(quorum, "source")],
+            safeToExplain: true
+          }
+        ]
+      : [];
+
+  return {
+    kind: "quorum",
+    status: quorum === undefined ? "missing" : met ? "satisfied" : "blocked",
+    required: false,
+    sourceRefs: quorum === undefined ? [] : [refFor(quorum, "source")],
+    issues,
+    evaluatedAt
+  };
+}
+
+function evaluateDelegationControl(
+  decision: Decision,
+  controls: GovernanceRuntimeControls,
+  evaluatedAt: IsoDateTime
+): GovernanceControlEvaluation {
+  const methodRequiresDelegation = decision.method.kind === "delegated_authority";
+  const delegatedAuthorityRefs = controls.delegatedAuthorityRefs ?? [];
+  const revokedDelegationRefs = controls.revokedDelegationRefs ?? [];
+  const issues: GovernanceControlIssue[] = [];
+
+  if (methodRequiresDelegation && delegatedAuthorityRefs.length === 0) {
+    issues.push({
+      code: "delegation_missing",
+      message: "Delegated-authority decisions must preserve the delegated authority refs used.",
+      sourceRefs: [],
+      safeToExplain: true
+    });
+  }
+
+  if (revokedDelegationRefs.length > 0) {
+    issues.push({
+      code: "delegation_revoked",
+      message: "Decision context includes revoked delegation refs.",
+      sourceRefs: revokedDelegationRefs,
+      safeToExplain: true
+    });
+  }
+
+  return {
+    kind: "delegation",
+    status:
+      issues.length > 0
+        ? "blocked"
+        : delegatedAuthorityRefs.length > 0 || !methodRequiresDelegation
+          ? "satisfied"
+          : "missing",
+    required: methodRequiresDelegation,
+    sourceRefs: [...delegatedAuthorityRefs, ...revokedDelegationRefs],
+    issues,
+    evaluatedAt
+  };
+}
+
+function evaluateRevocationControl(
+  decision: Decision,
+  controls: GovernanceRuntimeControls,
+  evaluatedAt: IsoDateTime
+): GovernanceControlEvaluation {
+  const authorityRefs = [...decision.authorityRefs, ...decision.method.authorityRefs];
+  const revokedAuthorityRefs = controls.revokedAuthorityRefs ?? [];
+  const revokedAuthorityUsed = revokedAuthorityRefs.filter((revokedRef) =>
+    authorityRefs.some((authorityRef) => sameRef(authorityRef, revokedRef))
+  );
+  const issues: GovernanceControlIssue[] = revokedAuthorityUsed.map((ref) => ({
+    code: "authority_revoked",
+    message: "Decision cites an authority ref that has been revoked.",
+    sourceRefs: [ref],
+    safeToExplain: true
+  }));
+
+  return {
+    kind: "revocation",
+    status: issues.length > 0 ? "blocked" : "satisfied",
+    required: true,
+    sourceRefs: revokedAuthorityRefs,
+    issues,
+    evaluatedAt
+  };
+}
+
+function evaluateAppealControl(
+  decision: Decision,
+  controls: GovernanceRuntimeControls,
+  evaluatedAt: IsoDateTime
+): GovernanceControlEvaluation {
+  const appealPathRef =
+    controls.appealPathRef ?? decision.appealPathRef ?? decision.method.appealPathRef;
+  const contestedEvidenceRefs = controls.contestedEvidenceRefs ?? [];
+  const required = decision.effect === "binding" || contestedEvidenceRefs.length > 0;
+  const issues: GovernanceControlIssue[] =
+    required && appealPathRef === undefined
+      ? [
+          {
+            code: "appeal_path_missing",
+            message: "Binding or contested decisions must preserve an appeal path ref.",
+            sourceRefs: [],
+            safeToExplain: true
+          }
+        ]
+      : [];
+
+  return {
+    kind: "appeal",
+    status: issues.length > 0 ? "missing" : appealPathRef === undefined ? "missing" : "satisfied",
+    required,
+    sourceRefs: appealPathRef === undefined ? [] : [appealPathRef],
+    issues,
+    evaluatedAt
+  };
+}
+
+function evaluateContestedEvidenceControl(
+  decision: Decision,
+  controls: GovernanceRuntimeControls,
+  evaluatedAt: IsoDateTime
+): GovernanceControlEvaluation {
+  const contestedEvidenceRefs = controls.contestedEvidenceRefs ?? [];
+  const contestedEvidenceUsed = contestedEvidenceRefs.filter((contestedRef) =>
+    decision.evidenceRefs.some((evidenceRef) => sameRef(evidenceRef, contestedRef))
+  );
+  const hasHandling =
+    contestedEvidenceUsed.length === 0 ||
+    decision.unresolvedObjectionRefs.length > 0 ||
+    decision.conditions.some((condition) => condition.toLowerCase().includes("contest")) ||
+    decision.rationale.toLowerCase().includes("contest") ||
+    controls.appealPathRef !== undefined ||
+    decision.appealPathRef !== undefined ||
+    decision.method.appealPathRef !== undefined;
+  const issues: GovernanceControlIssue[] = hasHandling
+    ? []
+    : [
+        {
+          code: "contested_evidence_unhandled",
+          message: "Decision uses contested evidence without preserving objections, conditions, rationale, or an appeal path.",
+          sourceRefs: contestedEvidenceUsed,
+          safeToExplain: true
+        }
+      ];
+
+  return {
+    kind: "contested_evidence",
+    status:
+      issues.length > 0
+        ? "contested"
+        : contestedEvidenceUsed.length > 0
+          ? "requires_review"
+          : "satisfied",
+    required: contestedEvidenceUsed.length > 0,
+    sourceRefs: contestedEvidenceUsed,
+    issues,
+    evaluatedAt
+  };
+}
+
+function commandCodeForControlIssue(
+  issue: GovernanceControlIssue
+): GovernanceCommandErrorCode {
+  switch (issue.code) {
+    case "consent_blocked":
+      return "decision-consent-blocked";
+    case "quorum_not_met":
+      return "decision-quorum-not-met";
+    case "contested_evidence_unhandled":
+      return "decision-contested-evidence-unhandled";
+    case "appeal_path_missing":
+      return "decision-missing-appeal-path";
+    case "authority_revoked":
+      return "authority-revoked";
+    case "delegation_revoked":
+      return "delegation-revoked";
+    case "delegation_missing":
+      return "delegation-empty-grant";
+  }
 }
 
 interface AppendGovernanceEventInput<TRecord> {

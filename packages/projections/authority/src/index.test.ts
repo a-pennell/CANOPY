@@ -286,6 +286,46 @@ describe("buildAuthorityProjection", () => {
     expect(projection.indicators.status).toBe("denied");
   });
 
+  it("surfaces runtime governance control findings from decision payloads", () => {
+    const projection = buildAuthorityProjection([
+      event({
+        id: "event.hardened-decision",
+        type: "governance.decision.recorded",
+        objectRef: decisionRef,
+        authorityRefs: [mandateRef],
+        payload: {
+          decision: {
+            effect: "binding",
+            decidedByRefs: [actorRef],
+            unresolvedObjectionRefs: [],
+            method: {
+              kind: "consent",
+              authorityRefs: [mandateRef]
+            }
+          },
+          governanceControls: {
+            status: "blocked",
+            issues: [
+              { code: "quorum_not_met" },
+              { code: "authority_revoked" },
+              { code: "contested_evidence_unhandled" }
+            ]
+          }
+        }
+      })
+    ]);
+
+    expect(projection.findings.map((finding) => finding.kind)).toEqual([
+      "authority-revoked",
+      "decision-contested-evidence-unhandled",
+      "decision-quorum-not-met"
+    ]);
+    expect(projection.indicators.authorityFlowIssueEventIds).toEqual([
+      "event.hardened-decision"
+    ]);
+    expect(projection.tracesByObject.find((trace) => trace.objectRef.id === decisionRef.id)?.status).toBe("denied");
+  });
+
   it("builds an authority trace by object", () => {
     const trace = buildAuthorityTrace(mandateRef, [
       event({

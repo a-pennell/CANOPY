@@ -11,6 +11,7 @@
     "@canopy/app-shell": "0.0.0",
     "@canopy/capabilities-allocation-accounting": "0.0.0",
     "@canopy/capabilities-claims-evidence": "0.0.0",
+    "@canopy/capabilities-data-stewardship": "0.0.0",
     "@canopy/capabilities-governance": "0.0.0",
     "@canopy/capabilities-stewardship": "0.0.0",
     "@canopy/contracts-governance": "0.0.0",

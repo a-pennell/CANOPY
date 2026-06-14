@@ -6,6 +6,7 @@ import {
   projectionRebuilderRegistry,
   projectionMaterializedTargetRef,
   readMaterializedProjection,
+  requestProjectionRebuild,
   rebuildAndPersistAllProjections,
   rebuildAllProjections
 } from "./index";
@@ -266,5 +267,36 @@ describe("projection rebuild workflow", () => {
         targetRef: decisionRef
       })?.projection.decisionRef
     ).toEqual(decisionRef);
+  });
+
+  it("marks projections as requested for operator rebuild", () => {
+    const runtime = createInMemoryCanonicalPersistence({
+      now: () => "2026-01-08T00:00:00.000Z"
+    });
+    const firstEvent = events[0];
+    if (firstEvent === undefined) {
+      throw new Error("expected projection rebuild fixture event");
+    }
+    runtime.appendEvent(firstEvent);
+    rebuildAndPersistAllProjections(runtime, {
+      rebuiltAt: "2026-01-09T00:00:00.000Z"
+    });
+
+    const request = requestProjectionRebuild({
+      runtime,
+      requestedAt: "2026-01-10T00:00:00.000Z",
+      projectionNames: ["civic-memory", "claim-evidence"],
+      reason: "operator requested after drift alert"
+    });
+
+    expect(request.requestedStates.map((state) => state.id)).toEqual([
+      "projection-state.civic-memory",
+      "projection-state.claim-evidence"
+    ]);
+    expect(runtime.getProjectionState("projection-state.civic-memory")).toMatchObject({
+      status: "stale",
+      rebuildRequestedAt: "2026-01-10T00:00:00.000Z",
+      lastError: "operator requested after drift alert"
+    });
   });
 });

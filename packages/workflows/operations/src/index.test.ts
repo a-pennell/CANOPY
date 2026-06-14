@@ -11,8 +11,10 @@ import {
   executeReviewedImport
 } from "@canopy/workflows-import-execution";
 import {
+  buildCanopyOperationsRemediationPlan,
   buildCanopyOperationsReport,
   drainCanopyOutboxControl,
+  executeCanopyOperationsRemediationCommands,
   runCanopyProjectionRebuildControl,
   runCanopyOperationsCycle
 } from "./index.js";
@@ -235,6 +237,80 @@ describe("canopy operations workflow", () => {
       "drift.import-remediation.open"
     ]);
   });
+
+  it("turns operations reports into operator remediation commands", () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => now });
+    runtime.putProjectionState(failedProjectionState());
+    runtime.putOutbox(retryableOutboxRecord());
+    runtime.putOutbox(failedImportOutboxRecord());
+    runtime.putAdapterAudit(failedImportAuditRecord());
+
+    const report = buildCanopyOperationsReport({
+      runtime,
+      generatedAt: now,
+      expectedProjectionNames: ["civic-memory"]
+    });
+    const plan = buildCanopyOperationsRemediationPlan({
+      report,
+      generatedAt: "2026-06-13T19:05:00.000Z"
+    });
+
+    expect(plan.commands.map((command) => command.type)).toEqual([
+      "retry-failed-outbox",
+      "request-projection-rebuild",
+      "quarantine-failed-import",
+      "acknowledge-adapter-audit-failure",
+      "create-invariant-drift-ticket",
+      "create-invariant-drift-ticket",
+      "create-invariant-drift-ticket",
+      "create-invariant-drift-ticket"
+    ]);
+
+    const remediation = executeCanopyOperationsRemediationCommands({
+      runtime,
+      commands: plan.commands,
+      now: "2026-06-13T19:10:00.000Z",
+      expectedProjectionNames: ["civic-memory"]
+    });
+
+    expect(remediation.commands.every((command) => command.status === "applied")).toBe(
+      true
+    );
+    expect(runtime.getOutbox("outbox.retryable.failed")).toMatchObject({
+      status: "pending"
+    });
+    expect(runtime.getOutbox("outbox.retryable.failed")?.lastError).toBeUndefined();
+    expect(runtime.getOutbox("outbox.import.failed")).toMatchObject({
+      status: "cancelled",
+      updatedAt: "2026-06-13T19:10:00.000Z"
+    });
+    expect(runtime.getProjectionState("projection-state.civic-memory")).toMatchObject({
+      status: "failed",
+      rebuildRequestedAt: "2026-06-13T19:10:00.000Z"
+    });
+    const auditOperations = runtime.listAdapterAudits().map((audit) => audit.operation);
+    expect(auditOperations).toEqual(
+      expect.arrayContaining([
+        "adapter-audit.acknowledge-failure",
+        "import.execute-reviewed",
+        "import.quarantine"
+      ])
+    );
+    expect(
+      auditOperations.filter((operation) => operation === "invariant-drift.ticket-created")
+    ).toHaveLength(4);
+    expect(remediation.report.adapterAuditReview.unresolvedAuditIds).toEqual([]);
+    expect(remediation.report.failedImportRemediation.total).toBe(0);
+
+    const followUpPlan = buildCanopyOperationsRemediationPlan({
+      report: remediation.report,
+      generatedAt: "2026-06-13T19:15:00.000Z"
+    });
+
+    expect(followUpPlan.commands.map((command) => command.type)).not.toContain(
+      "create-invariant-drift-ticket"
+    );
+  });
 });
 
 function failedProjectionState(): ProjectionStateRecord {
@@ -274,6 +350,29 @@ function failedImportOutboxRecord(): OutboxRecord {
     attemptCount: 1,
     maxAttempts: 1,
     lastError: "projection builder rejected import payload"
+  };
+}
+
+function retryableOutboxRecord(): OutboxRecord {
+  return {
+    id: "outbox.retryable.failed",
+    kind: "outbox",
+    schemaVersion: 1,
+    createdAt: now,
+    eventId: "event.resource.changed",
+    eventType: "stewardship.resource.updated",
+    destination: {
+      kind: "workflow",
+      name: "projection-rebuild"
+    },
+    status: "failed",
+    payload: {
+      eventId: "event.resource.changed"
+    },
+    dedupeKey: "resource:event.resource.changed:projection-rebuild",
+    attemptCount: 1,
+    maxAttempts: 3,
+    lastError: "temporary projection worker failure"
   };
 }
 

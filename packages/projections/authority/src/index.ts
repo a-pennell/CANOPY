@@ -32,6 +32,12 @@ export type AuthorityFindingKind =
   | "proposal-unresolved-blocking-objections"
   | "decision-missing-decider"
   | "decision-unresolved-objections"
+  | "decision-consent-blocked"
+  | "decision-quorum-not-met"
+  | "decision-contested-evidence-unhandled"
+  | "decision-missing-appeal-path"
+  | "authority-revoked"
+  | "delegation-revoked"
   | "appeal-missing-grounds"
   | "appeal-missing-reviewer"
   | "emergency-missing-authority"
@@ -399,6 +405,7 @@ const collectAuthorityFlowFindings = (
 
     if (event.type === "governance.decision.recorded") {
       findings.push(...decisionFindings(event, record));
+      findings.push(...governanceControlFindings(event));
     }
 
     if (event.type === "governance.appeal.opened") {
@@ -576,6 +583,29 @@ const decisionFindings = (
   return findings;
 };
 
+const governanceControlFindings = (
+  event: CanopyEvent
+): readonly AuthorityFinding[] => {
+  const controls = event.payload["governanceControls"];
+
+  if (!isRecord(controls)) {
+    return [];
+  }
+
+  const issues = arrayField(controls, "issues").filter(isRecord);
+
+  return issues
+    .map((issueRecord) => controlIssueFindingKind(stringField(issueRecord, "code")))
+    .filter(isDefined)
+    .map((kind) =>
+      finding(
+        kind,
+        event,
+        messageForControlFinding(kind)
+      )
+    );
+};
+
 const appealFindings = (
   event: CanopyEvent,
   record: Readonly<Record<string, unknown>>
@@ -655,6 +685,46 @@ const emergencyAuthorityFindings = (
   return findings;
 };
 
+const controlIssueFindingKind = (
+  code: string | undefined
+): AuthorityFindingKind | undefined => {
+  switch (code) {
+    case "consent_blocked":
+      return "decision-consent-blocked";
+    case "quorum_not_met":
+      return "decision-quorum-not-met";
+    case "contested_evidence_unhandled":
+      return "decision-contested-evidence-unhandled";
+    case "appeal_path_missing":
+      return "decision-missing-appeal-path";
+    case "authority_revoked":
+      return "authority-revoked";
+    case "delegation_revoked":
+      return "delegation-revoked";
+    default:
+      return undefined;
+  }
+};
+
+const messageForControlFinding = (kind: AuthorityFindingKind): string => {
+  switch (kind) {
+    case "decision-consent-blocked":
+      return "Consent signals include a block or withheld consent.";
+    case "decision-quorum-not-met":
+      return "Quorum must be met or explicitly waived before recording this decision.";
+    case "decision-contested-evidence-unhandled":
+      return "Decision uses contested evidence without preserving objections, conditions, rationale, or an appeal path.";
+    case "decision-missing-appeal-path":
+      return "Binding or contested decisions must preserve an appeal path ref.";
+    case "authority-revoked":
+      return "Decision cites an authority ref that has been revoked.";
+    case "delegation-revoked":
+      return "Decision context includes revoked delegation refs.";
+    default:
+      return "Governance control issue requires attention.";
+  }
+};
+
 const finding = (
   kind: AuthorityFindingKind,
   event: CanopyEvent,
@@ -694,7 +764,7 @@ const statusForFindings = (
   if (
     findings.some(
       (finding) =>
-        finding.kind === "missing-authority" || finding.kind === "binding-event-uncovered"
+        finding.kind !== "membership-only-authority"
     )
   ) {
     return "denied";

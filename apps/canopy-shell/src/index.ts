@@ -3,6 +3,7 @@ import type {
   CanopyEvent,
   CanopyEventNamespace,
   CanopyId,
+  CanopyObjectType,
   ObjectRef
 } from "@canopy/contracts-kernel";
 import type {
@@ -11,6 +12,7 @@ import type {
   CanopyUiAuthorityTraceViewModel,
   CanopyUiClaimEvidenceAiIndicator,
   CanopyUiClaimEvidenceClaimSummary,
+  CanopyUiClaimEvidenceContestSummary,
   CanopyUiClaimEvidenceEvidenceSummary,
   CanopyUiClaimEvidenceLinkSummary,
   CanopyUiClaimEvidenceViewModel,
@@ -172,6 +174,11 @@ export interface BuildCanopyShellSessionInput extends BuildCanopyShellSnapshotIn
   readonly route?: string;
 }
 
+export interface BuildPersistedCanopyShellSessionInput
+  extends BuildPersistedCanopyShellSnapshotInput {
+  readonly route?: string;
+}
+
 export interface CanopyShellSession {
   readonly snapshot: CanopyShellSnapshot;
   readonly navigation: CanopyUiShellNavigation;
@@ -181,6 +188,24 @@ export interface CanopyShellSession {
 
 export interface CanopyShellCommandExecution extends CanopyUiShellCommandResult {
   readonly session: CanopyShellSession;
+}
+
+export interface PersistedCanopyShellSessionResult
+  extends PersistedCanopyShellSnapshotResult {
+  readonly session: CanopyShellSession;
+}
+
+export interface ExecutePersistedCanopyShellCommandInput
+  extends BuildPersistedCanopyShellSessionInput {
+  readonly command: string;
+}
+
+export interface PersistedCanopyShellCommandExecution
+  extends CanopyUiShellCommandResult {
+  readonly session: CanopyShellSession;
+  readonly sourceEventIds: readonly CanopyId[];
+  readonly projectionRebuild?: PersistentProjectionRebuildResult;
+  readonly persistedProjectionStateIds: readonly CanopyId[];
 }
 
 export function buildCanopyShellSnapshot(
@@ -288,10 +313,86 @@ export function buildPersistedCanopyShellSnapshot(
 export function buildCanopyShellSession(
   input: BuildCanopyShellSessionInput
 ): CanopyShellSession {
+  const selectedObjectRef =
+    input.selectedObjectRef ?? selectedObjectRefForRoute(input.events, input.route);
+
   return buildCanopyShellSessionFromSnapshot(
-    buildCanopyShellSnapshot(input),
+    buildCanopyShellSnapshot(
+      optionalShellSnapshotInput({
+        events: input.events,
+        scope: input.scope,
+        selectedObjectRef,
+        activeMode: input.activeMode ?? activeModeForRoute(input.route, selectedObjectRef),
+        materializedProjections: input.materializedProjections ?? [],
+        importDryRun: input.importDryRun
+      })
+    ),
     input.route
   );
+}
+
+export function buildPersistedCanopyShellSession(
+  input: BuildPersistedCanopyShellSessionInput
+): PersistedCanopyShellSessionResult {
+  const events = input.runtime.queryEvents().items.map((record) => record.event);
+  const selectedObjectRef =
+    input.selectedObjectRef ?? selectedObjectRefForRoute(events, input.route);
+  const persisted = buildPersistedCanopyShellSnapshot(
+    optionalPersistedShellSnapshotInput({
+      runtime: input.runtime,
+      scope: input.scope,
+      selectedObjectRef,
+      activeMode: input.activeMode ?? activeModeForRoute(input.route, selectedObjectRef),
+      persistProjectionState: input.persistProjectionState,
+      rebuiltAt: input.rebuiltAt,
+      materializedProjections: input.materializedProjections,
+      materializedProjectionStore: input.materializedProjectionStore,
+      importDryRun: input.importDryRun
+    })
+  );
+
+  return optionalPersistedShellSessionResult({
+    snapshot: persisted.snapshot,
+    sourceEventIds: persisted.sourceEventIds,
+    projectionRebuild: persisted.projectionRebuild,
+    persistedProjectionStateIds: persisted.persistedProjectionStateIds,
+    session: buildCanopyShellSessionFromSnapshot(persisted.snapshot, input.route)
+  });
+}
+
+export function executePersistedCanopyShellCommand(
+  input: ExecutePersistedCanopyShellCommandInput
+): PersistedCanopyShellCommandExecution {
+  const initial = buildPersistedCanopyShellSession(input);
+  const normalized = input.command.trim();
+  const routes = buildShellRoutes(initial.snapshot);
+  const target = resolveCommandRoute(initial.snapshot, routes, normalized);
+  const status = target?.status === "unavailable"
+    ? "unavailable"
+    : target === undefined
+      ? "not-found"
+      : "handled";
+  const next = buildPersistedCanopyShellSession({
+    ...input,
+    route: target?.path ?? "/help"
+  });
+  const message =
+    status === "handled"
+      ? `Opened ${next.session.screen.route.label}.`
+      : status === "unavailable"
+        ? `${target?.label ?? normalized} is not available in this shell state.`
+        : `Unknown shell command: ${normalized || "(empty)"}.`;
+
+  return optionalPersistedShellCommandExecution({
+    status,
+    command: input.command,
+    message,
+    screen: next.session.screen,
+    session: next.session,
+    sourceEventIds: next.sourceEventIds,
+    projectionRebuild: next.projectionRebuild,
+    persistedProjectionStateIds: next.persistedProjectionStateIds
+  });
 }
 
 export function buildCanopyShellSessionFromSnapshot(
@@ -627,11 +728,14 @@ function renderClaimEvidence(snapshot: CanopyShellSnapshot): readonly string[] {
 
   return compactLines([
     "Claims and Evidence",
-    `Counts: ${surface.counts.claims} claims, ${surface.counts.evidence} evidence, ${surface.counts.aiNonAuthorityIndicators} AI indicators`,
+    `Counts: ${surface.counts.claims} claims, ${surface.counts.evidence} evidence, ${surface.counts.contests} contests, ${surface.counts.aiNonAuthorityIndicators} AI indicators`,
     surface.selectedClaim === undefined ? undefined : `Selected claim: ${formatRef(surface.selectedClaim.claimRef)} (${surface.selectedClaim.status})`,
     surface.selectedEvidence === undefined ? undefined : `Selected evidence: ${formatRef(surface.selectedEvidence.evidenceRef)}`,
     ...surface.claims.slice(0, 8).map((claim) =>
-      `- claim ${formatRef(claim.claimRef)} status=${claim.status} evidence=${claim.evidenceRefs.length}`
+      `- claim ${formatRef(claim.claimRef)} status=${claim.status} evidence=${claim.evidenceRefs.length} contests=${claim.contestRefs.length}`
+    ),
+    ...surface.contests.slice(0, 8).map((contest) =>
+      `- contest ${formatRef(contest.contestRef)} contests=${formatRef(contest.claimRef)} evidence=${contest.evidenceRefs.length}`
     ),
     ...surface.evidence.slice(0, 8).map((evidence) =>
       `- evidence ${formatRef(evidence.evidenceRef)} ai=${String(evidence.isAiOrModelOutput)} claims=${evidence.claimRefs.length}`
@@ -902,6 +1006,82 @@ function defaultRouteForSnapshot(snapshot: CanopyShellSnapshot): string {
   return "/scope";
 }
 
+function activeModeForRoute(
+  route: string | undefined,
+  selectedObjectRef: ObjectRef | undefined
+): CanopyShellMode | undefined {
+  const normalized = normalizeRoute(route);
+
+  if (normalized === "/memory") {
+    return "memory";
+  }
+
+  if (normalized === "/decisions" || selectedObjectRef?.type === "decision") {
+    return "decisions";
+  }
+
+  if (
+    normalized === "/stewardship" ||
+    selectedObjectRef?.type === "resource" ||
+    selectedObjectRef?.type === "use-right"
+  ) {
+    return "stewardship";
+  }
+
+  if (normalized === "/federation") {
+    return "federation";
+  }
+
+  if (normalized === "/objects" || normalized?.startsWith("/objects/") === true) {
+    return "objects";
+  }
+
+  return undefined;
+}
+
+function selectedObjectRefForRoute(
+  events: readonly CanopyEvent[],
+  route: string | undefined
+): ObjectRef | undefined {
+  const routeRef = parseObjectRoute(route);
+
+  if (routeRef === undefined) {
+    return undefined;
+  }
+
+  return sortedRefs(eventRefs(events)).find(
+    (ref) => ref.type === routeRef.type && ref.id === routeRef.id
+  );
+}
+
+function parseObjectRoute(
+  route: string | undefined
+): { readonly type: CanopyObjectType; readonly id: CanopyId } | undefined {
+  const normalized = normalizeRoute(route);
+
+  if (normalized === undefined) {
+    return undefined;
+  }
+
+  const match = /^\/objects\/([^/]+)\/(.+)$/.exec(normalized);
+  const objectType = match?.[1];
+  const objectId = match?.[2];
+
+  if (objectType === undefined || objectId === undefined || !isCanopyObjectType(objectType)) {
+    return undefined;
+  }
+
+  return { type: objectType, id: decodeURIComponent(objectId) };
+}
+
+function normalizeRoute(route: string | undefined): string | undefined {
+  if (route === undefined) {
+    return undefined;
+  }
+
+  return route.startsWith("/") ? route : `/${route}`;
+}
+
 function resolveRoute(
   routes: readonly CanopyUiShellRoute[],
   route: string | undefined
@@ -910,7 +1090,7 @@ function resolveRoute(
     return undefined;
   }
 
-  const normalized = route.startsWith("/") ? route : `/${route}`;
+  const normalized = normalizeRoute(route);
 
   return routes.find(
     (entry) =>
@@ -967,6 +1147,12 @@ function collectNavigableRefs(snapshot: CanopyShellSnapshot): readonly ObjectRef
       ...(snapshot.surfaces.federationExportState?.includedObjectRefs ?? []),
       ...(snapshot.surfaces.importReview?.candidates.map((candidate) => candidate.canonicalRef) ?? [])
     ])
+  );
+}
+
+function eventRefs(events: readonly CanopyEvent[]): readonly ObjectRef[] {
+  return dedupeRefs(
+    events.flatMap((event) => [event.objectRef, ...event.relatedRefs, ...event.authorityRefs])
   );
 }
 
@@ -1431,6 +1617,7 @@ function buildClaimEvidenceViewModel(
     claims,
     evidence,
     links: claimEvidence.evidenceLinks.map(toClaimEvidenceLinkSummary),
+    contests: claimEvidence.contests.map(toClaimEvidenceContestSummary),
     aiNonAuthorityIndicators: claimEvidence.aiNonAuthorityIndicators.map(toClaimEvidenceAiIndicator),
     counts: {
       claims: claimEvidence.counts.claims,
@@ -1566,6 +1753,7 @@ function toClaimEvidenceClaimSummary(
     title: claim.title,
     summary: claim.summary,
     evidenceRefs: claim.evidenceRefs,
+    contestRefs: claim.contests.map((contest) => contest.contestRef),
     authorityRefs: claim.authorityRefs,
     sourceCapabilities: claim.sourceCapabilities,
     aiIndicatorEventIds: claim.aiNonAuthorityIndicators.map((indicator) => indicator.eventId)
@@ -1608,6 +1796,20 @@ function toClaimEvidenceAiIndicator(
     relatedClaimRefs: indicator.relatedClaimRefs,
     reason: indicator.reason,
     sourceCapability: indicator.sourceCapability
+  };
+}
+
+function toClaimEvidenceContestSummary(
+  contest: ClaimEvidenceProjection["contests"][number]
+): CanopyUiClaimEvidenceContestSummary {
+  return {
+    claimRef: contest.claimRef,
+    contestRef: contest.contestRef,
+    eventId: contest.eventId,
+    occurredAt: contest.occurredAt,
+    evidenceRefs: contest.evidenceRefs,
+    authorityRefs: contest.authorityRefs,
+    sourceCapability: contest.sourceCapability
   };
 }
 
@@ -1758,6 +1960,10 @@ function hasFederationSurface(events: readonly CanopyEvent[]): boolean {
   );
 }
 
+function isCanopyObjectType(value: string): value is CanopyObjectType {
+  return canopyObjectTypes.includes(value as CanopyObjectType);
+}
+
 function isBindingEvent(event: CanopyEvent): boolean {
   return (
     event.type === "governance.decision.recorded" ||
@@ -1790,6 +1996,41 @@ const projectionRebuilderNames = [
   "resource-stewardship",
   "decision-packet"
 ] as const satisfies readonly ProjectionRebuilderName[];
+
+const canopyObjectTypes = [
+  "account",
+  "agreement",
+  "appeal",
+  "budget",
+  "claim",
+  "commitment",
+  "commons",
+  "decision",
+  "decision-packet",
+  "evidence",
+  "flow",
+  "guardian-review",
+  "indicator",
+  "issue",
+  "ledger-account",
+  "ledger-entry",
+  "living-system",
+  "mandate",
+  "model",
+  "need",
+  "offer",
+  "organization",
+  "person",
+  "place",
+  "policy",
+  "proposal",
+  "resource",
+  "role",
+  "source",
+  "task",
+  "threshold",
+  "use-right"
+] as const satisfies readonly CanopyObjectType[];
 
 function projectionRead(
   read: {
@@ -2085,6 +2326,7 @@ function optionalClaimEvidenceViewModel(
     claims: viewModel.claims,
     evidence: viewModel.evidence,
     links: viewModel.links,
+    contests: viewModel.contests,
     aiNonAuthorityIndicators: viewModel.aiNonAuthorityIndicators,
     counts: viewModel.counts,
     projectionRead: viewModel.projectionRead
@@ -2115,6 +2357,7 @@ function optionalClaimEvidenceClaimSummary(
     status: claim.status,
     ...optionalFields,
     evidenceRefs: claim.evidenceRefs,
+    contestRefs: claim.contestRefs,
     authorityRefs: claim.authorityRefs,
     sourceCapabilities: claim.sourceCapabilities,
     aiIndicatorEventIds: claim.aiIndicatorEventIds
@@ -2539,6 +2782,64 @@ function optionalShellSnapshotInput(
   };
 }
 
+function optionalPersistedShellSnapshotInput(
+  input: {
+    readonly runtime: CanonicalPersistenceRuntime;
+    readonly scope: CanopyShellScope;
+    readonly selectedObjectRef: ObjectRef | undefined;
+    readonly activeMode: CanopyShellMode | undefined;
+    readonly persistProjectionState: boolean | undefined;
+    readonly rebuiltAt: string | undefined;
+    readonly materializedProjections: readonly MaterializedProjectionDocument[] | undefined;
+    readonly materializedProjectionStore: MaterializedProjectionStore | undefined;
+    readonly importDryRun: ImportDryRunResult | undefined;
+  }
+): BuildPersistedCanopyShellSnapshotInput {
+  const optionalFields: {
+    selectedObjectRef?: ObjectRef;
+    activeMode?: CanopyShellMode;
+    persistProjectionState?: boolean;
+    rebuiltAt?: string;
+    materializedProjections?: readonly MaterializedProjectionDocument[];
+    materializedProjectionStore?: MaterializedProjectionStore;
+    importDryRun?: ImportDryRunResult;
+  } = {};
+
+  if (input.selectedObjectRef !== undefined) {
+    optionalFields.selectedObjectRef = input.selectedObjectRef;
+  }
+
+  if (input.activeMode !== undefined) {
+    optionalFields.activeMode = input.activeMode;
+  }
+
+  if (input.persistProjectionState !== undefined) {
+    optionalFields.persistProjectionState = input.persistProjectionState;
+  }
+
+  if (input.rebuiltAt !== undefined) {
+    optionalFields.rebuiltAt = input.rebuiltAt;
+  }
+
+  if (input.materializedProjections !== undefined) {
+    optionalFields.materializedProjections = input.materializedProjections;
+  }
+
+  if (input.materializedProjectionStore !== undefined) {
+    optionalFields.materializedProjectionStore = input.materializedProjectionStore;
+  }
+
+  if (input.importDryRun !== undefined) {
+    optionalFields.importDryRun = input.importDryRun;
+  }
+
+  return {
+    runtime: input.runtime,
+    scope: input.scope,
+    ...optionalFields
+  };
+}
+
 function optionalPersistedShellResult(
   result: {
     readonly snapshot: CanopyShellSnapshot;
@@ -2557,6 +2858,64 @@ function optionalPersistedShellResult(
 
   return {
     snapshot: result.snapshot,
+    sourceEventIds: result.sourceEventIds,
+    ...optionalFields,
+    persistedProjectionStateIds: result.persistedProjectionStateIds
+  };
+}
+
+function optionalPersistedShellSessionResult(
+  result: {
+    readonly snapshot: CanopyShellSnapshot;
+    readonly sourceEventIds: readonly CanopyId[];
+    readonly projectionRebuild: PersistentProjectionRebuildResult | undefined;
+    readonly persistedProjectionStateIds: readonly CanopyId[];
+    readonly session: CanopyShellSession;
+  }
+): PersistedCanopyShellSessionResult {
+  const optionalFields: {
+    projectionRebuild?: PersistentProjectionRebuildResult;
+  } = {};
+
+  if (result.projectionRebuild !== undefined) {
+    optionalFields.projectionRebuild = result.projectionRebuild;
+  }
+
+  return {
+    snapshot: result.snapshot,
+    sourceEventIds: result.sourceEventIds,
+    ...optionalFields,
+    persistedProjectionStateIds: result.persistedProjectionStateIds,
+    session: result.session
+  };
+}
+
+function optionalPersistedShellCommandExecution(
+  result: {
+    readonly status: CanopyUiShellCommandResult["status"];
+    readonly command: string;
+    readonly message: string;
+    readonly screen: CanopyUiShellScreen;
+    readonly session: CanopyShellSession;
+    readonly sourceEventIds: readonly CanopyId[];
+    readonly projectionRebuild: PersistentProjectionRebuildResult | undefined;
+    readonly persistedProjectionStateIds: readonly CanopyId[];
+  }
+): PersistedCanopyShellCommandExecution {
+  const optionalFields: {
+    projectionRebuild?: PersistentProjectionRebuildResult;
+  } = {};
+
+  if (result.projectionRebuild !== undefined) {
+    optionalFields.projectionRebuild = result.projectionRebuild;
+  }
+
+  return {
+    status: result.status,
+    command: result.command,
+    message: result.message,
+    screen: result.screen,
+    session: result.session,
     sourceEventIds: result.sourceEventIds,
     ...optionalFields,
     persistedProjectionStateIds: result.persistedProjectionStateIds

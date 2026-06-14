@@ -52,7 +52,7 @@ export const candidateProviderTargets = [
     kind: "auth",
     provider: "oidc",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/oidc-auth",
     conformanceSuiteKind: "auth",
     requiredBeforeProductionUse: [
@@ -94,7 +94,7 @@ export const candidateProviderTargets = [
     kind: "object-graph",
     provider: "postgres",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/postgres-object-graph",
     conformanceSuiteKind: "object-graph",
     requiredBeforeProductionUse: [
@@ -136,7 +136,7 @@ export const candidateProviderTargets = [
     kind: "geospatial",
     provider: "postgis",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/postgis-geospatial",
     conformanceSuiteKind: "geospatial",
     requiredBeforeProductionUse: [
@@ -150,7 +150,7 @@ export const candidateProviderTargets = [
     kind: "time-series",
     provider: "timescaledb",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/timescaledb-time-series",
     conformanceSuiteKind: "time-series",
     requiredBeforeProductionUse: [
@@ -164,7 +164,7 @@ export const candidateProviderTargets = [
     kind: "vector",
     provider: "pgvector",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/pgvector-vector",
     conformanceSuiteKind: "vector",
     requiredBeforeProductionUse: [
@@ -178,7 +178,7 @@ export const candidateProviderTargets = [
     kind: "federation-transport",
     provider: "activitypub",
     role: "candidate-provider",
-    status: "planned",
+    status: "prototype",
     plannedPackage: "packages/adapters/providers/activitypub-transport",
     conformanceSuiteKind: "federation-transport",
     requiredBeforeProductionUse: [

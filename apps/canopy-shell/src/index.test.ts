@@ -7,8 +7,10 @@ import {
   buildCanopyShellNavigation,
   buildCanopyShellSession,
   buildCanopyShellSnapshot,
+  buildPersistedCanopyShellSession,
   buildPersistedCanopyShellSnapshot,
   executeCanopyShellCommand,
+  executePersistedCanopyShellCommand,
   renderCanopyShell
 } from "./index.js";
 
@@ -329,8 +331,78 @@ describe("canopy shell snapshot", () => {
     expect(session.screen.text).toContain("Federation Export: ready");
     expect(session.screen.text).toContain("Data stewardship agreements: agreement:agreement.data-stewardship.foodshed");
     expect(renderCanopyShell(session.snapshot, "/claims-evidence")).toContain(
-      "Counts: 1 claims, 1 evidence, 1 AI indicators"
+      "Counts: 1 claims, 1 evidence, 0 contests, 1 AI indicators"
     );
+  });
+
+  it("builds persisted sessions that hydrate object routes from canonical runtime events", () => {
+    const runtime = createInMemoryCanonicalPersistence({
+      now: () => "2026-06-13T18:00:00.000Z"
+    });
+    const materializedProjectionStore = createInMemoryMaterializedProjectionStore();
+
+    for (const event of stewardshipEvents) {
+      runtime.appendEvent(event);
+    }
+
+    const persisted = buildPersistedCanopyShellSession({
+      runtime,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      route: "/objects/resource/resource.cooling-center",
+      rebuiltAt: "2026-06-13T18:05:00.000Z",
+      materializedProjectionStore
+    });
+
+    expect(persisted.session.navigation.activePath).toBe(
+      "/objects/resource/resource.cooling-center"
+    );
+    expect(persisted.session.snapshot.selectedObjectRef).toEqual(resourceRef);
+    expect(persisted.session.snapshot.activeMode).toBe("stewardship");
+    expect(persisted.session.screen.text).toContain("Object Page: Cooling center");
+    expect(persisted.session.snapshot.surfaces.objectPage?.projectionRead).toMatchObject({
+      kind: "materialized",
+      projectionName: "object-page",
+      targetRef: resourceRef
+    });
+    expect(persisted.session.snapshot.surfaces.resourceStewardship?.projectionRead).toMatchObject({
+      kind: "materialized",
+      projectionName: "resource-stewardship",
+      targetRef: resourceRef
+    });
+  });
+
+  it("executes persisted commands by rebuilding the target runtime-backed screen", () => {
+    const runtime = createInMemoryCanonicalPersistence({
+      now: () => "2026-06-13T18:00:00.000Z"
+    });
+    const materializedProjectionStore = createInMemoryMaterializedProjectionStore();
+
+    for (const event of stewardshipEvents) {
+      runtime.appendEvent(event);
+    }
+
+    const execution = executePersistedCanopyShellCommand({
+      runtime,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      command: "open /objects/resource/resource.cooling-center",
+      rebuiltAt: "2026-06-13T18:05:00.000Z",
+      materializedProjectionStore
+    });
+
+    expect(execution.status).toBe("handled");
+    expect(execution.message).toBe("Opened resource: resource.cooling-center.");
+    expect(execution.session.snapshot.selectedObjectRef).toEqual(resourceRef);
+    expect(execution.screen.text).toContain("Object Page: Cooling center");
+    expect(execution.sourceEventIds).toEqual(
+      expect.arrayContaining(stewardshipEvents.map((event) => event.id))
+    );
+    expect(execution.sourceEventIds).toHaveLength(stewardshipEvents.length);
   });
 
   it("executes CLI-like aliases over shell surfaces", () => {

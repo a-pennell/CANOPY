@@ -18,7 +18,12 @@ import type { CanonicalPersistenceRuntime } from "@canopy/database-runtime";
 import type {
   CanonicalMappingCandidate,
   ImportDryRunResult,
-  ImportDryRunWarning
+  ImportDryRunWarning,
+  SampleExportBundle
+} from "@canopy/database-import-plans";
+import {
+  dryRunSampleExportBundle,
+  sourceIdFor
 } from "@canopy/database-import-plans";
 import {
   createPersistentOutbox,
@@ -119,6 +124,54 @@ export interface ImportExecutionResult {
   readonly adapterAuditRecords: readonly AdapterAuditRecord[];
 }
 
+export interface SampleExportBundleImportFileSummary {
+  readonly path: string;
+  readonly format: SampleExportBundle["files"][number]["format"];
+  readonly sourceObject: string;
+  readonly contentHash: string;
+  readonly recordCount: number;
+}
+
+export interface SampleExportBundleImportSummary {
+  readonly bundleId: string;
+  readonly sourceProject: SampleExportBundle["sourceProject"];
+  readonly exportedAt: IsoDateTime;
+  readonly sourceSchemaVersion: string;
+  readonly description: string;
+  readonly fileCount: number;
+  readonly recordCount: number;
+  readonly files: readonly SampleExportBundleImportFileSummary[];
+}
+
+export interface SampleExportBundleImportJob {
+  readonly bundle: SampleExportBundleImportSummary;
+  readonly dryRun: ImportDryRunResult;
+  readonly review: ImportReviewReport;
+}
+
+export interface CreateSampleExportBundleImportJobInput {
+  readonly bundle: SampleExportBundle;
+  readonly review?: ImportReviewReport;
+  readonly reviewOptions?: ImportReviewOptions;
+}
+
+export interface ExecuteSampleExportBundleImportInput
+  extends Omit<CreateSampleExportBundleImportJobInput, "review">,
+    Omit<ExecuteImportInput, "dryRun" | "review"> {
+  readonly review?: ImportReviewReport;
+}
+
+export interface ExecuteSampleExportBundleImportsInput
+  extends Omit<ExecuteSampleExportBundleImportInput, "bundle" | "review"> {
+  readonly bundles: readonly SampleExportBundle[];
+}
+
+export interface SampleExportBundleImportExecutionResult {
+  readonly bundle: SampleExportBundleImportSummary;
+  readonly dryRun: ImportDryRunResult;
+  readonly execution: ImportExecutionResult;
+}
+
 export function createImportReviewReport(
   dryRun: ImportDryRunResult,
   options: ImportReviewOptions = {}
@@ -165,6 +218,59 @@ export function createImportReviewReport(
   });
 
   return { ...report, status: reviewStatus(dryRun, report.summary) };
+}
+
+export function createSampleExportBundleImportJob(
+  input: CreateSampleExportBundleImportJobInput
+): SampleExportBundleImportJob {
+  const dryRun = withSampleExportBundleMetadata(
+    dryRunSampleExportBundle(input.bundle),
+    input.bundle
+  );
+  const review =
+    input.review === undefined
+      ? createImportReviewReport(dryRun, {
+          defaultDecision: "accept",
+          ...input.reviewOptions
+        })
+      : reviewWithDryRunEvents(input.review, dryRun);
+
+  return {
+    bundle: summarizeSampleExportBundle(input.bundle),
+    dryRun,
+    review
+  };
+}
+
+export function executeSampleExportBundleImport(
+  input: ExecuteSampleExportBundleImportInput
+): SampleExportBundleImportExecutionResult {
+  const job = createSampleExportBundleImportJob(input);
+  const execution = executeReviewedImport({
+    dryRun: job.dryRun,
+    runtime: input.runtime,
+    review: job.review,
+    ...optionalExecuteImportOptions(input)
+  });
+
+  return {
+    bundle: job.bundle,
+    dryRun: job.dryRun,
+    execution
+  };
+}
+
+export function executeSampleExportBundleImports(
+  input: ExecuteSampleExportBundleImportsInput
+): readonly SampleExportBundleImportExecutionResult[] {
+  return input.bundles.map((bundle) =>
+    executeSampleExportBundleImport({
+      bundle,
+      runtime: input.runtime,
+      ...optionalCreateJobOptions(input),
+      ...optionalExecuteImportOptions(input)
+    })
+  );
 }
 
 export function executeReviewedImport(input: ExecuteImportInput): ImportExecutionResult {
@@ -242,6 +348,188 @@ export function executeReviewedImport(input: ExecuteImportInput): ImportExecutio
     outboxRecords,
     adapterAuditRecords
   };
+}
+
+function summarizeSampleExportBundle(
+  bundle: SampleExportBundle
+): SampleExportBundleImportSummary {
+  const files = bundle.files.map((file) => ({
+    path: file.path,
+    format: file.format,
+    sourceObject: file.sourceObject,
+    contentHash: file.contentHash,
+    recordCount: file.records.length
+  }));
+
+  return {
+    bundleId: bundle.bundleId,
+    sourceProject: bundle.sourceProject,
+    exportedAt: bundle.exportedAt,
+    sourceSchemaVersion: bundle.sourceSchemaVersion,
+    description: bundle.description,
+    fileCount: files.length,
+    recordCount: files.reduce((total, file) => total + file.recordCount, 0),
+    files
+  };
+}
+
+function withSampleExportBundleMetadata(
+  dryRun: ImportDryRunResult,
+  bundle: SampleExportBundle
+): ImportDryRunResult {
+  const filesBySourceRecord = sampleBundleFileLookup(bundle);
+
+  return {
+    ...dryRun,
+    candidateEvents: dryRun.candidateEvents.map((event) =>
+      addSampleBundleMetadata(event, bundle, filesBySourceRecord)
+    )
+  };
+}
+
+function reviewWithDryRunEvents(
+  review: ImportReviewReport,
+  dryRun: ImportDryRunResult
+): ImportReviewReport {
+  const eventsById = new Map(dryRun.candidateEvents.map((event) => [event.id, event]));
+
+  return {
+    ...review,
+    eventItems: review.eventItems.map((item) => ({
+      ...item,
+      event: eventsById.get(item.eventId) ?? item.event
+    }))
+  };
+}
+
+function addSampleBundleMetadata(
+  event: CanopyEvent,
+  bundle: SampleExportBundle,
+  filesBySourceRecord: ReadonlyMap<string, SampleExportBundleImportFileSummary>
+): CanopyEvent {
+  const sourceEntity = stringPayload(event.payload, "sourceEntity");
+  const sourceId = stringPayload(event.payload, "sourceId");
+  const file =
+    sourceEntity === undefined || sourceId === undefined
+      ? undefined
+      : filesBySourceRecord.get(sampleBundleRecordKey(sourceEntity, sourceId));
+
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      sourceBundleId: bundle.bundleId,
+      sourceBundleExportedAt: bundle.exportedAt,
+      sourceBundleSchemaVersion: bundle.sourceSchemaVersion,
+      ...(file === undefined
+        ? {}
+        : {
+            sourceBundleFilePath: file.path,
+            sourceBundleFileFormat: file.format,
+            sourceBundleFileContentHash: file.contentHash
+          })
+    },
+    provenance: sampleBundleProvenance(event, bundle, file)
+  };
+}
+
+function sampleBundleFileLookup(
+  bundle: SampleExportBundle
+): ReadonlyMap<string, SampleExportBundleImportFileSummary> {
+  const filesBySourceRecord = new Map<string, SampleExportBundleImportFileSummary>();
+
+  for (const file of bundle.files) {
+    const summary = {
+      path: file.path,
+      format: file.format,
+      sourceObject: file.sourceObject,
+      contentHash: file.contentHash,
+      recordCount: file.records.length
+    };
+
+    file.records.forEach((record, index) => {
+      filesBySourceRecord.set(
+        sampleBundleRecordKey(file.sourceObject, sourceIdFor(record, file.sourceObject, index)),
+        summary
+      );
+    });
+  }
+
+  return filesBySourceRecord;
+}
+
+function sampleBundleRecordKey(sourceEntity: string, sourceId: string): string {
+  return `${slug(sourceEntity)}:${sourceId}`;
+}
+
+function stringPayload(
+  payload: Readonly<Record<string, unknown>>,
+  key: string
+): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function sampleBundleProvenance(
+  event: CanopyEvent,
+  bundle: SampleExportBundle,
+  file: SampleExportBundleImportFileSummary | undefined
+): NonNullable<CanopyEvent["provenance"]> {
+  return {
+    ...event.provenance,
+    kind: "imported",
+    sourceEnvelopeId: bundle.bundleId,
+    collectedAt: bundle.exportedAt,
+    ...(file === undefined ? {} : { sourceContentHash: file.contentHash })
+  };
+}
+
+function optionalCreateJobOptions(
+  input: Omit<ExecuteSampleExportBundleImportsInput, "bundles">
+): Omit<CreateSampleExportBundleImportJobInput, "bundle"> {
+  const options: {
+    reviewOptions?: ImportReviewOptions;
+  } = {};
+
+  if (input.reviewOptions !== undefined) {
+    options.reviewOptions = input.reviewOptions;
+  }
+
+  return options;
+}
+
+function optionalExecuteImportOptions(
+  input: Omit<ExecuteImportInput, "dryRun" | "review">
+): Omit<ExecuteImportInput, "dryRun" | "runtime" | "review"> {
+  const options: {
+    recordedAt?: IsoDateTime;
+    outbox?: OutboxRuntime;
+    enqueueProjectionRebuild?: boolean;
+    outboxDestination?: OutboxDestination;
+    writeAudit?: boolean;
+  } = {};
+
+  if (input.recordedAt !== undefined) {
+    options.recordedAt = input.recordedAt;
+  }
+
+  if (input.outbox !== undefined) {
+    options.outbox = input.outbox;
+  }
+
+  if (input.enqueueProjectionRebuild !== undefined) {
+    options.enqueueProjectionRebuild = input.enqueueProjectionRebuild;
+  }
+
+  if (input.outboxDestination !== undefined) {
+    options.outboxDestination = input.outboxDestination;
+  }
+
+  if (input.writeAudit !== undefined) {
+    options.writeAudit = input.writeAudit;
+  }
+
+  return options;
 }
 
 export function materializeAcceptedImportEvent(candidate: CanopyEvent): CanopyEvent {

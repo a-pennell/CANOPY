@@ -59,6 +59,8 @@ export interface FailOutboxOptions {
 export interface RetryOutboxOptions {
   readonly nextAttemptAt?: IsoDateTime;
   readonly now?: IsoDateTime;
+  readonly resetAttemptCount?: boolean;
+  readonly maxAttempts?: number;
 }
 
 export interface ReconcileOutboxOptions {
@@ -98,6 +100,20 @@ export interface OutboxRuntime {
   reconcile(options?: ReconcileOutboxOptions): OutboxReconciliationSummary;
   get(id: CanopyId): OutboxRecord | undefined;
   list(): readonly OutboxRecord[];
+}
+
+export interface RetryOutboxRecordsInput {
+  readonly outbox: OutboxRuntime;
+  readonly recordIds: readonly CanopyId[];
+  readonly now: IsoDateTime;
+  readonly nextAttemptAt?: IsoDateTime;
+  readonly resetAttemptCount?: boolean;
+  readonly maxAttempts?: number;
+}
+
+export interface RetryOutboxRecordsResult {
+  readonly retriedRecords: readonly OutboxRecord[];
+  readonly skippedRecordIds: readonly CanopyId[];
 }
 
 export interface OutboxDispatchContext {
@@ -174,6 +190,44 @@ export function createInMemoryOutbox(
 
 export function createPersistentOutbox(options: PersistentOutboxOptions): OutboxRuntime {
   return new PersistentOutbox(options);
+}
+
+export function retryOutboxRecords(
+  input: RetryOutboxRecordsInput
+): RetryOutboxRecordsResult {
+  const retriedRecords: OutboxRecord[] = [];
+  const skippedRecordIds: CanopyId[] = [];
+
+  for (const recordId of input.recordIds) {
+    const record = input.outbox.get(recordId);
+    if (
+      record === undefined ||
+      (record.status !== "failed" && record.status !== "dead-lettered")
+    ) {
+      skippedRecordIds.push(recordId);
+      continue;
+    }
+
+    const retryOptions: {
+      now: IsoDateTime;
+      nextAttemptAt?: IsoDateTime;
+      resetAttemptCount?: boolean;
+      maxAttempts?: number;
+    } = { now: input.now };
+    if (input.nextAttemptAt !== undefined) {
+      retryOptions.nextAttemptAt = input.nextAttemptAt;
+    }
+    if (input.resetAttemptCount !== undefined) {
+      retryOptions.resetAttemptCount = input.resetAttemptCount;
+    }
+    if (input.maxAttempts !== undefined) {
+      retryOptions.maxAttempts = input.maxAttempts;
+    }
+
+    retriedRecords.push(input.outbox.retry(recordId, retryOptions));
+  }
+
+  return { retriedRecords, skippedRecordIds };
 }
 
 export async function runOutboxWorker(
@@ -528,6 +582,8 @@ export class InMemoryOutbox implements OutboxRuntime {
       status: "pending",
       updatedAt: now,
       nextAttemptAt: options.nextAttemptAt,
+      attemptCount: options.resetAttemptCount === true ? 0 : record.attemptCount,
+      maxAttempts: options.maxAttempts ?? record.maxAttempts,
       leasedAt: undefined,
       leasedBy: undefined,
       publishedAt: undefined,

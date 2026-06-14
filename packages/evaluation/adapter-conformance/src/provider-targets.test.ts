@@ -1,5 +1,11 @@
+import { createActivityPubTransportAdapter } from "@canopy/adapters-provider-activitypub-transport";
+import { createOidcAuthAdapter } from "@canopy/adapters-provider-oidc-auth";
+import { createPgvectorVectorAdapter } from "@canopy/adapters-provider-pgvector-vector";
+import { createPostgisGeospatialAdapter } from "@canopy/adapters-provider-postgis-geospatial";
 import { createPostgresDocumentStoreAdapter } from "@canopy/adapters-provider-postgres-document-store";
+import { createPostgresObjectGraphAdapter } from "@canopy/adapters-provider-postgres-object-graph";
 import { createS3ObjectStorageAdapter } from "@canopy/adapters-provider-s3-object-storage";
+import { createTimescaleTimeSeriesAdapter } from "@canopy/adapters-provider-timescaledb-time-series";
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -88,12 +94,36 @@ describe("adapter provider targets", () => {
       readonly adapter: ExecutableAdapter;
     }[] = [
       {
+        targetId: "adapter-target.auth.oidc",
+        adapter: createOidcAuthAdapter({ now: () => NOW })
+      },
+      {
+        targetId: "adapter-target.object-graph.postgres",
+        adapter: createPostgresObjectGraphAdapter({ now: () => NOW })
+      },
+      {
         targetId: "adapter-target.document-store.postgres",
         adapter: createPostgresDocumentStoreAdapter({ now: () => NOW })
       },
       {
         targetId: "adapter-target.object-storage.s3-compatible",
         adapter: createS3ObjectStorageAdapter({ now: () => NOW })
+      },
+      {
+        targetId: "adapter-target.geospatial.postgis",
+        adapter: createPostgisGeospatialAdapter({ now: () => NOW })
+      },
+      {
+        targetId: "adapter-target.time-series.timescaledb",
+        adapter: createTimescaleTimeSeriesAdapter({ now: () => NOW })
+      },
+      {
+        targetId: "adapter-target.vector.pgvector",
+        adapter: createPgvectorVectorAdapter({ now: () => NOW })
+      },
+      {
+        targetId: "adapter-target.federation-transport.activitypub",
+        adapter: createActivityPubTransportAdapter({ now: () => NOW })
       }
     ];
     const results: AdapterSuiteResult[] = [];

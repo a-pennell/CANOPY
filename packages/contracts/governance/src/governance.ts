@@ -220,6 +220,56 @@ export type DecisionMethodKind =
   | "sortition"
   | "custom";
 
+export type GovernanceControlKind =
+  | "consent"
+  | "quorum"
+  | "delegation"
+  | "revocation"
+  | "appeal"
+  | "contested_evidence";
+
+export type GovernanceControlStatus =
+  | "satisfied"
+  | "missing"
+  | "blocked"
+  | "contested"
+  | "requires_review"
+  | "waived";
+
+export type GovernanceControlIssueCode =
+  | "consent_blocked"
+  | "quorum_not_met"
+  | "delegation_missing"
+  | "delegation_revoked"
+  | "authority_revoked"
+  | "appeal_path_missing"
+  | "contested_evidence_unhandled";
+
+export interface GovernanceControlIssue {
+  readonly code: GovernanceControlIssueCode;
+  readonly message: string;
+  readonly sourceRefs: readonly ObjectRef[];
+  readonly safeToExplain: boolean;
+}
+
+export interface GovernanceControlEvaluation {
+  readonly kind: GovernanceControlKind;
+  readonly status: GovernanceControlStatus;
+  readonly required: boolean;
+  readonly sourceRefs: readonly ObjectRef[];
+  readonly issues: readonly GovernanceControlIssue[];
+  readonly evaluatedAt?: IsoDateTime;
+}
+
+export interface GovernanceHardeningEvaluation {
+  readonly targetRef: ObjectRef;
+  readonly decisionRef?: ObjectRef;
+  readonly evaluatedAt: IsoDateTime;
+  readonly status: "satisfied" | "attention" | "blocked";
+  readonly controls: readonly GovernanceControlEvaluation[];
+  readonly issues: readonly GovernanceControlIssue[];
+}
+
 export interface GovernanceScope {
   readonly orgId?: CanopyId;
   readonly placeRef?: ObjectRef;

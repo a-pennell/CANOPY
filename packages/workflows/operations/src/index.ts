@@ -1,6 +1,7 @@
 import type {
   AdapterAuditRecord,
   AdapterAuditStatus,
+  JsonValue,
   OutboxDestination,
   OutboxRecord,
   OutboxStatus,
@@ -19,14 +20,17 @@ import {
 } from "@canopy/app-shell";
 import {
   createPersistentOutbox,
+  retryOutboxRecords,
   runOutboxWorker,
   type OutboxRuntime,
   type OutboxWorkerResult
 } from "@canopy/workflows-outbox";
 import {
   rebuildAndPersistAllProjections,
+  requestProjectionRebuild,
   type MaterializedProjectionStore,
-  type PersistentProjectionRebuildResult
+  type PersistentProjectionRebuildResult,
+  type ProjectionRebuilderName
 } from "@canopy/workflows-projection-rebuild";
 
 export type CanopyOperationsReadiness =
@@ -225,6 +229,103 @@ export interface CanopyProjectionRebuildControlResult {
   readonly report: CanopyOperationsReport;
 }
 
+export type CanopyOperationsRemediationCommandType =
+  | "retry-failed-outbox"
+  | "request-projection-rebuild"
+  | "quarantine-failed-import"
+  | "acknowledge-adapter-audit-failure"
+  | "create-invariant-drift-ticket";
+
+export type CanopyOperationsRemediationCommand =
+  | RetryFailedOutboxCommand
+  | RequestProjectionRebuildCommand
+  | QuarantineFailedImportCommand
+  | AcknowledgeAdapterAuditFailureCommand
+  | CreateInvariantDriftTicketCommand;
+
+export interface CanopyOperationsRemediationCommandBase {
+  readonly id: CanopyId;
+  readonly type: CanopyOperationsRemediationCommandType;
+  readonly createdAt: IsoDateTime;
+  readonly reason: string;
+  readonly evidenceIds: readonly CanopyId[];
+}
+
+export interface RetryFailedOutboxCommand
+  extends CanopyOperationsRemediationCommandBase {
+  readonly type: "retry-failed-outbox";
+  readonly outboxRecordIds: readonly CanopyId[];
+  readonly resetAttemptCount: boolean;
+}
+
+export interface RequestProjectionRebuildCommand
+  extends CanopyOperationsRemediationCommandBase {
+  readonly type: "request-projection-rebuild";
+  readonly projectionNames: readonly ProjectionRebuilderName[];
+}
+
+export interface QuarantineFailedImportCommand
+  extends CanopyOperationsRemediationCommandBase {
+  readonly type: "quarantine-failed-import";
+  readonly remediationItemIds: readonly CanopyId[];
+  readonly adapterAuditIds: readonly CanopyId[];
+  readonly outboxRecordIds: readonly CanopyId[];
+}
+
+export interface AcknowledgeAdapterAuditFailureCommand
+  extends CanopyOperationsRemediationCommandBase {
+  readonly type: "acknowledge-adapter-audit-failure";
+  readonly adapterAuditIds: readonly CanopyId[];
+}
+
+export interface CreateInvariantDriftTicketCommand
+  extends CanopyOperationsRemediationCommandBase {
+  readonly type: "create-invariant-drift-ticket";
+  readonly alertId: CanopyId;
+  readonly level: CanopyInvariantDriftLevel;
+  readonly invariant: string;
+  readonly message: string;
+}
+
+export interface CanopyOperationsRemediationPlan {
+  readonly generatedAt: IsoDateTime;
+  readonly reportGeneratedAt: IsoDateTime;
+  readonly commands: readonly CanopyOperationsRemediationCommand[];
+}
+
+export type CanopyOperationsRemediationCommandStatus =
+  | "applied"
+  | "skipped"
+  | "failed";
+
+export interface CanopyOperationsRemediationCommandResult {
+  readonly commandId: CanopyId;
+  readonly type: CanopyOperationsRemediationCommandType;
+  readonly status: CanopyOperationsRemediationCommandStatus;
+  readonly changedRecordIds: readonly CanopyId[];
+  readonly skippedRecordIds: readonly CanopyId[];
+  readonly error?: string;
+}
+
+export interface BuildCanopyOperationsRemediationPlanInput {
+  readonly report: CanopyOperationsReport;
+  readonly generatedAt?: IsoDateTime;
+}
+
+export interface ExecuteCanopyOperationsRemediationCommandsInput {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly commands: readonly CanopyOperationsRemediationCommand[];
+  readonly now: IsoDateTime;
+  readonly outbox?: OutboxRuntime;
+  readonly expectedProjectionNames?: readonly string[];
+  readonly leaseTimeoutMs?: number;
+}
+
+export interface CanopyOperationsRemediationResult {
+  readonly commands: readonly CanopyOperationsRemediationCommandResult[];
+  readonly report: CanopyOperationsReport;
+}
+
 const expectedProjectionNames = [
   "object-page",
   "civic-memory",
@@ -364,6 +465,522 @@ export function runCanopyProjectionRebuildControl(
   return { projectionRebuild, report };
 }
 
+export function buildCanopyOperationsRemediationPlan(
+  input: BuildCanopyOperationsRemediationPlanInput
+): CanopyOperationsRemediationPlan {
+  const generatedAt = input.generatedAt ?? input.report.generatedAt;
+  const commands = [
+    retryFailedOutboxCommand(input.report, generatedAt),
+    requestProjectionRebuildCommand(input.report, generatedAt),
+    quarantineFailedImportCommand(input.report, generatedAt),
+    acknowledgeAdapterAuditFailureCommand(input.report, generatedAt),
+    ...createInvariantDriftTicketCommands(input.report, generatedAt)
+  ].filter(isDefined);
+
+  return {
+    generatedAt,
+    reportGeneratedAt: input.report.generatedAt,
+    commands
+  };
+}
+
+export function executeCanopyOperationsRemediationCommands(
+  input: ExecuteCanopyOperationsRemediationCommandsInput
+): CanopyOperationsRemediationResult {
+  const outbox = input.outbox ?? createPersistentOutbox({ runtime: input.runtime });
+  const results = input.commands.map((command) =>
+    executeCanopyOperationsRemediationCommand({
+      runtime: input.runtime,
+      outbox,
+      command,
+      now: input.now
+    })
+  );
+  const report = buildCanopyOperationsReport({
+    runtime: input.runtime,
+    generatedAt: input.now,
+    outbox,
+    ...optionalExpectedProjectionNames(input.expectedProjectionNames),
+    ...optionalLeaseTimeout(input.leaseTimeoutMs)
+  });
+
+  return { commands: results, report };
+}
+
+function retryFailedOutboxCommand(
+  report: CanopyOperationsReport,
+  createdAt: IsoDateTime
+): RetryFailedOutboxCommand | undefined {
+  const outboxRecordIds = report.outbox.retryableFailedRecordIds;
+  if (outboxRecordIds.length === 0) {
+    return undefined;
+  }
+
+  return {
+    id: commandId("retry-failed-outbox", outboxRecordIds),
+    type: "retry-failed-outbox",
+    createdAt,
+    reason: "Retry failed outbox messages that remain below their attempt ceiling.",
+    evidenceIds: outboxRecordIds,
+    outboxRecordIds,
+    resetAttemptCount: false
+  };
+}
+
+function requestProjectionRebuildCommand(
+  report: CanopyOperationsReport,
+  createdAt: IsoDateTime
+): RequestProjectionRebuildCommand | undefined {
+  const projectionNames = sortedProjectionNames([
+    ...report.projections.missingProjectionNames,
+    ...report.projections.staleProjectionNames,
+    ...report.projections.failedProjectionNames,
+    ...projectionNamesBehindEventLog(report)
+  ]);
+  if (projectionNames.length === 0) {
+    return undefined;
+  }
+
+  return {
+    id: commandId("request-projection-rebuild", projectionNames),
+    type: "request-projection-rebuild",
+    createdAt,
+    reason: "Request projection rebuild for missing, stale, failed, or lagging states.",
+    evidenceIds: [
+      ...report.projections.missingProjectionNames,
+      ...report.projections.staleStateIds,
+      ...report.projections.failedStateIds
+    ],
+    projectionNames
+  };
+}
+
+function quarantineFailedImportCommand(
+  report: CanopyOperationsReport,
+  createdAt: IsoDateTime
+): QuarantineFailedImportCommand | undefined {
+  const items = report.failedImportRemediation.items.filter(
+    (item) => item.severity === "blocked"
+  );
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  const remediationItemIds = items.map((item) => item.id);
+  const adapterAuditIds = dedupeStrings(
+    items
+      .filter((item) => item.source === "adapter-audit")
+      .map((item) => item.id)
+  );
+  const outboxRecordIds = dedupeStrings(items.flatMap((item) => item.outboxIds));
+
+  return {
+    id: commandId("quarantine-failed-import", remediationItemIds),
+    type: "quarantine-failed-import",
+    createdAt,
+    reason: "Quarantine blocked import failures before any further replay.",
+    evidenceIds: remediationItemIds,
+    remediationItemIds,
+    adapterAuditIds,
+    outboxRecordIds
+  };
+}
+
+function acknowledgeAdapterAuditFailureCommand(
+  report: CanopyOperationsReport,
+  createdAt: IsoDateTime
+): AcknowledgeAdapterAuditFailureCommand | undefined {
+  const adapterAuditIds = dedupeStrings(report.adapterAuditReview.failedAuditIds);
+  if (adapterAuditIds.length === 0) {
+    return undefined;
+  }
+
+  return {
+    id: commandId("acknowledge-adapter-audit-failure", adapterAuditIds),
+    type: "acknowledge-adapter-audit-failure",
+    createdAt,
+    reason: "Acknowledge failed adapter audits after operator review.",
+    evidenceIds: adapterAuditIds,
+    adapterAuditIds
+  };
+}
+
+function createInvariantDriftTicketCommands(
+  report: CanopyOperationsReport,
+  createdAt: IsoDateTime
+): readonly CreateInvariantDriftTicketCommand[] {
+  const ticketedAlertIds = new Set(
+    report.adapterAudits
+      .map((audit) => ticketedDriftAlertId(audit))
+      .filter(isDefined)
+  );
+
+  return report.invariantDriftAlerts
+    .filter((alert) => !ticketedAlertIds.has(alert.id))
+    .map((alert) => ({
+      id: commandId("create-invariant-drift-ticket", [alert.id]),
+      type: "create-invariant-drift-ticket",
+      createdAt,
+      reason: "Create an operator ticket for invariant drift.",
+      evidenceIds: alert.evidenceIds,
+      alertId: alert.id,
+      level: alert.level,
+      invariant: alert.invariant,
+      message: alert.message
+    }));
+}
+
+function executeCanopyOperationsRemediationCommand(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly outbox: OutboxRuntime;
+  readonly command: CanopyOperationsRemediationCommand;
+  readonly now: IsoDateTime;
+}): CanopyOperationsRemediationCommandResult {
+  try {
+    switch (input.command.type) {
+      case "retry-failed-outbox":
+        return executeRetryFailedOutboxCommand({
+          outbox: input.outbox,
+          command: input.command,
+          now: input.now
+        });
+      case "request-projection-rebuild":
+        return executeRequestProjectionRebuildCommand({
+          runtime: input.runtime,
+          command: input.command,
+          now: input.now
+        });
+      case "quarantine-failed-import":
+        return executeQuarantineFailedImportCommand({
+          runtime: input.runtime,
+          outbox: input.outbox,
+          command: input.command,
+          now: input.now
+        });
+      case "acknowledge-adapter-audit-failure":
+        return executeAcknowledgeAdapterAuditFailureCommand({
+          runtime: input.runtime,
+          command: input.command,
+          now: input.now
+        });
+      case "create-invariant-drift-ticket":
+        return executeCreateInvariantDriftTicketCommand({
+          runtime: input.runtime,
+          command: input.command,
+          now: input.now
+        });
+    }
+  } catch (error) {
+    return failedCommandResult(input.command, error);
+  }
+}
+
+function executeRetryFailedOutboxCommand(input: {
+  readonly outbox: OutboxRuntime;
+  readonly command: RetryFailedOutboxCommand;
+  readonly now: IsoDateTime;
+}): CanopyOperationsRemediationCommandResult {
+  const retry = retryOutboxRecords({
+    outbox: input.outbox,
+    recordIds: input.command.outboxRecordIds,
+    now: input.now,
+    resetAttemptCount: input.command.resetAttemptCount
+  });
+
+  return commandResult(input.command, {
+    changedRecordIds: retry.retriedRecords.map((record) => record.id),
+    skippedRecordIds: retry.skippedRecordIds
+  });
+}
+
+function executeRequestProjectionRebuildCommand(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly command: RequestProjectionRebuildCommand;
+  readonly now: IsoDateTime;
+}): CanopyOperationsRemediationCommandResult {
+  const rebuild = requestProjectionRebuild({
+    runtime: input.runtime,
+    requestedAt: input.now,
+    projectionNames: input.command.projectionNames,
+    reason: input.command.reason
+  });
+
+  return commandResult(input.command, {
+    changedRecordIds: rebuild.requestedStates.map((state) => state.id),
+    skippedRecordIds: []
+  });
+}
+
+function executeQuarantineFailedImportCommand(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly outbox: OutboxRuntime;
+  readonly command: QuarantineFailedImportCommand;
+  readonly now: IsoDateTime;
+}): CanopyOperationsRemediationCommandResult {
+  const changedRecordIds: CanopyId[] = [];
+  const skippedRecordIds: CanopyId[] = [];
+
+  for (const outboxRecordId of input.command.outboxRecordIds) {
+    const record = input.outbox.get(outboxRecordId);
+    if (
+      record === undefined ||
+      record.status === "acknowledged" ||
+      record.status === "cancelled" ||
+      record.status === "dead-lettered"
+    ) {
+      skippedRecordIds.push(outboxRecordId);
+      continue;
+    }
+
+    changedRecordIds.push(input.outbox.cancel(outboxRecordId, input.now).id);
+  }
+
+  if (
+    input.command.adapterAuditIds.length === 0 &&
+    input.command.outboxRecordIds.length > 0 &&
+    !hasQuarantinedOutboxAudit(input.runtime.listAdapterAudits(), input.command.outboxRecordIds)
+  ) {
+    changedRecordIds.push(
+      input.runtime.putAdapterAudit(
+        operatorAudit({
+          id: `adapter-audit.operations.quarantine.${input.command.id}`,
+          now: input.now,
+          operation: "import.quarantine",
+          status: "skipped",
+          eventIds: [],
+          outboxIds: input.command.outboxRecordIds,
+          metadata: {
+            quarantinedOutboxIds: input.command.outboxRecordIds,
+            reason: input.command.reason
+          }
+        })
+      ).id
+    );
+  }
+
+  for (const auditId of input.command.adapterAuditIds) {
+    if (hasQuarantineAudit(input.runtime.listAdapterAudits(), auditId)) {
+      skippedRecordIds.push(auditId);
+      continue;
+    }
+
+    changedRecordIds.push(
+      input.runtime.putAdapterAudit(
+        operatorAudit({
+          id: `adapter-audit.operations.quarantine.${auditId}`,
+          now: input.now,
+          operation: "import.quarantine",
+          status: "skipped",
+          eventIds: [],
+          outboxIds: input.command.outboxRecordIds,
+          metadata: {
+            remediatesAuditId: auditId,
+            quarantinedOutboxIds: input.command.outboxRecordIds,
+            reason: input.command.reason
+          }
+        })
+      ).id
+    );
+  }
+
+  return commandResult(input.command, { changedRecordIds, skippedRecordIds });
+}
+
+function executeAcknowledgeAdapterAuditFailureCommand(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly command: AcknowledgeAdapterAuditFailureCommand;
+  readonly now: IsoDateTime;
+}): CanopyOperationsRemediationCommandResult {
+  const changedRecordIds: CanopyId[] = [];
+  const skippedRecordIds: CanopyId[] = [];
+
+  for (const auditId of input.command.adapterAuditIds) {
+    if (hasAcknowledgementAudit(input.runtime.listAdapterAudits(), auditId)) {
+      skippedRecordIds.push(auditId);
+      continue;
+    }
+
+    changedRecordIds.push(
+      input.runtime.putAdapterAudit(
+        operatorAudit({
+          id: `adapter-audit.operations.acknowledge.${auditId}`,
+          now: input.now,
+          operation: "adapter-audit.acknowledge-failure",
+          status: "skipped",
+          eventIds: [],
+          outboxIds: [],
+          metadata: {
+            remediatesAuditId: auditId,
+            acknowledgedAuditId: auditId,
+            reason: input.command.reason
+          }
+        })
+      ).id
+    );
+  }
+
+  return commandResult(input.command, { changedRecordIds, skippedRecordIds });
+}
+
+function executeCreateInvariantDriftTicketCommand(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly command: CreateInvariantDriftTicketCommand;
+  readonly now: IsoDateTime;
+}): CanopyOperationsRemediationCommandResult {
+  if (hasDriftTicket(input.runtime.listAdapterAudits(), input.command.alertId)) {
+    return commandResult(input.command, {
+      changedRecordIds: [],
+      skippedRecordIds: [input.command.alertId]
+    });
+  }
+
+  const audit = input.runtime.putAdapterAudit(
+    operatorAudit({
+      id: `adapter-audit.operations.drift-ticket.${input.command.alertId}`,
+      now: input.now,
+      operation: "invariant-drift.ticket-created",
+      status: "succeeded",
+      eventIds: [],
+      outboxIds: [],
+      metadata: {
+        driftAlertId: input.command.alertId,
+        level: input.command.level,
+        invariant: input.command.invariant,
+        message: input.command.message,
+        evidenceIds: input.command.evidenceIds
+      }
+    })
+  );
+
+  return commandResult(input.command, {
+    changedRecordIds: [audit.id],
+    skippedRecordIds: []
+  });
+}
+
+function commandResult(
+  command: CanopyOperationsRemediationCommand,
+  input: {
+    readonly changedRecordIds: readonly CanopyId[];
+    readonly skippedRecordIds: readonly CanopyId[];
+  }
+): CanopyOperationsRemediationCommandResult {
+  return {
+    commandId: command.id,
+    type: command.type,
+    status: input.changedRecordIds.length === 0 ? "skipped" : "applied",
+    changedRecordIds: input.changedRecordIds,
+    skippedRecordIds: input.skippedRecordIds
+  };
+}
+
+function failedCommandResult(
+  command: CanopyOperationsRemediationCommand,
+  error: unknown
+): CanopyOperationsRemediationCommandResult {
+  return optionalCommandError({
+    commandId: command.id,
+    type: command.type,
+    status: "failed",
+    changedRecordIds: [],
+    skippedRecordIds: [],
+    error: error instanceof Error ? error.message : String(error)
+  });
+}
+
+function operatorAudit(input: {
+  readonly id: CanopyId;
+  readonly now: IsoDateTime;
+  readonly operation: string;
+  readonly status: AdapterAuditStatus;
+  readonly eventIds: readonly CanopyId[];
+  readonly outboxIds: readonly CanopyId[];
+  readonly metadata: JsonValue;
+}): AdapterAuditRecord {
+  return {
+    id: input.id,
+    kind: "adapter-audit",
+    schemaVersion: 1,
+    createdAt: input.now,
+    adapterName: "operations.operator",
+    direction: "reconciliation",
+    operation: input.operation,
+    status: input.status,
+    startedAt: input.now,
+    completedAt: input.now,
+    eventIds: input.eventIds,
+    outboxIds: input.outboxIds,
+    warnings: [],
+    errors: [],
+    metadata: input.metadata
+  };
+}
+
+function commandId(
+  type: CanopyOperationsRemediationCommandType,
+  evidenceIds: readonly string[]
+): CanopyId {
+  return `operations-command.${type}.${evidenceIds.join("+")}`;
+}
+
+function projectionNamesBehindEventLog(
+  report: CanopyOperationsReport
+): readonly string[] {
+  return report.projections.states
+    .filter(
+      (state) =>
+        state.status === "current" &&
+        state.processedEventCount < report.counts.events
+    )
+    .map((state) => state.projectionName);
+}
+
+function sortedProjectionNames(
+  names: readonly string[]
+): readonly ProjectionRebuilderName[] {
+  return dedupeStrings(names)
+    .filter(isProjectionRebuilderName)
+    .sort();
+}
+
+function dedupeStrings<TValue extends string>(values: readonly TValue[]): readonly TValue[] {
+  return [...new Set(values)];
+}
+
+function isProjectionRebuilderName(value: string): value is ProjectionRebuilderName {
+  return expectedProjectionNames.includes(value as ProjectionRebuilderName);
+}
+
+function hasAcknowledgementAudit(
+  audits: readonly AdapterAuditRecord[],
+  auditId: CanopyId
+): boolean {
+  return audits.some((audit) => acknowledgedAuditId(audit) === auditId);
+}
+
+function hasQuarantineAudit(
+  audits: readonly AdapterAuditRecord[],
+  auditId: CanopyId
+): boolean {
+  return audits.some((audit) => quarantinedAuditId(audit) === auditId);
+}
+
+function hasQuarantinedOutboxAudit(
+  audits: readonly AdapterAuditRecord[],
+  outboxRecordIds: readonly CanopyId[]
+): boolean {
+  const remediatedOutboxIds = collectRemediatedOutboxIds(audits);
+
+  return outboxRecordIds.every((id) => remediatedOutboxIds.has(id));
+}
+
+function hasDriftTicket(
+  audits: readonly AdapterAuditRecord[],
+  alertId: CanopyId
+): boolean {
+  return audits.some((audit) => ticketedDriftAlertId(audit) === alertId);
+}
+
 function summarizeOutbox(
   outbox: OutboxRuntime,
   records: readonly OutboxRecord[],
@@ -486,6 +1103,14 @@ function summarizeShell(
 function summarizeAdapterAudits(
   audits: readonly AdapterAuditRecord[]
 ): CanopyAdapterAuditReviewSummary {
+  const remediatedAuditIds = collectRemediatedAuditIds(audits);
+  const unresolvedAudits = audits.filter(
+    (audit) =>
+      (audit.status === "started" ||
+        audit.status === "failed" ||
+        audit.status === "partial") &&
+      !remediatedAuditIds.has(audit.id)
+  );
   const completedAt = audits
     .map((audit) => audit.completedAt)
     .filter((value): value is IsoDateTime => value !== undefined)
@@ -494,18 +1119,12 @@ function summarizeAdapterAudits(
   return optionalLatestCompletedAt({
     total: audits.length,
     byStatus: auditStatusCounts(audits),
-    failedAuditIds: auditIdsByStatus(audits, "failed"),
-    partialAuditIds: auditIdsByStatus(audits, "partial"),
+    failedAuditIds: auditIdsByStatus(unresolvedAudits, "failed"),
+    partialAuditIds: auditIdsByStatus(unresolvedAudits, "partial"),
     warningAuditIds: audits
-      .filter((audit) => audit.warnings.length > 0)
+      .filter((audit) => audit.warnings.length > 0 && !remediatedAuditIds.has(audit.id))
       .map((audit) => audit.id),
-    unresolvedAuditIds: audits
-      .filter((audit) =>
-        audit.status === "started" ||
-        audit.status === "failed" ||
-        audit.status === "partial"
-      )
-      .map((audit) => audit.id),
+    unresolvedAuditIds: unresolvedAudits.map((audit) => audit.id),
     latestCompletedAt: completedAt.at(-1)
   });
 }
@@ -514,11 +1133,15 @@ function summarizeFailedImportRemediation(
   audits: readonly AdapterAuditRecord[],
   outboxRecords: readonly OutboxRecord[]
 ): CanopyFailedImportRemediationSummary {
+  const remediatedAuditIds = collectRemediatedAuditIds(audits);
+  const remediatedOutboxIds = collectRemediatedOutboxIds(audits);
   const auditItems = audits
+    .filter((audit) => !remediatedAuditIds.has(audit.id))
     .filter((audit) => isImportAudit(audit) && isRemediableAudit(audit))
     .map(importAuditRemediationItem);
   const auditOutboxIds = new Set(auditItems.flatMap((item) => item.outboxIds));
   const outboxItems = outboxRecords
+    .filter((record) => !remediatedOutboxIds.has(record.id))
     .filter((record) => isImportOutbox(record) && isRemediableOutbox(record))
     .filter((record) => !auditOutboxIds.has(record.id))
     .map(importOutboxRemediationItem);
@@ -839,6 +1462,56 @@ function auditIdsByStatus(
   return audits.filter((audit) => audit.status === status).map((audit) => audit.id);
 }
 
+function collectRemediatedAuditIds(
+  audits: readonly AdapterAuditRecord[]
+): ReadonlySet<CanopyId> {
+  return new Set(
+    audits
+      .flatMap((audit) => [acknowledgedAuditId(audit), quarantinedAuditId(audit)])
+      .filter(isDefined)
+  );
+}
+
+function collectRemediatedOutboxIds(
+  audits: readonly AdapterAuditRecord[]
+): ReadonlySet<CanopyId> {
+  return new Set(
+    audits.flatMap((audit) => quarantinedOutboxIds(audit))
+  );
+}
+
+function acknowledgedAuditId(audit: AdapterAuditRecord): CanopyId | undefined {
+  if (audit.operation !== "adapter-audit.acknowledge-failure") {
+    return undefined;
+  }
+
+  return metadataString(audit.metadata, "acknowledgedAuditId");
+}
+
+function quarantinedAuditId(audit: AdapterAuditRecord): CanopyId | undefined {
+  if (audit.operation !== "import.quarantine") {
+    return undefined;
+  }
+
+  return metadataString(audit.metadata, "remediatesAuditId");
+}
+
+function quarantinedOutboxIds(audit: AdapterAuditRecord): readonly CanopyId[] {
+  if (audit.operation !== "import.quarantine") {
+    return [];
+  }
+
+  return metadataStringArray(audit.metadata, "quarantinedOutboxIds");
+}
+
+function ticketedDriftAlertId(audit: AdapterAuditRecord): CanopyId | undefined {
+  if (audit.operation !== "invariant-drift.ticket-created") {
+    return undefined;
+  }
+
+  return metadataString(audit.metadata, "driftAlertId");
+}
+
 function isImportAudit(audit: AdapterAuditRecord): boolean {
   return audit.adapterName.startsWith("import.") || audit.operation.includes("import");
 }
@@ -980,6 +1653,64 @@ function optionalLatestCompletedAt(
     unresolvedAuditIds: summary.unresolvedAuditIds,
     latestCompletedAt: summary.latestCompletedAt
   };
+}
+
+function optionalCommandError(
+  result: {
+    readonly commandId: CanopyId;
+    readonly type: CanopyOperationsRemediationCommandType;
+    readonly status: "failed";
+    readonly changedRecordIds: readonly CanopyId[];
+    readonly skippedRecordIds: readonly CanopyId[];
+    readonly error: string | undefined;
+  }
+): CanopyOperationsRemediationCommandResult {
+  if (result.error === undefined) {
+    return {
+      commandId: result.commandId,
+      type: result.type,
+      status: result.status,
+      changedRecordIds: result.changedRecordIds,
+      skippedRecordIds: result.skippedRecordIds
+    };
+  }
+
+  return {
+    commandId: result.commandId,
+    type: result.type,
+    status: result.status,
+    changedRecordIds: result.changedRecordIds,
+    skippedRecordIds: result.skippedRecordIds,
+    error: result.error
+  };
+}
+
+function metadataString(metadata: JsonValue, key: string): string | undefined {
+  if (!isRecord(metadata)) {
+    return undefined;
+  }
+
+  const value = metadata[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function metadataStringArray(metadata: JsonValue, key: string): readonly string[] {
+  if (!isRecord(metadata)) {
+    return [];
+  }
+
+  const value = metadata[key];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDefined<TValue>(value: TValue | undefined): value is TValue {
+  return value !== undefined;
 }
 
 function optionalReportShell(

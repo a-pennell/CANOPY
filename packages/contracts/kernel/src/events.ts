@@ -168,6 +168,54 @@ export interface EventRedactionContinuity {
   readonly dataStewardshipAgreementRef?: ObjectRef;
 }
 
+export type EventProvenanceKind =
+  | "human_submitted"
+  | "system_generated"
+  | "sensor_derived"
+  | "model_derived"
+  | "imported"
+  | "federated"
+  | "migration"
+  | "replay";
+
+export interface EventProvenanceRecord {
+  readonly kind: EventProvenanceKind;
+  readonly sourceRef?: ObjectRef;
+  readonly sourceEventId?: CanopyId;
+  readonly sourceEnvelopeId?: CanopyId;
+  readonly sourceContentHash?: ContentHash;
+  readonly collectedAt?: IsoDateTime;
+  readonly importedAt?: IsoDateTime;
+  readonly generatedAt?: IsoDateTime;
+  readonly actorRef?: ObjectRef;
+  readonly toolRef?: ObjectRef;
+  readonly notes?: string;
+}
+
+export type EventSigningIntentStatus =
+  | "not_required"
+  | "required"
+  | "deferred"
+  | "signed"
+  | "rejected";
+
+export interface EventSignatureProof {
+  readonly keyRef?: ObjectRef;
+  readonly algorithm: string;
+  readonly signature: string;
+  readonly signedAt: IsoDateTime;
+  readonly contentHash: ContentHash;
+}
+
+export interface EventSigningIntent {
+  readonly status: EventSigningIntentStatus;
+  readonly requiredForFederation: boolean;
+  readonly requiredForBindingAuthority: boolean;
+  readonly signerRefs: readonly ObjectRef[];
+  readonly signature?: EventSignatureProof;
+  readonly reason?: string;
+}
+
 export interface EventSupersessionPointer {
   readonly supersedesEventId?: CanopyId;
   readonly supersededByEventId?: CanopyId;
@@ -198,6 +246,8 @@ export interface CanopyEvent {
   readonly supersedesEventId?: CanopyId;
   readonly supersession?: EventSupersessionPointer;
   readonly redaction?: EventRedactionContinuity;
+  readonly provenance?: EventProvenanceRecord;
+  readonly signingIntent?: EventSigningIntent;
   readonly contentHash?: ContentHash;
 }
 
@@ -277,4 +327,68 @@ export interface EventAuthorityValidationResult extends ValidationResult {
   readonly authorityRequired: boolean;
   readonly authorityRefs: readonly ObjectRef[];
   readonly issues: readonly EventAuthorityValidationIssue[];
+}
+
+export function defaultEventAuthorityRequirement(
+  eventType: CanopyEventType
+): EventAuthorityRequirement {
+  const authorityRequired = (
+    EVENT_TYPES_REQUIRING_AUTHORITY as readonly CanopyEventType[]
+  ).includes(eventType);
+
+  return {
+    eventType,
+    authorityRequired,
+    minimumAuthorityRefs: authorityRequired ? 1 : 0,
+    acceptedAuthorityBasis: [
+      "role_assignment",
+      "mandate",
+      "delegation",
+      "guardian",
+      "policy",
+      "agreement",
+      "use_right",
+      "emergency_authority"
+    ],
+    reasons: authorityRequired ? ["binding_decision"] : [],
+    allowEmergencyAuthority: true
+  };
+}
+
+export function validateEventAuthority(
+  input: EventAuthorityValidationInput
+): EventAuthorityValidationResult {
+  const requirement =
+    input.requirement ?? defaultEventAuthorityRequirement(input.eventType);
+  const issues: EventAuthorityValidationIssue[] = [];
+
+  if (
+    requirement.authorityRequired &&
+    input.authorityRefs.length < requirement.minimumAuthorityRefs
+  ) {
+    issues.push({
+      path: ["authorityRefs"],
+      code: "authority_refs_missing",
+      message: `${input.eventType} requires at least ${requirement.minimumAuthorityRefs} authority ref(s).`,
+      eventType: input.eventType,
+      missingBasis: requirement.acceptedAuthorityBasis
+    });
+  }
+
+  if (input.emergency === true && !requirement.allowEmergencyAuthority) {
+    issues.push({
+      path: ["emergency"],
+      code: "emergency_authority_not_allowed",
+      message: `${input.eventType} does not allow emergency authority.`,
+      eventType: input.eventType
+    });
+  }
+
+  return {
+    ok: issues.length === 0,
+    eventType: input.eventType,
+    authorityRequired: requirement.authorityRequired,
+    authorityRefs: input.authorityRefs,
+    issues
+  };
 }

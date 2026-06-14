@@ -22,7 +22,9 @@ import {
   openProposal,
   recordDecision,
   recordDecisionPacket,
+  evaluateGovernanceHardening,
   validateDelegationAuthority,
+  validateGovernanceRuntimeControls,
   validateMandateAuthority,
   validateProposalOpeningAuthority,
   validateRoleAssignmentAuthority
@@ -269,6 +271,121 @@ describe("governance capability commands", () => {
     ).toThrow(
       "Emergency authority actions must cite an emergency mandate or emergency authority ref."
     );
+  });
+
+  it("evaluates runtime governance hardening controls before recording decisions", () => {
+    const appealPathRef = ref("canopy:appeal-path:watershed", "policy", "governance");
+    const quorumState = {
+      schemaVersion: "0.0.0",
+      id: "canopy:quorum:water-plan",
+      type: "quorum-state",
+      orgId: "canopy:org:watershed",
+      proposalRef,
+      status: "met",
+      eligibleCount: 5,
+      requiredCount: 3,
+      participatingCount: 4,
+      measuredAt: occurredAt
+    } as const;
+    const consentSignal = {
+      schemaVersion: "0.0.0",
+      id: "canopy:consent:ada",
+      type: "consent-signal",
+      orgId: "canopy:org:watershed",
+      proposalRef,
+      participantRef: actorRef,
+      signal: "consent",
+      recordedAt: occurredAt,
+      visibility: "commons",
+      dataState: "locally_verified"
+    } as const;
+    const controls = {
+      evaluatedAt: occurredAt,
+      consentSignals: [consentSignal],
+      quorumState,
+      delegatedAuthorityRefs: [],
+      revokedAuthorityRefs: [],
+      revokedDelegationRefs: [],
+      contestedEvidenceRefs: [evidenceRef],
+      appealPathRef
+    };
+    const decision = {
+      ...makeDecision(),
+      rationale: "Accepted with contested evidence preserved for appeal."
+    };
+    const evaluation = evaluateGovernanceHardening(decision, controls);
+
+    expect(evaluation.status).toBe("attention");
+    expect(evaluation.issues).toEqual([]);
+    expect(validateGovernanceRuntimeControls(decision, controls).valid).toBe(true);
+
+    const result = recordDecision(servicesForTest(), {
+      decision,
+      controls,
+      occurredAt,
+      actorRef
+    });
+
+    expect(result.appendResult.event.payload).toMatchObject({
+      governanceControls: {
+        status: "attention",
+        issues: []
+      }
+    });
+  });
+
+  it("rejects runtime decision controls with blocked consent, quorum, revocation, and contested evidence", () => {
+    const controls = {
+      evaluatedAt: occurredAt,
+      consentSignals: [
+        {
+          schemaVersion: "0.0.0",
+          id: "canopy:consent:block",
+          type: "consent-signal",
+          orgId: "canopy:org:watershed",
+          proposalRef,
+          participantRef: actorRef,
+          signal: "block",
+          recordedAt: occurredAt,
+          visibility: "commons",
+          dataState: "locally_verified"
+        } as const
+      ],
+      quorumState: {
+        schemaVersion: "0.0.0",
+        id: "canopy:quorum:not-met",
+        type: "quorum-state",
+        orgId: "canopy:org:watershed",
+        proposalRef,
+        status: "not_met",
+        eligibleCount: 5,
+        requiredCount: 3,
+        participatingCount: 2,
+        measuredAt: occurredAt
+      } as const,
+      revokedAuthorityRefs: [roleAuthorityRef],
+      contestedEvidenceRefs: [evidenceRef]
+    };
+    const decision = {
+      ...makeDecision(),
+      rationale: "Evidence supports action."
+    };
+
+    expect(validateGovernanceRuntimeControls(decision, controls).issues.map((issue) => issue.code)).toEqual([
+      "decision-consent-blocked",
+      "decision-quorum-not-met",
+      "authority-revoked",
+      "decision-missing-appeal-path",
+      "decision-contested-evidence-unhandled"
+    ]);
+    expect(() =>
+      recordDecision(servicesForTest(), {
+        decision,
+        controls,
+        occurredAt,
+        actorRef
+      })
+    ).toThrow("Consent signals include a block or withheld consent.");
   });
 
   it("records a decision packet over the decision context", () => {

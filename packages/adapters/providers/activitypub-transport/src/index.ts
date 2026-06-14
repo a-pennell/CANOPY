@@ -251,7 +251,24 @@ export class ActivityPubTransportAdapter implements FederationTransportAdapter {
       return failure(validation.code, validation.message, validation.path);
     }
 
-    const stored = this.store(sanitizeMessage(message, rule), "inbound", rule);
+    const sanitized = sanitizeMessage(message, rule);
+    const existing = this.inbox.get(sanitized.id);
+    if (existing !== undefined) {
+      if (
+        stableStringify(stripTransportTimestamps(existing.message)) ===
+        stableStringify(stripTransportTimestamps(sanitized))
+      ) {
+        return ok(cloneMessage(existing.message));
+      }
+
+      return failure(
+        "conflict",
+        `Inbound federation message ${sanitized.id} already exists and cannot be mutated.`,
+        ["id"]
+      );
+    }
+
+    const stored = this.store(sanitized, "inbound", rule);
     return ok(cloneMessage(stored.message));
   }
 
@@ -597,6 +614,13 @@ function cloneMessage(message: FederationTransportMessage): FederationTransportM
       contentHash: message.contentHash
     }) as FederationTransportMessage
   );
+}
+
+function stripTransportTimestamps(
+  message: FederationTransportMessage
+): FederationTransportMessage {
+  const { receivedAt: _receivedAt, sentAt: _sentAt, ...withoutTimestamps } = cloneMessage(message);
+  return freeze(withoutTimestamps);
 }
 
 function freezeRule(rule: ActivityPubTransportRule): ActivityPubTransportRule {

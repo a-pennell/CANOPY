@@ -9,6 +9,9 @@ import type {
   ContentHashFields,
   ExportedDataStewardshipAgreement,
   ExportFormat,
+  FederationDedupeAuditEntry,
+  FederationVerificationIssue,
+  FederationVerificationSummary,
   ImportWarning,
   IsoDateTime,
   ObjectRef,
@@ -52,6 +55,17 @@ export interface FederationExportRedactionReasonCount {
   readonly count: number;
 }
 
+export interface FederationExportAuditEntry {
+  readonly eventId: CanopyId;
+  readonly eventType: CanopyEventType;
+  readonly objectRef: ObjectRef;
+  readonly occurredAt: IsoDateTime;
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly contentHash?: ContentHash;
+  readonly provenanceKind?: string;
+  readonly signingStatus?: string;
+}
+
 export interface FederationExportPreview {
   readonly eventIds: readonly CanopyId[];
   readonly eventTypes: readonly CanopyEventType[];
@@ -64,6 +78,9 @@ export interface FederationExportPreview {
   readonly localMappings: readonly CanonicalMapping[];
   readonly redactionSummary: FederationExportRedactionSummary;
   readonly federationReadinessWarnings: readonly ImportWarning[];
+  readonly verification: FederationVerificationSummary;
+  readonly dedupe: readonly FederationDedupeAuditEntry[];
+  readonly auditTrail: readonly FederationExportAuditEntry[];
   readonly contentHash: ContentHash;
   readonly contentHashFields: ContentHashFields;
 }
@@ -85,6 +102,9 @@ export const buildFederationExportPreview = (
   const dataStewardshipAgreements = collectDataStewardshipAgreements(sortedEvents);
   const localMappings = collectLocalMappings(sortedEvents);
   const redactionSummary = collectRedactionSummary(sortedEvents);
+  const dedupe = collectDedupeAudit(sortedEvents);
+  const auditTrail = collectAuditTrail(sortedEvents);
+  const verification = collectVerificationSummary(sortedEvents, dedupe);
   const eventIds = includedEvents.map((event) => event.id);
   const contentHash = deterministicContentHash(eventIds);
 
@@ -106,6 +126,9 @@ export const buildFederationExportPreview = (
       dataStewardshipAgreementRefs,
       localMappings
     ),
+    verification,
+    dedupe,
+    auditTrail,
     contentHash,
     contentHashFields: {
       contentHash,
@@ -141,7 +164,8 @@ export const buildFederationExportEnvelopeReadModel = (
     localMappings: preview.localMappings,
     contentHash: preview.contentHash,
     contentHashFields: preview.contentHashFields,
-    redactionSummary: preview.redactionSummary
+    redactionSummary: preview.redactionSummary,
+    verification: preview.verification
   });
 
   return { envelope, preview, includedEvents };
@@ -275,6 +299,157 @@ const collectRedactionSummary = (
       ).length
     }))
   });
+};
+
+const collectDedupeAudit = (
+  events: readonly CanopyEvent[]
+): readonly FederationDedupeAuditEntry[] => {
+  const eventsById = new Map<CanopyId, CanopyEvent[]>();
+
+  for (const event of events) {
+    eventsById.set(event.id, [...(eventsById.get(event.id) ?? []), event]);
+  }
+
+  return [...eventsById.entries()]
+    .map(([eventId, matchingEvents]) => ({
+      eventId,
+      occurrenceCount: matchingEvents.length,
+      disposition: matchingEvents.length > 1 ? "duplicate" as const : "accepted" as const,
+      contentHashes: sortedStrings(
+        uniqueStrings(matchingEvents.map((event) => event.contentHash).filter(isDefined))
+      )
+    }))
+    .sort((left, right) => compareStrings(left.eventId, right.eventId));
+};
+
+const collectAuditTrail = (
+  events: readonly CanopyEvent[]
+): readonly FederationExportAuditEntry[] =>
+  events.map((event) =>
+    optionalAuditEntry({
+      eventId: event.id,
+      eventType: event.type,
+      objectRef: event.objectRef,
+      occurredAt: event.occurredAt,
+      authorityRefs: sortedRefs(event.authorityRefs),
+      contentHash: event.contentHash,
+      provenanceKind: event.provenance?.kind,
+      signingStatus: event.signingIntent?.status
+    })
+  );
+
+const collectVerificationSummary = (
+  events: readonly CanopyEvent[],
+  dedupe: readonly FederationDedupeAuditEntry[]
+): FederationVerificationSummary => {
+  const issues: FederationVerificationIssue[] = [];
+  const schemaVersions = uniqueNumbers(events.map((event) => event.schemaVersion));
+
+  for (const entry of dedupe.filter((item) => item.occurrenceCount > 1)) {
+    issues.push({
+      code: "duplicate_event_id",
+      severity: "error",
+      message: "Export stream contains duplicate event ids.",
+      path: ["events", entry.eventId],
+      eventId: entry.eventId
+    });
+  }
+
+  if (schemaVersions.length > 1) {
+    issues.push({
+      code: "schema_version_mismatch",
+      severity: "warning",
+      message: "Export stream contains multiple event schema versions.",
+      path: ["events", "schemaVersion"]
+    });
+  }
+
+  for (const event of events) {
+    if (event.type.startsWith("federation.") && event.authorityRefs.length === 0) {
+      issues.push({
+        code: "authority_refs_missing",
+        severity: "warning",
+        message: "Federation event has no authority refs.",
+        path: ["events", event.id, "authorityRefs"],
+        eventId: event.id,
+        affectedRef: event.objectRef
+      });
+    }
+
+    if (event.type.startsWith("federation.") && event.provenance === undefined) {
+      issues.push({
+        code: "provenance_missing",
+        severity: "warning",
+        message: "Federation event does not preserve provenance.",
+        path: ["events", event.id, "provenance"],
+        eventId: event.id,
+        affectedRef: event.objectRef
+      });
+    }
+
+    if (
+      event.signingIntent !== undefined &&
+      event.signingIntent.status !== "signed" &&
+      (event.signingIntent.requiredForFederation ||
+        event.signingIntent.requiredForBindingAuthority)
+    ) {
+      issues.push({
+        code: "signature_required",
+        severity: "error",
+        message: "Event signing is required but no signed proof is present.",
+        path: ["events", event.id, "signingIntent"],
+        eventId: event.id,
+        affectedRef: event.objectRef
+      });
+    }
+
+    if (
+      event.redaction?.isRedactedStub === true &&
+      event.redaction.originalEventId === undefined
+    ) {
+      issues.push({
+        code: "redaction_continuity_gap",
+        severity: "warning",
+        message: "Redaction stub is missing original event continuity.",
+        path: ["events", event.id, "redaction", "originalEventId"],
+        eventId: event.id,
+        affectedRef: event.objectRef
+      });
+    }
+  }
+
+  return {
+    status: issues.some((issue) => issue.severity === "error")
+      ? "rejected"
+      : issues.length > 0
+        ? "warning"
+        : "verified",
+    verifiedAt: latestOccurredAt(events),
+    issues: issues.sort(
+      (left, right) => compareStrings(left.code, right.code) || comparePath(left.path, right.path)
+    ),
+    dedupe,
+    signedEventIds: sortedStrings(
+      uniqueStrings(
+        events
+          .filter((event) => event.signingIntent?.status === "signed")
+          .map((event) => event.id)
+      )
+    ),
+    unsignedRequiredEventIds: sortedStrings(
+      uniqueStrings(
+        events
+          .filter(
+            (event) =>
+              event.signingIntent !== undefined &&
+              event.signingIntent.status !== "signed" &&
+              (event.signingIntent.requiredForFederation ||
+                event.signingIntent.requiredForBindingAuthority)
+          )
+          .map((event) => event.id)
+      )
+    )
+  };
 };
 
 const collectFederationReadinessWarnings = (
@@ -567,6 +742,28 @@ const optionalRedactionSummary = (
     ...(contentHashBeforeRedaction === undefined ? {} : { contentHashBeforeRedaction }),
     ...(contentHashAfterRedaction === undefined ? {} : { contentHashAfterRedaction }),
     ...(notes === undefined ? {} : { notes })
+  };
+};
+
+type AuditEntryInput = Omit<
+  FederationExportAuditEntry,
+  "contentHash" | "provenanceKind" | "signingStatus"
+> & {
+  readonly contentHash: ContentHash | undefined;
+  readonly provenanceKind: string | undefined;
+  readonly signingStatus: string | undefined;
+};
+
+const optionalAuditEntry = (
+  entry: AuditEntryInput
+): FederationExportAuditEntry => {
+  const { contentHash, provenanceKind, signingStatus, ...rest } = entry;
+
+  return {
+    ...rest,
+    ...(contentHash === undefined ? {} : { contentHash }),
+    ...(provenanceKind === undefined ? {} : { provenanceKind }),
+    ...(signingStatus === undefined ? {} : { signingStatus })
   };
 };
 

@@ -18,8 +18,16 @@ Canopy commons runtime.
   retry, review, or blocked actions.
 - Invariant drift alerts: projection, outbox, adapter audit, and import remediation
   drift surfaced as warning or critical alerts.
+- Remediation command plan: deterministic commands derived from a report to retry
+  failed outbox records, request projection rebuilds, quarantine blocked imports,
+  acknowledge adapter audit failures, and create invariant drift tickets.
+- Remediation command execution: records operator audit artifacts for
+  acknowledgements, quarantines, and drift tickets, then rebuilds the report so
+  remediated failures leave the open queues.
 
 ## Verification
 
 The operations workflow has focused tests for empty health, happy-path import drain,
 direct projection rebuild control, and blocked remediation/drift reporting.
+Additional command-loop tests cover report-to-command planning, execution effects,
+outbox batch retry, and projection rebuild requests.

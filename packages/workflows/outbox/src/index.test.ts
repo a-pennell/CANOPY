@@ -5,6 +5,7 @@ import {
   OutboxError,
   createInMemoryOutbox,
   createPersistentOutbox,
+  retryOutboxRecords,
   runOutboxWorker,
   type EnqueueOutboxRecordInput
 } from "./index.js";
@@ -162,6 +163,39 @@ describe("in-memory outbox", () => {
       status: "dead-lettered",
       lastError: "still failing",
       attemptCount: 2
+    });
+  });
+
+  it("batch retries failed records and can reset exhausted attempts", () => {
+    const outbox = createInMemoryOutbox({
+      createId: () => "outbox.1"
+    });
+    const record = outbox.enqueue({
+      ...enqueueInput,
+      maxAttempts: 1
+    });
+
+    outbox.lease({ leasedBy: "worker.1", now: "2026-06-13T00:00:00.000Z" });
+    outbox.fail(record.id, {
+      error: "exhausted",
+      now: "2026-06-13T00:01:00.000Z"
+    });
+
+    const retry = retryOutboxRecords({
+      outbox,
+      recordIds: [record.id, "outbox.missing"],
+      now: "2026-06-13T00:02:00.000Z",
+      resetAttemptCount: true,
+      maxAttempts: 2
+    });
+
+    expect(retry.retriedRecords).toHaveLength(1);
+    expect(retry.skippedRecordIds).toEqual(["outbox.missing"]);
+    expect(outbox.get(record.id)).toMatchObject({
+      status: "pending",
+      attemptCount: 0,
+      maxAttempts: 2,
+      updatedAt: "2026-06-13T00:02:00.000Z"
     });
   });
 

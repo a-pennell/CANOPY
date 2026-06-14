@@ -158,6 +158,89 @@ describe("buildFederationExportPreview", () => {
       "stewardship_rule_conflict"
     ]);
   });
+
+  it("projects federation verification, dedupe, and audit shape", () => {
+    const preview = buildFederationExportPreview([
+      event({
+        id: "event.duplicate",
+        type: "federation.export.created",
+        objectRef: envelopeRef,
+        authorityRefs: [policyRef],
+        sourceCapability: "federation",
+        contentHash: "sha256:first",
+        signingIntent: {
+          status: "deferred",
+          requiredForFederation: true,
+          requiredForBindingAuthority: false,
+          signerRefs: [personRef],
+          reason: "Peer requires signed export manifests."
+        }
+      }),
+      event({
+        id: "event.duplicate",
+        type: "federation.export.created",
+        occurredAt: "2026-06-02T00:00:00.000Z",
+        objectRef: envelopeRef,
+        authorityRefs: [policyRef],
+        sourceCapability: "federation",
+        contentHash: "sha256:second",
+        provenance: {
+          kind: "federated",
+          sourceEnvelopeId: "remote-envelope.1"
+        },
+        signingIntent: {
+          status: "signed",
+          requiredForFederation: true,
+          requiredForBindingAuthority: false,
+          signerRefs: [personRef],
+          signature: {
+            algorithm: "ed25519",
+            signature: "signature",
+            signedAt: "2026-06-02T00:00:00.000Z",
+            contentHash: "sha256:second"
+          }
+        }
+      })
+    ]);
+
+    expect(preview.dedupe).toEqual([
+      {
+        eventId: "event.duplicate",
+        occurrenceCount: 2,
+        disposition: "duplicate",
+        contentHashes: ["sha256:first", "sha256:second"]
+      }
+    ]);
+    expect(preview.verification.status).toBe("rejected");
+    expect(preview.verification.unsignedRequiredEventIds).toEqual(["event.duplicate"]);
+    expect(preview.verification.signedEventIds).toEqual(["event.duplicate"]);
+    expect(preview.verification.issues.map((issue) => issue.code)).toEqual([
+      "duplicate_event_id",
+      "provenance_missing",
+      "signature_required"
+    ]);
+    expect(preview.auditTrail).toEqual([
+      {
+        eventId: "event.duplicate",
+        eventType: "federation.export.created",
+        objectRef: envelopeRef,
+        occurredAt: "2026-06-01T00:00:00.000Z",
+        authorityRefs: [policyRef],
+        contentHash: "sha256:first",
+        signingStatus: "deferred"
+      },
+      {
+        eventId: "event.duplicate",
+        eventType: "federation.export.created",
+        objectRef: envelopeRef,
+        occurredAt: "2026-06-02T00:00:00.000Z",
+        authorityRefs: [policyRef],
+        contentHash: "sha256:second",
+        provenanceKind: "federated",
+        signingStatus: "signed"
+      }
+    ]);
+  });
 });
 
 describe("buildFederationExportEnvelopeReadModel", () => {

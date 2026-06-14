@@ -12,8 +12,14 @@
     "@canopy/contracts-kernel": "0.0.0"
   },
   "devDependencies": {
+    "@canopy/adapters-provider-activitypub-transport": "0.0.0",
+    "@canopy/adapters-provider-oidc-auth": "0.0.0",
+    "@canopy/adapters-provider-pgvector-vector": "0.0.0",
+    "@canopy/adapters-provider-postgis-geospatial": "0.0.0",
     "@canopy/adapters-provider-postgres-document-store": "0.0.0",
+    "@canopy/adapters-provider-postgres-object-graph": "0.0.0",
     "@canopy/adapters-provider-s3-object-storage": "0.0.0",
+    "@canopy/adapters-provider-timescaledb-time-series": "0.0.0",
     "@canopy/adapters-reference-in-memory": "0.0.0"
   }
 }

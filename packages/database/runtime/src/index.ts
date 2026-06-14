@@ -138,9 +138,32 @@ export interface CanonicalSqlExecutor {
   execute(statement: CanonicalSqlStatement): Promise<void>;
 }
 
+export interface PostgresCanonicalSqlClient {
+  query(text: string, params?: readonly JsonValue[]): Promise<unknown>;
+}
+
+export interface PostgresCanonicalSqlExecutionOptions {
+  readonly requireMigrationReady?: boolean;
+  readonly useTransaction?: boolean;
+}
+
+export interface PostgresCanonicalMigrationReadiness {
+  readonly status: "ready" | "missing";
+  readonly checkedTables: readonly CanonicalSqlTableName[];
+  readonly missingTables: readonly CanonicalSqlTableName[];
+}
+
 const defaultNow = (): IsoDateTime => new Date().toISOString();
 const canonicalSqlMigrationArtifact =
   "packages/database/migrations/sql/0000_canonical_homes.sql" as const;
+const canonicalSqlTables: readonly CanonicalSqlTableName[] = [
+  "canopy_object_refs",
+  "canopy_canonical_mappings",
+  "canopy_events",
+  "canopy_outbox",
+  "canopy_projection_state",
+  "canopy_adapter_audit"
+];
 const appendOnlySqlTables: readonly CanonicalSqlTableName[] = [
   "canopy_events",
   "canopy_outbox",
@@ -170,6 +193,61 @@ export async function executeCanonicalSqlPlan(
 ): Promise<void> {
   for (const statement of plan.statements) {
     await executor.execute(statement);
+  }
+}
+
+export async function checkPostgresCanonicalMigrationReadiness(
+  client: PostgresCanonicalSqlClient
+): Promise<PostgresCanonicalMigrationReadiness> {
+  const missingTables: CanonicalSqlTableName[] = [];
+
+  for (const tableName of canonicalSqlTables) {
+    const result = await client.query("SELECT to_regclass($1) AS table_name", [tableName]);
+    if (firstResultValue(result) !== tableName) {
+      missingTables.push(tableName);
+    }
+  }
+
+  return {
+    status: missingTables.length === 0 ? "ready" : "missing",
+    checkedTables: canonicalSqlTables,
+    missingTables
+  };
+}
+
+export async function executeCanonicalSqlPlanWithPostgres(
+  client: PostgresCanonicalSqlClient,
+  plan: CanonicalSqlExecutionPlan,
+  options: PostgresCanonicalSqlExecutionOptions = {}
+): Promise<void> {
+  if (options.requireMigrationReady ?? true) {
+    const readiness = await checkPostgresCanonicalMigrationReadiness(client);
+    if (readiness.status !== "ready") {
+      throw new CanonicalPersistenceError(
+        "record-not-found",
+        `Canonical Postgres migration is not ready; missing tables: ${readiness.missingTables.join(", ")}.`
+      );
+    }
+  }
+
+  const useTransaction = options.useTransaction ?? true;
+  if (useTransaction) {
+    await client.query("BEGIN");
+  }
+
+  try {
+    for (const statement of plan.statements) {
+      await client.query(statement.text, statement.params);
+    }
+
+    if (useTransaction) {
+      await client.query("COMMIT");
+    }
+  } catch (error) {
+    if (useTransaction) {
+      await client.query("ROLLBACK");
+    }
+    throw normalizePostgresExecutionError(error);
   }
 }
 
@@ -626,6 +704,48 @@ function sqlInsert(
     recordId,
     appendOnly
   };
+}
+
+function firstResultValue(result: unknown): unknown {
+  const rows = typeof result === "object" && result !== null && "rows" in result
+    ? (result as { readonly rows?: readonly unknown[] }).rows
+    : undefined;
+  const firstRow = rows?.[0];
+  if (typeof firstRow !== "object" || firstRow === null) {
+    return undefined;
+  }
+  return Object.values(firstRow as Record<string, unknown>)[0];
+}
+
+function normalizePostgresExecutionError(error: unknown): Error {
+  if (isAppendOnlyPostgresError(error)) {
+    return new CanonicalPersistenceError(
+      "append-only-violation",
+      "Canonical Postgres append-only enforcement rejected a historical mutation."
+    );
+  }
+
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function isAppendOnlyPostgresError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  const value = error as {
+    readonly code?: unknown;
+    readonly message?: unknown;
+    readonly routine?: unknown;
+  };
+  const message = typeof value.message === "string" ? value.message.toLowerCase() : "";
+  return (
+    value.code === "P0001" ||
+    value.code === "23514" ||
+    value.routine === "canopy_reject_historical_mutation" ||
+    message.includes("append-only") ||
+    message.includes("historical facts")
+  );
 }
 
 function eventScope(event: CanopyEvent): CanonicalScope {

@@ -239,6 +239,40 @@ describe("ActivityPubTransportAdapter prototype", () => {
     expect(adapter.snapshot().inbox[0]?.activity.object.messageKind).toBe("import");
   });
 
+  it("dedupes repeated inbound messages by envelope id", async () => {
+    const adapter = createActivityPubTransportAdapter({
+      now: () => "2026-06-13T11:30:00.000Z"
+    });
+    const message: FederationTransportMessage = {
+      ...baseMessage,
+      id: "federation.message.import.dedupe",
+      eventIds: ["event.federation.import.received.dedupe"],
+      payload: {
+        importEnvelopeId: "import.dedupe",
+        schemaVersion: 1
+      }
+    };
+
+    const first = await adapter.importMessage(message);
+    const second = await adapter.importMessage(message);
+    const conflict = await adapter.importMessage({
+      ...message,
+      payload: {
+        importEnvelopeId: "import.dedupe.changed",
+        schemaVersion: 1
+      }
+    });
+    const received = await adapter.receive();
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(conflict.ok).toBe(false);
+    expect(conflict.errors[0]?.code).toBe("conflict");
+    expect(received.value?.items.map((item) => item.id)).toEqual([
+      "federation.message.import.dedupe"
+    ]);
+  });
+
   it("reports prototype health and production gates", async () => {
     const adapter = createActivityPubTransportAdapter({
       now: () => "2026-06-13T12:00:00.000Z"

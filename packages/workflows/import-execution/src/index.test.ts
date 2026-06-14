@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { dryRunCommonCreditImport } from "@canopy/database-import-plans";
+import {
+  dryRunCommonCreditImport,
+  foldedSourceSampleExportBundles
+} from "@canopy/database-import-plans";
 import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
 import {
   ImportExecutionError,
   createImportReviewReport,
+  executeSampleExportBundleImports,
   executeReviewedImport,
   materializeAcceptedImportEvent
 } from "./index.js";
@@ -138,6 +142,124 @@ describe("import execution workflow", () => {
     });
   });
 
+  it("executes sample export bundles for all folded source projects", () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => reviewedAt });
+
+    const results = executeSampleExportBundleImports({
+      bundles: foldedSourceSampleExportBundles,
+      runtime,
+      recordedAt: reviewedAt
+    });
+
+    expect(results.map((result) => result.bundle.sourceProject)).toEqual([
+      "common-credit",
+      "icos",
+      "sensemaking",
+      "stewardship"
+    ]);
+    expect(results.map((result) => result.dryRun.status)).toEqual([
+      "pass",
+      "pass",
+      "pass",
+      "pass"
+    ]);
+    expect(results.map((result) => result.execution.review.status)).toEqual([
+      "ready",
+      "ready",
+      "ready",
+      "ready"
+    ]);
+    expect(results.map((result) => result.execution.status)).toEqual([
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]);
+
+    const expectedRecordCount = foldedSourceSampleExportBundles.reduce(
+      (total, bundle) =>
+        total + bundle.files.reduce((bundleTotal, file) => bundleTotal + file.records.length, 0),
+      0
+    );
+    const mappingRecords = results.flatMap((result) => result.execution.mappingRecords);
+    const eventRecords = results.flatMap((result) => result.execution.eventRecords);
+    const outboxRecords = results.flatMap((result) => result.execution.outboxRecords);
+
+    expect(mappingRecords).toHaveLength(expectedRecordCount);
+    expect(eventRecords).toHaveLength(expectedRecordCount);
+    expect(outboxRecords).toHaveLength(expectedRecordCount);
+    expect(results.flatMap((result) => result.execution.adapterAuditRecords)).toHaveLength(4);
+    expect(runtime.counts()).toMatchObject({
+      mappings: expectedRecordCount,
+      events: expectedRecordCount,
+      outbox: expectedRecordCount,
+      adapterAudits: 4
+    });
+    expect(mappingRecords.map((record) => record.canonicalType)).toEqual(
+      expect.arrayContaining([
+        "person",
+        "organization",
+        "ledger-account",
+        "ledger-entry",
+        "role",
+        "mandate",
+        "decision",
+        "claim",
+        "evidence",
+        "model",
+        "living-system",
+        "resource",
+        "use-right",
+        "task"
+      ])
+    );
+    expect(eventRecords.map((record) => record.eventType)).toEqual(
+      expect.arrayContaining([
+        "accounting.ledger_entry.posted",
+        "accounting.ledger_entry.reversed",
+        "authority.role.assigned",
+        "authority.mandate.granted",
+        "governance.decision.recorded",
+        "claim.contested",
+        "evidence.linked_to_claim",
+        "ecology.living_system.created",
+        "stewardship.use_right.granted",
+        "stewardship.task.completed"
+      ])
+    );
+    expect(
+      eventRecords.every((record) => record.event.payload.dryRun === false)
+    ).toBe(true);
+    expect(
+      eventRecords.every((record) => typeof record.event.payload.importedFromCandidateEventId === "string")
+    ).toBe(true);
+    expect(
+      outboxRecords.every(
+        (record) =>
+          record.destination.kind === "workflow" &&
+          record.destination.name === "projection-rebuild" &&
+          record.status === "pending" &&
+          jsonObject(record.payload)?.source === "import-execution"
+      )
+    ).toBe(true);
+
+    const commonCreditLedgerEvent = eventRecords.find(
+      (record) => record.eventId === "event.import.common-credit.transaction.cc-tx-food-hub-1.accounting-ledger-entry-posted"
+    );
+    expect(commonCreditLedgerEvent?.event.payload).toMatchObject({
+      sourceBundleId: "sample.common-credit.riverbend.2026-01-16",
+      sourceBundleFilePath: "exports/common-credit/ledger.jsonl",
+      sourceBundleFileFormat: "jsonl",
+      sourceBundleFileContentHash: "sha256:sample-common-credit-ledger"
+    });
+    expect(commonCreditLedgerEvent?.event.provenance).toMatchObject({
+      kind: "imported",
+      sourceEnvelopeId: "sample.common-credit.riverbend.2026-01-16",
+      sourceContentHash: "sha256:sample-common-credit-ledger",
+      collectedAt: "2026-01-16T12:00:00.000Z"
+    });
+  });
+
   it("does not execute blocked dry-runs even when callers request acceptance", () => {
     const runtime = createInMemoryCanonicalPersistence({ now: () => reviewedAt });
     const dryRun = dryRunCommonCreditImport([
@@ -191,3 +313,9 @@ describe("import execution workflow", () => {
     expect(accepted.objectRef).toEqual(candidate.objectRef);
   });
 });
+
+function jsonObject(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined;
+}

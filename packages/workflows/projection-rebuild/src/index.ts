@@ -159,6 +159,17 @@ export interface PersistentProjectionRebuildResult {
   readonly persistedDocuments: readonly MaterializedProjectionDocument[];
 }
 
+export interface RequestProjectionRebuildInput {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly requestedAt: IsoDateTime;
+  readonly projectionNames?: readonly ProjectionRebuilderName[];
+  readonly reason?: string;
+}
+
+export interface RequestProjectionRebuildResult {
+  readonly requestedStates: readonly ProjectionStateRecord[];
+}
+
 export const objectPageProjectionRebuilder: ProjectionRebuilder<ObjectPageRebuildOutput> = {
   name: "object-page",
   version: PROJECTION_REBUILD_VERSION,
@@ -279,6 +290,35 @@ export const rebuildAndPersistAllProjections = (
         );
 
   return { results, persistedStates, persistedDocuments };
+};
+
+export const requestProjectionRebuild = (
+  input: RequestProjectionRebuildInput
+): RequestProjectionRebuildResult => {
+  const projectionNames =
+    input.projectionNames ?? projectionRebuilders.map((rebuilder) => rebuilder.name);
+  const currentStates = new Map(
+    input.runtime.listProjectionStates().map((state) => [state.projectionName, state])
+  );
+  const requestedStates = projectionNames.map((projectionName) => {
+    const current = currentStates.get(projectionName);
+    const nextStatus: ProjectionStateRecord["status"] =
+      current?.status === "failed" ? "failed" : "stale";
+    const next =
+      current === undefined
+        ? requestedProjectionState(projectionName, input)
+        : optionalState({
+            ...current,
+            updatedAt: input.requestedAt,
+            status: nextStatus,
+            rebuildRequestedAt: input.requestedAt,
+            lastError: input.reason ?? current.lastError
+          });
+
+    return input.runtime.putProjectionState(next);
+  });
+
+  return { requestedStates };
 };
 
 export const createInMemoryMaterializedProjectionStore = (
@@ -470,6 +510,31 @@ const buildProjectionState = (
   });
 };
 
+const requestedProjectionState = (
+  projectionName: ProjectionRebuilderName,
+  input: RequestProjectionRebuildInput
+): ProjectionStateRecord => {
+  const eventCount = input.runtime.counts().events;
+
+  return optionalState({
+    id: `projection-state.${projectionName}`,
+    kind: "projection-state",
+    schemaVersion: 1,
+    createdAt: input.requestedAt,
+    updatedAt: input.requestedAt,
+    projectionName,
+    projectionVersion: PROJECTION_REBUILD_VERSION,
+    status: "stale",
+    checkpoint: {
+      processedAt: input.requestedAt,
+      sequence: eventCount
+    },
+    processedEventCount: 0,
+    lastError: input.reason,
+    rebuildRequestedAt: input.requestedAt
+  });
+};
+
 const collectAllRefs = (events: readonly CanopyEvent[]): readonly ObjectRef[] =>
   sortedRefs(dedupeRefs(events.flatMap((event) => [event.objectRef, ...event.relatedRefs, ...event.authorityRefs])));
 
@@ -608,7 +673,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const isDefined = <TValue>(value: TValue | undefined): value is TValue => value !== undefined;
 
-const optionalState = (state: ProjectionStateRecord): ProjectionStateRecord => {
+const optionalState = (state: Record<string, unknown>): ProjectionStateRecord => {
   const entries = Object.entries(state).filter(([, value]) => value !== undefined);
   return Object.fromEntries(entries) as unknown as ProjectionStateRecord;
 };
