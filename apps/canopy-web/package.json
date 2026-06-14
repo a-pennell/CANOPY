@@ -1,0 +1,27 @@
+{
+  "name": "@canopy/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
+    "start": "next start",
+    "check": "next build --webpack"
+  },
+  "dependencies": {
+    "@canopy/app-shell": "0.0.0",
+    "@canopy/database-import-plans": "0.0.0",
+    "@canopy/database-runtime": "0.0.0",
+    "@canopy/workflows-import-execution": "0.0.0",
+    "@canopy/workflows-operations": "0.0.0",
+    "@canopy/workflows-projection-rebuild": "0.0.0",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3"
+  }
+}

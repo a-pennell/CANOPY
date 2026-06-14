@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-const ignoredDirs = new Set([".git", "node_modules", "dist", "coverage"]);
+const ignoredDirs = new Set([".git", ".next", "node_modules", "dist", "coverage"]);
 const checkedExtensions = new Set([
   ".cjs",
   ".css",
