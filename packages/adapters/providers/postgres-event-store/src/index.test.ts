@@ -113,6 +113,24 @@ describe("PostgresEventStoreAdapter prototype", () => {
       "succeeded",
       "succeeded"
     ]);
+    expect(adapter.canonicalSqlPlan()).toMatchObject({
+      dialect: "postgres",
+      appendOnlyTables: ["canopy_events", "canopy_outbox", "canopy_adapter_audit"]
+    });
+    expect(
+      adapter.snapshotTables().canonicalSqlPlan.statements.map((statement) => statement.tableName)
+    ).toEqual([
+      "canopy_object_refs",
+      "canopy_object_refs",
+      "canopy_object_refs",
+      "canopy_events",
+      "canopy_events",
+      "canopy_outbox",
+      "canopy_outbox",
+      "canopy_projection_state",
+      "canopy_adapter_audit",
+      "canopy_adapter_audit"
+    ]);
   });
 
   it("allows identical idempotent appends and rejects event mutation", async () => {

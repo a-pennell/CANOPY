@@ -61,6 +61,43 @@ export type MigrationHealthReport = {
   readonly issues: readonly MigrationHealthIssue[];
 };
 
+export interface MigrationRunnerClient {
+  query(text: string, params?: readonly unknown[]): Promise<unknown>;
+}
+
+export interface MigrationRunnerArtifact {
+  readonly id: string;
+  readonly providerTrack: ProviderMigrationTrackId;
+  readonly path: string;
+  readonly sql: string;
+  readonly subjects: readonly MigrationSubject[];
+  readonly appendOnlySubjects: readonly MigrationSubject[];
+}
+
+export interface MigrationRunnerPlan {
+  readonly id: string;
+  readonly providerTrack: ProviderMigrationTrackId;
+  readonly artifact: MigrationRunnerArtifact;
+  readonly statements: readonly string[];
+  readonly readinessTables: readonly string[];
+}
+
+export interface MigrationRunnerAuditRecord {
+  readonly id: string;
+  readonly providerTrack: ProviderMigrationTrackId;
+  readonly artifactPath: string;
+  readonly status: "planned" | "applied" | "failed" | "ready" | "not-ready";
+  readonly checkedAt: string;
+  readonly statementCount: number;
+  readonly missingTables: readonly string[];
+  readonly errors: readonly string[];
+}
+
+export interface MigrationRunnerResult {
+  readonly plan: MigrationRunnerPlan;
+  readonly audit: MigrationRunnerAuditRecord;
+}
+
 export const canonicalMigrationHomes: readonly MigrationHome[] = [
   {
     subject: "objectRefs",
@@ -255,6 +292,15 @@ export const forbiddenProviderSdkSpecifiers = [
   "aws-sdk",
 ] as const;
 
+export const canonicalSqlReadinessTables = [
+  "canopy_object_refs",
+  "canopy_canonical_mappings",
+  "canopy_events",
+  "canopy_outbox",
+  "canopy_projection_state",
+  "canopy_adapter_audit",
+] as const;
+
 export const findForbiddenProviderSdkCoupling = (
   specifiers: readonly string[],
 ): readonly string[] =>
@@ -322,3 +368,142 @@ export const createMigrationHealthReport = (input?: {
     issues,
   };
 };
+
+export const createCanonicalSqlMigrationArtifact = (
+  sql: string,
+): MigrationRunnerArtifact => ({
+  id: "migration.canopy.canonical.0000",
+  providerTrack: "postgres",
+  path: "sql/0000_canonical_homes.sql",
+  sql,
+  subjects: requiredMigrationSubjects,
+  appendOnlySubjects,
+});
+
+export const createMigrationRunnerPlan = (
+  artifact: MigrationRunnerArtifact,
+): MigrationRunnerPlan => ({
+  id: `${artifact.id}.plan`,
+  providerTrack: artifact.providerTrack,
+  artifact,
+  statements: splitSqlStatements(artifact.sql),
+  readinessTables: canonicalSqlReadinessTables,
+});
+
+export const checkMigrationReadiness = async (
+  client: MigrationRunnerClient,
+  tables: readonly string[] = canonicalSqlReadinessTables,
+): Promise<readonly string[]> => {
+  const missingTables: string[] = [];
+
+  for (const table of tables) {
+    const result = await client.query("SELECT to_regclass($1) AS table_name", [table]);
+    if (firstResultValue(result) !== table) {
+      missingTables.push(table);
+    }
+  }
+
+  return missingTables;
+};
+
+export const applyMigrationRunnerPlan = async (
+  client: MigrationRunnerClient,
+  plan: MigrationRunnerPlan,
+  options: {
+    readonly now?: () => string;
+    readonly useTransaction?: boolean;
+  } = {},
+): Promise<MigrationRunnerResult> => {
+  const now = options.now ?? (() => new Date().toISOString());
+  const useTransaction = options.useTransaction ?? true;
+
+  if (useTransaction) {
+    await client.query("BEGIN");
+  }
+
+  try {
+    for (const statement of plan.statements) {
+      await client.query(statement);
+    }
+
+    if (useTransaction) {
+      await client.query("COMMIT");
+    }
+  } catch (error) {
+    if (useTransaction) {
+      await client.query("ROLLBACK");
+    }
+
+    return {
+      plan,
+      audit: {
+        id: `${plan.id}.audit.failed`,
+        providerTrack: plan.providerTrack,
+        artifactPath: plan.artifact.path,
+        status: "failed",
+        checkedAt: now(),
+        statementCount: plan.statements.length,
+        missingTables: [],
+        errors: [error instanceof Error ? error.message : String(error)],
+      },
+    };
+  }
+
+  const missingTables = await checkMigrationReadiness(client, plan.readinessTables);
+  return {
+    plan,
+    audit: {
+      id: `${plan.id}.audit.${missingTables.length === 0 ? "ready" : "not-ready"}`,
+      providerTrack: plan.providerTrack,
+      artifactPath: plan.artifact.path,
+      status: missingTables.length === 0 ? "ready" : "not-ready",
+      checkedAt: now(),
+      statementCount: plan.statements.length,
+      missingTables,
+      errors: [],
+    },
+  };
+};
+
+function splitSqlStatements(sql: string): readonly string[] {
+  const statements: string[] = [];
+  let current = "";
+  let inDollarQuote = false;
+
+  for (let index = 0; index < sql.length; index += 1) {
+    const char = sql[index];
+    const next = sql[index + 1];
+
+    if (char === "$" && next === "$") {
+      inDollarQuote = !inDollarQuote;
+      current += "$$";
+      index += 1;
+      continue;
+    }
+
+    current += char;
+
+    if (char === ";" && !inDollarQuote) {
+      const statement = current.trim();
+      if (statement.length > 0) {
+        statements.push(statement);
+      }
+      current = "";
+    }
+  }
+
+  const trailing = current.trim();
+  return trailing.length === 0 ? statements : [...statements, trailing];
+}
+
+function firstResultValue(result: unknown): unknown {
+  const rows =
+    typeof result === "object" && result !== null && "rows" in result
+      ? (result as { readonly rows?: readonly unknown[] }).rows
+      : undefined;
+  const firstRow = rows?.[0];
+  if (typeof firstRow !== "object" || firstRow === null) {
+    return undefined;
+  }
+  return Object.values(firstRow as Record<string, unknown>)[0];
+}

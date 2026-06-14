@@ -6,6 +6,11 @@ import {
   appendOnlySubjects,
   canonicalMigrationHomes,
   createMigrationHealthReport,
+  applyMigrationRunnerPlan,
+  canonicalSqlReadinessTables,
+  checkMigrationReadiness,
+  createCanonicalSqlMigrationArtifact,
+  createMigrationRunnerPlan,
   findForbiddenProviderSdkCoupling,
   forbiddenProviderSdkSpecifiers,
   migrationArtifacts,
@@ -152,4 +157,87 @@ describe("database migration manifest", () => {
     expect(sqlIntent).toContain("CREATE INDEX canopy_events_object_ref_recorded_at_idx");
     expect(sqlIntent).toContain("CHECK (status IN");
   });
+
+  it("plans the canonical SQL artifact without splitting trigger bodies", () => {
+    const artifact = createCanonicalSqlMigrationArtifact(sqlIntent);
+    const plan = createMigrationRunnerPlan(artifact);
+
+    expect(artifact.path).toBe("sql/0000_canonical_homes.sql");
+    expect(plan.providerTrack).toBe("postgres");
+    expect(plan.readinessTables).toEqual(canonicalSqlReadinessTables);
+    expect(plan.statements.some((statement) => statement.includes("RETURNS trigger AS $$"))).toBe(
+      true,
+    );
+    expect(plan.statements.filter((statement) => statement.includes("RAISE EXCEPTION"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("checks migration readiness and returns missing canonical tables", async () => {
+    const client = new FakeMigrationClient(["canopy_events"]);
+
+    await expect(checkMigrationReadiness(client)).resolves.toEqual(["canopy_events"]);
+  });
+
+  it("applies the canonical migration plan and returns a ready audit", async () => {
+    const client = new FakeMigrationClient();
+    const plan = createMigrationRunnerPlan(createCanonicalSqlMigrationArtifact(sqlIntent));
+
+    const result = await applyMigrationRunnerPlan(client, plan, {
+      now: () => "2026-06-14T00:00:00.000Z",
+    });
+
+    expect(result.audit).toMatchObject({
+      status: "ready",
+      artifactPath: "sql/0000_canonical_homes.sql",
+      missingTables: [],
+      checkedAt: "2026-06-14T00:00:00.000Z",
+    });
+    expect(client.executed[0]?.text).toBe("BEGIN");
+    expect(client.executed.map((entry) => entry.text)).toContain("COMMIT");
+  });
+
+  it("rolls back failed migration application and records failure audit", async () => {
+    const client = new FakeMigrationClient([], "CREATE TABLE canopy_events");
+    const plan = createMigrationRunnerPlan(createCanonicalSqlMigrationArtifact(sqlIntent));
+
+    const result = await applyMigrationRunnerPlan(client, plan, {
+      now: () => "2026-06-14T00:00:00.000Z",
+    });
+
+    expect(result.audit.status).toBe("failed");
+    expect(result.audit.errors[0]).toContain("migration failed");
+    expect(client.executed.map((entry) => entry.text)).toContain("ROLLBACK");
+    expect(client.executed.map((entry) => entry.text)).not.toContain("COMMIT");
+  });
 });
+
+class FakeMigrationClient {
+  readonly executed: { readonly text: string; readonly params?: readonly unknown[] }[] = [];
+
+  constructor(
+    private readonly missingTables: readonly string[] = [],
+    private readonly failOnStatement: string | undefined = undefined,
+  ) {}
+
+  async query(text: string, params?: readonly unknown[]): Promise<unknown> {
+    this.executed.push(params === undefined ? { text } : { text, params });
+
+    if (this.failOnStatement !== undefined && text.includes(this.failOnStatement)) {
+      throw new Error("migration failed");
+    }
+
+    if (text === "SELECT to_regclass($1) AS table_name") {
+      const tableName = String(params?.[0]);
+      return {
+        rows: [
+          {
+            table_name: this.missingTables.includes(tableName) ? null : tableName,
+          },
+        ],
+      };
+    }
+
+    return { rows: [] };
+  }
+}

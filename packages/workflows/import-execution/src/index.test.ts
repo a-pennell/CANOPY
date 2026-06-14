@@ -5,6 +5,10 @@ import {
 } from "@canopy/database-import-plans";
 import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
 import {
+  createInMemoryMaterializedProjectionStore,
+  readMaterializedProjection
+} from "@canopy/workflows-projection-rebuild";
+import {
   ImportExecutionError,
   createImportReviewReport,
   executeSampleExportBundleImports,
@@ -41,6 +45,7 @@ describe("import execution workflow", () => {
 
   it("writes accepted mappings and materialized import events to the canonical runtime", () => {
     const runtime = createInMemoryCanonicalPersistence({ now: () => reviewedAt });
+    const materializedProjections = createInMemoryMaterializedProjectionStore();
     const dryRun = dryRunCommonCreditImport([
       {
         sourceObject: "transaction",
@@ -58,7 +63,16 @@ describe("import execution workflow", () => {
       reviewedAt
     });
 
-    const result = executeReviewedImport({ dryRun, review, runtime, recordedAt: reviewedAt });
+    const result = executeReviewedImport({
+      dryRun,
+      review,
+      runtime,
+      recordedAt: reviewedAt,
+      projectionRebuildOptions: {
+        materializedProjections
+      }
+    });
+    const importedObjectRef = result.eventRecords[0]?.objectRef;
 
     expect(review.status).toBe("ready");
     expect(result.status).toBe("applied");
@@ -100,8 +114,35 @@ describe("import execution workflow", () => {
       mappings: 1,
       events: 1,
       outbox: 1,
+      projectionStates: 7,
       adapterAudits: 1
     });
+    expect(result.projectionRebuild?.persistedStates.map((state) => state.id)).toEqual([
+      "projection-state.object-page",
+      "projection-state.civic-memory",
+      "projection-state.authority",
+      "projection-state.claim-evidence",
+      "projection-state.resource-stewardship",
+      "projection-state.decision-packet",
+      "projection-state.federation-export"
+    ]);
+    expect(runtime.getProjectionState("projection-state.object-page")).toMatchObject({
+      status: "current",
+      processedEventCount: 1,
+      checkpoint: {
+        eventId: result.eventRecords[0]?.eventId,
+        sequence: 1
+      }
+    });
+    if (importedObjectRef === undefined) {
+      throw new Error("expected imported event object ref");
+    }
+    expect(
+      readMaterializedProjection(materializedProjections, {
+        projectionName: "object-page",
+        targetRef: importedObjectRef
+      })?.processedEventCount
+    ).toBe(1);
   });
 
   it("can execute accepted imports without enqueueing projection work", () => {
@@ -133,12 +174,50 @@ describe("import execution workflow", () => {
 
     expect(result.status).toBe("applied");
     expect(result.outboxRecords).toEqual([]);
+    expect(result.projectionRebuild?.persistedStates).toHaveLength(7);
     expect(result.adapterAuditRecords[0]?.outboxIds).toEqual([]);
     expect(runtime.counts()).toMatchObject({
       mappings: 1,
       events: 1,
       outbox: 0,
+      projectionStates: 7,
       adapterAudits: 1
+    });
+  });
+
+  it("can execute accepted imports without rebuilding projections", () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => reviewedAt });
+    const dryRun = dryRunCommonCreditImport([
+      {
+        sourceObject: "transaction",
+        id: "tx-no-rebuild",
+        from: "account-a",
+        to: "account-b",
+        amount: 5,
+        posted_at: "2026-06-13T10:00:00.000Z",
+        authorityRef: "agreement.local-ledger",
+        status: "posted"
+      }
+    ]);
+    const review = createImportReviewReport(dryRun, {
+      defaultDecision: "accept",
+      reviewedAt
+    });
+
+    const result = executeReviewedImport({
+      dryRun,
+      review,
+      runtime,
+      recordedAt: reviewedAt,
+      rebuildProjections: false
+    });
+
+    expect(result.status).toBe("applied");
+    expect(result.projectionRebuild).toBeUndefined();
+    expect(runtime.counts()).toMatchObject({
+      mappings: 1,
+      events: 1,
+      projectionStates: 0
     });
   });
 

@@ -153,7 +153,8 @@ describe("canopy shell snapshot", () => {
       "authority",
       "claim-evidence",
       "resource-stewardship",
-      "decision-packet"
+      "decision-packet",
+      "federation-export"
     ]);
   });
 
@@ -198,7 +199,8 @@ describe("canopy shell snapshot", () => {
       "projection-state.authority",
       "projection-state.claim-evidence",
       "projection-state.resource-stewardship",
-      "projection-state.decision-packet"
+      "projection-state.decision-packet",
+      "projection-state.federation-export"
     ]);
     expect(runtime.getProjectionState("projection-state.civic-memory")).toMatchObject({
       processedEventCount: shellEvents.length,
@@ -214,6 +216,12 @@ describe("canopy shell snapshot", () => {
       kind: "materialized",
       projectionName: "object-page",
       targetRef: decisionRef
+    });
+    expect(persisted.snapshot.surfaces.federationExportState?.projectionRead).toMatchObject({
+      kind: "materialized",
+      projectionName: "federation-export",
+      processedEventCount: shellEvents.length,
+      freshness: "current"
     });
   });
 

@@ -21,6 +21,11 @@ import {
   type DecisionPacketProjectionOptions
 } from "@canopy/projections-decision-packet";
 import {
+  buildFederationExportEnvelopeReadModel,
+  type FederationExportEnvelopeReadModel,
+  type FederationExportProjectionOptions
+} from "@canopy/projections-federation-export";
+import {
   buildObjectPageProjection,
   type ObjectPageProjection
 } from "@canopy/projections-object-page";
@@ -35,7 +40,8 @@ export type ProjectionRebuilderName =
   | "authority"
   | "claim-evidence"
   | "resource-stewardship"
-  | "decision-packet";
+  | "decision-packet"
+  | "federation-export";
 
 export const PROJECTION_REBUILD_VERSION = "0.0.0";
 
@@ -94,6 +100,7 @@ export interface ProjectionRebuildOptions {
   readonly civicMemory?: CivicMemoryProjectionOptions;
   readonly authority?: AuthorityProjectionOptions;
   readonly decisionPacket?: DecisionPacketProjectionOptions;
+  readonly federationExport?: FederationExportProjectionOptions;
 }
 
 export interface ProjectionRebuildResult<TProjection> {
@@ -119,6 +126,7 @@ export type ClaimEvidenceRebuildOutput = ClaimEvidenceProjection;
 export type ResourceStewardshipRebuildOutput =
   readonly ProjectionTargetRecord<ResourceStewardshipProjection>[];
 export type DecisionPacketRebuildOutput = readonly ProjectionTargetRecord<DecisionPacketProjection>[];
+export type FederationExportRebuildOutput = FederationExportEnvelopeReadModel;
 
 export interface ProjectionRebuildOutputs {
   readonly "object-page": ObjectPageRebuildOutput;
@@ -127,6 +135,7 @@ export interface ProjectionRebuildOutputs {
   readonly "claim-evidence": ClaimEvidenceRebuildOutput;
   readonly "resource-stewardship": ResourceStewardshipRebuildOutput;
   readonly "decision-packet": DecisionPacketRebuildOutput;
+  readonly "federation-export": FederationExportRebuildOutput;
 }
 
 export type ProjectionDocumentPayload<Name extends ProjectionRebuilderName> =
@@ -140,7 +149,9 @@ export type ProjectionDocumentPayload<Name extends ProjectionRebuilderName> =
           ? ClaimEvidenceProjection
           : Name extends "resource-stewardship"
             ? ResourceStewardshipProjection
-            : DecisionPacketProjection;
+            : Name extends "decision-packet"
+              ? DecisionPacketProjection
+              : FederationExportEnvelopeReadModel;
 
 export type ProjectionRebuildResults = {
   readonly [Name in keyof ProjectionRebuildOutputs]: ProjectionRebuildResult<
@@ -249,13 +260,26 @@ export const decisionPacketProjectionRebuilder: ProjectionRebuilder<DecisionPack
   }
 };
 
+export const federationExportProjectionRebuilder: ProjectionRebuilder<FederationExportRebuildOutput> = {
+  name: "federation-export",
+  version: PROJECTION_REBUILD_VERSION,
+  rebuild: (events, options = {}) =>
+    rebuildResult(
+      "federation-export",
+      buildFederationExportEnvelopeReadModel(events, options.federationExport),
+      events,
+      options.rebuiltAt
+    )
+};
+
 export const projectionRebuilderRegistry = {
   "object-page": objectPageProjectionRebuilder,
   "civic-memory": civicMemoryProjectionRebuilder,
   authority: authorityProjectionRebuilder,
   "claim-evidence": claimEvidenceProjectionRebuilder,
   "resource-stewardship": resourceStewardshipProjectionRebuilder,
-  "decision-packet": decisionPacketProjectionRebuilder
+  "decision-packet": decisionPacketProjectionRebuilder,
+  "federation-export": federationExportProjectionRebuilder
 } as const;
 
 export const projectionRebuilders = Object.values(projectionRebuilderRegistry);
@@ -269,27 +293,38 @@ export const rebuildAllProjections = (
   authority: authorityProjectionRebuilder.rebuild(events, options),
   "claim-evidence": claimEvidenceProjectionRebuilder.rebuild(events, options),
   "resource-stewardship": resourceStewardshipProjectionRebuilder.rebuild(events, options),
-  "decision-packet": decisionPacketProjectionRebuilder.rebuild(events, options)
+  "decision-packet": decisionPacketProjectionRebuilder.rebuild(events, options),
+  "federation-export": federationExportProjectionRebuilder.rebuild(events, options)
 });
+
+export const materializeProjectionsFromEvents = (
+  events: readonly CanopyEvent[],
+  options: ProjectionRebuildOptions = {}
+): PersistentProjectionRebuildResult => {
+  const results = rebuildAllProjections(events, options);
+  const persistedStates = Object.values(results).map((result) => result.state);
+  const persistedDocuments = materializeProjectionDocuments(results, options.rebuiltAt);
+
+  return { results, persistedStates, persistedDocuments };
+};
 
 export const rebuildAndPersistAllProjections = (
   runtime: CanonicalPersistenceRuntime,
   options: PersistentProjectionRebuildOptions = {}
 ): PersistentProjectionRebuildResult => {
   const events = options.events ?? runtime.queryEvents().items.map((record) => record.event);
-  const results = rebuildAllProjections(events, options);
-  const persistedStates = Object.values(results).map((result) =>
+  const materialized = materializeProjectionsFromEvents(events, options);
+  const persistedStates = Object.values(materialized.results).map((result) =>
     runtime.putProjectionState(result.state)
   );
-  const documents = materializeProjectionDocuments(results, options.rebuiltAt);
   const persistedDocuments =
     options.materializedProjections === undefined
       ? []
-      : documents.map((document) =>
+      : materialized.persistedDocuments.map((document) =>
           options.materializedProjections?.putMaterializedProjection(document) ?? document
         );
 
-  return { results, persistedStates, persistedDocuments };
+  return { results: materialized.results, persistedStates, persistedDocuments };
 };
 
 export const requestProjectionRebuild = (
@@ -381,6 +416,12 @@ export const materializeProjectionDocuments = (
       entry.projection,
       materializedAt
     )
+  ),
+  materializedProjectionDocument(
+    results["federation-export"],
+    wholeProjectionTargetRef("federation-export"),
+    results["federation-export"].projections,
+    materializedAt
   )
 ];
 

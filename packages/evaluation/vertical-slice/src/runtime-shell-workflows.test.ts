@@ -80,16 +80,15 @@ describe("runtime-backed shell workflow slices", () => {
       dryRun,
       review,
       runtime,
-      recordedAt: occurredAt
-    });
-    const accountRef = requireFirst(dryRun.mappingCandidates).canonicalRef;
-    const projectionRebuild = rebuildAndPersistAllProjections(runtime, {
-      rebuiltAt: occurredAt,
-      materializedProjections: materializedStore,
-      civicMemory: {
-        scope: {}
+      recordedAt: occurredAt,
+      projectionRebuildOptions: {
+        materializedProjections: materializedStore,
+        civicMemory: {
+          scope: {}
+        }
       }
     });
+    const accountRef = requireFirst(dryRun.mappingCandidates).canonicalRef;
 
     const objectSession = buildPersistedCanopyShellSession({
       runtime,
@@ -99,7 +98,7 @@ describe("runtime-backed shell workflow slices", () => {
       },
       route: `/objects/ledger-account/${accountRef.id}`,
       materializedProjectionStore: materializedStore,
-      materializedProjections: projectionRebuild.persistedDocuments,
+      materializedProjections: imported.projectionRebuild?.persistedDocuments ?? [],
       importDryRun: dryRun,
       rebuiltAt: occurredAt,
       persistProjectionState: false
@@ -112,7 +111,7 @@ describe("runtime-backed shell workflow slices", () => {
       },
       command: "imports",
       materializedProjectionStore: materializedStore,
-      materializedProjections: projectionRebuild.persistedDocuments,
+      materializedProjections: imported.projectionRebuild?.persistedDocuments ?? [],
       importDryRun: dryRun,
       rebuiltAt: occurredAt,
       persistProjectionState: false
@@ -121,6 +120,15 @@ describe("runtime-backed shell workflow slices", () => {
     expect(dryRun.status).toBe("pass");
     expect(review.status).toBe("ready");
     expect(imported.status).toBe("applied");
+    expect(imported.projectionRebuild?.persistedStates.map((state) => state.id)).toEqual([
+      "projection-state.object-page",
+      "projection-state.civic-memory",
+      "projection-state.authority",
+      "projection-state.claim-evidence",
+      "projection-state.resource-stewardship",
+      "projection-state.decision-packet",
+      "projection-state.federation-export"
+    ]);
     expect(imported.eventRecords[0]?.event.type).toBe("object.created");
     expect(imported.eventRecords[0]?.event.sourceCapability).toBe("allocation-accounting");
     expect(objectSession.session.snapshot.selectedObjectRef).toEqual(accountRef);
@@ -383,6 +391,7 @@ describe("runtime-backed shell workflow slices", () => {
     );
     expect(federationCommand.status).toBe("handled");
     expect(federationCommand.screen.text).toContain("Federation Export:");
+    expect(federationCommand.screen.text).toContain("Projection: materialized/current");
     expect(
       federationCommand.session.snapshot.surfaces.federationExportState?.includedObjectRefs
     ).toEqual(expect.arrayContaining([decisionRef, packetRef, claimRef, evidenceRef]));

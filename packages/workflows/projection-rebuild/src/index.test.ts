@@ -3,6 +3,7 @@ import type { CanopyEvent, ObjectRef } from "@canopy/contracts-kernel";
 import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
 import {
   createInMemoryMaterializedProjectionStore,
+  materializeProjectionsFromEvents,
   projectionRebuilderRegistry,
   projectionMaterializedTargetRef,
   readMaterializedProjection,
@@ -134,7 +135,8 @@ describe("projection rebuild workflow", () => {
       "authority",
       "claim-evidence",
       "resource-stewardship",
-      "decision-packet"
+      "decision-packet",
+      "federation-export"
     ]);
   });
 
@@ -157,6 +159,43 @@ describe("projection rebuild workflow", () => {
       resourceRef
     );
     expect(result["decision-packet"].projections[0]?.projection.decisionRef).toEqual(decisionRef);
+    expect(result["federation-export"].projections.preview.eventIds).toEqual(
+      events.map((replayedEvent) => replayedEvent.id)
+    );
+  });
+
+  it("materializes projection documents directly from an event stream", () => {
+    const materialized = materializeProjectionsFromEvents(events, {
+      rebuiltAt: "2026-01-08T00:00:00.000Z"
+    });
+
+    expect(materialized.persistedStates.map((state) => state.projectionName)).toEqual([
+      "object-page",
+      "civic-memory",
+      "authority",
+      "claim-evidence",
+      "resource-stewardship",
+      "decision-packet",
+      "federation-export"
+    ]);
+    expect(materialized.persistedDocuments.map((document) => document.projectionName)).toEqual(
+      expect.arrayContaining([
+        "object-page",
+        "claim-evidence",
+        "decision-packet",
+        "resource-stewardship",
+        "federation-export"
+      ])
+    );
+    expect(
+      materialized.persistedDocuments.find(
+        (document) => document.projectionName === "federation-export"
+      )?.projection
+    ).toMatchObject({
+      preview: {
+        eventIds: events.map((replayedEvent) => replayedEvent.id)
+      }
+    });
   });
 
   it("records projection-state checkpoints without persistence assumptions", () => {
@@ -203,13 +242,15 @@ describe("projection rebuild workflow", () => {
       "authority",
       "claim-evidence",
       "resource-stewardship",
-      "decision-packet"
+      "decision-packet",
+      "federation-export"
     ]);
     expect(runtime.listProjectionStates().map((state) => state.id)).toEqual([
       "projection-state.authority",
       "projection-state.civic-memory",
       "projection-state.claim-evidence",
       "projection-state.decision-packet",
+      "projection-state.federation-export",
       "projection-state.object-page",
       "projection-state.resource-stewardship"
     ]);
@@ -228,7 +269,8 @@ describe("projection rebuild workflow", () => {
         "authority",
         "claim-evidence",
         "resource-stewardship",
-        "decision-packet"
+        "decision-packet",
+        "federation-export"
       ])
     );
     expect(
@@ -267,6 +309,12 @@ describe("projection rebuild workflow", () => {
         targetRef: decisionRef
       })?.projection.decisionRef
     ).toEqual(decisionRef);
+    expect(
+      readMaterializedProjection(materializedProjections, {
+        projectionName: "federation-export",
+        targetRef: projectionMaterializedTargetRef("federation-export")
+      })?.projection.preview.eventIds
+    ).toEqual(events.map((replayedEvent) => replayedEvent.id));
   });
 
   it("marks projections as requested for operator rebuild", () => {

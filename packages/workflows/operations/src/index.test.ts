@@ -48,7 +48,8 @@ describe("canopy operations workflow", () => {
       "authority",
       "claim-evidence",
       "resource-stewardship",
-      "decision-packet"
+      "decision-packet",
+      "federation-export"
     ]);
     expect(report.adapterAuditReview.total).toBe(0);
     expect(report.failedImportRemediation.total).toBe(0);
@@ -113,7 +114,7 @@ describe("canopy operations workflow", () => {
       mappings: 1,
       events: 1,
       outbox: 1,
-      projectionStates: 6,
+      projectionStates: 7,
       adapterAudits: 2
     });
     expect(cycle.report.outbox.byStatus.acknowledged).toBe(1);
@@ -127,6 +128,7 @@ describe("canopy operations workflow", () => {
       "projection-state.civic-memory",
       "projection-state.claim-evidence",
       "projection-state.decision-packet",
+      "projection-state.federation-export",
       "projection-state.object-page",
       "projection-state.resource-stewardship"
     ]);
@@ -135,7 +137,7 @@ describe("canopy operations workflow", () => {
       sourceEventIds: [
         "event.import.common-credit.transaction.tx-ops-1.accounting-ledger-entry-posted"
       ],
-      projectionReadCount: 6
+      projectionReadCount: 7
     });
     expect(cycle.report.shell?.surfaceKinds).toEqual([
       "object-page",
@@ -176,7 +178,7 @@ describe("canopy operations workflow", () => {
       rebuiltAt: "2026-06-13T19:10:00.000Z"
     });
 
-    expect(control.projectionRebuild.persistedStates).toHaveLength(6);
+    expect(control.projectionRebuild.persistedStates).toHaveLength(7);
     expect(control.report.readiness).toBe("ready");
     expect(control.report.outbox.drainStatus).toBe("drained");
     expect(control.report.projections).toMatchObject({
@@ -189,6 +191,7 @@ describe("canopy operations workflow", () => {
       "civic-memory",
       "claim-evidence",
       "decision-packet",
+      "federation-export",
       "object-page",
       "resource-stewardship"
     ]);
@@ -288,18 +291,56 @@ describe("canopy operations workflow", () => {
       status: "failed",
       rebuildRequestedAt: "2026-06-13T19:10:00.000Z"
     });
-    const auditOperations = runtime.listAdapterAudits().map((audit) => audit.operation);
+    const audits = runtime.listAdapterAudits();
+    const auditOperations = audits.map((audit) => audit.operation);
     expect(auditOperations).toEqual(
       expect.arrayContaining([
         "adapter-audit.acknowledge-failure",
         "import.execute-reviewed",
-        "import.quarantine"
+        "import.quarantine",
+        "operations.remediation-command"
       ])
     );
     expect(
       auditOperations.filter((operation) => operation === "invariant-drift.ticket-created")
     ).toHaveLength(4);
+    expect(
+      auditOperations.filter((operation) => operation === "operations.remediation-command")
+    ).toHaveLength(plan.commands.length);
+    expect(commandOutcomeAudit(audits, "retry-failed-outbox")).toMatchObject({
+      status: "succeeded",
+      outboxIds: ["outbox.retryable.failed"],
+      metadata: {
+        commandType: "retry-failed-outbox",
+        status: "applied",
+        changedRecordIds: ["outbox.retryable.failed"],
+        skippedRecordIds: []
+      }
+    });
+    expect(commandOutcomeAudit(audits, "request-projection-rebuild")).toMatchObject({
+      status: "succeeded",
+      metadata: {
+        commandType: "request-projection-rebuild",
+        status: "applied",
+        changedRecordIds: ["projection-state.civic-memory"],
+        affectedProjectionStateIds: ["projection-state.civic-memory"]
+      }
+    });
+    expect(commandOutcomeAudit(audits, "quarantine-failed-import")).toMatchObject({
+      status: "succeeded",
+      outboxIds: ["outbox.import.failed"],
+      metadata: {
+        commandType: "quarantine-failed-import",
+        status: "applied",
+        remediatedAdapterAuditIds: ["adapter-audit.import.failed"]
+      }
+    });
     expect(remediation.report.adapterAuditReview.unresolvedAuditIds).toEqual([]);
+    expect(
+      remediation.report.adapterAudits.filter(
+        (audit) => audit.operation === "operations.remediation-command"
+      )
+    ).toHaveLength(plan.commands.length);
     expect(remediation.report.failedImportRemediation.total).toBe(0);
 
     const followUpPlan = buildCanopyOperationsRemediationPlan({
@@ -312,6 +353,24 @@ describe("canopy operations workflow", () => {
     );
   });
 });
+
+function commandOutcomeAudit(
+  audits: readonly AdapterAuditRecord[],
+  commandType: string
+): AdapterAuditRecord | undefined {
+  return audits.find(
+    (audit) =>
+      audit.operation === "operations.remediation-command" &&
+      isMetadataRecord(audit.metadata) &&
+      audit.metadata.commandType === commandType
+  );
+}
+
+function isMetadataRecord(
+  metadata: AdapterAuditRecord["metadata"]
+): metadata is { readonly [key: string]: AdapterAuditRecord["metadata"] } {
+  return typeof metadata === "object" && metadata !== null && !Array.isArray(metadata);
+}
 
 function failedProjectionState(): ProjectionStateRecord {
   return {

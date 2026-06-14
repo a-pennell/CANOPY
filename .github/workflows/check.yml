@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: npm run check
+  guardrails:
+    name: Guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -28,5 +28,137 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Check
-        run: npm run check
+      - name: Guardrails
+        run: npm run check:guardrails
+
+  exports:
+    name: Package exports
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Package exports
+        run: npm run check:exports
+
+  types:
+    name: Types
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Types
+        run: npm run check:types
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Tests
+        run: npm run check:tests
+
+  database:
+    name: Database checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ vars.CANOPY_ENABLE_DB_CHECKS == 'true' }}
+    env:
+      CANOPY_DATABASE_URL: ${{ secrets.CANOPY_DATABASE_URL }}
+      CANOPY_TEST_DATABASE_URL: ${{ secrets.CANOPY_DATABASE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Skip without database secret
+        if: ${{ env.CANOPY_DATABASE_URL == '' }}
+        run: |
+          echo "### Database checks" >> "$GITHUB_STEP_SUMMARY"
+          echo "Set CANOPY_DATABASE_URL to run optional database checks." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Database checks
+        if: ${{ env.CANOPY_DATABASE_URL != '' }}
+        run: npm run check:db
+
+  audit:
+    name: npm audit report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Audit report
+        run: |
+          set +e
+          npm --silent run audit:report -- --json > npm-audit.json
+          audit_status=$?
+          echo "### npm audit" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$audit_status" -eq 0 ]; then
+            echo "No moderate-or-higher vulnerabilities reported." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "npm audit reported moderate-or-higher vulnerabilities. See the artifact for details." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-report
+          path: npm-audit.json

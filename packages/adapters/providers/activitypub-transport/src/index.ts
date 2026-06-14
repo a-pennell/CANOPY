@@ -10,11 +10,25 @@ import type {
 } from "@canopy/contracts-adapters";
 import type {
   CanopyId,
+  CanopyEvent,
   CanopyObjectType,
   ContentHash,
   IsoDateTime,
   ObjectRef
 } from "@canopy/contracts-kernel";
+import type {
+  AdapterAuditRecord,
+  CanonicalDatabaseRecord,
+  CanonicalMappingRecord,
+  CanonicalObjectRefRecord,
+  EventRecord,
+  JsonValue,
+  OutboxRecord
+} from "@canopy/contracts-database";
+import {
+  createCanonicalSqlExecutionPlan,
+  type CanonicalSqlExecutionPlan
+} from "@canopy/database-runtime";
 
 export interface ProviderAdapterTrack {
   readonly id: CanopyId;
@@ -76,10 +90,39 @@ export interface ActivityPubStoredMessage {
   readonly acknowledgedAt?: IsoDateTime;
 }
 
+export type ActivityPubInboundCanonicalStatus = "accepted" | "duplicate";
+
+export interface ActivityPubInboundConflictReport {
+  readonly messageId: CanopyId;
+  readonly dedupeKey: string;
+  readonly code: "message-id-conflict" | "missing-object-ref";
+  readonly message: string;
+  readonly existingMessageId?: CanopyId;
+  readonly occurredAt: IsoDateTime;
+}
+
+export interface ActivityPubInboundCanonicalResult {
+  readonly status: ActivityPubInboundCanonicalStatus;
+  readonly dedupeKey: string;
+  readonly message: FederationTransportMessage;
+  readonly storedMessage: ActivityPubStoredMessage;
+  readonly objectRefs: readonly CanonicalObjectRefRecord[];
+  readonly mapping: CanonicalMappingRecord;
+  readonly event: EventRecord;
+  readonly outbox: OutboxRecord;
+  readonly adapterAudit: AdapterAuditRecord;
+  readonly canonicalRecords: readonly CanonicalDatabaseRecord[];
+  readonly canonicalSqlPlan: CanonicalSqlExecutionPlan;
+  readonly conflicts: readonly ActivityPubInboundConflictReport[];
+}
+
 export interface ActivityPubTransportPrototypeSnapshot {
   readonly outbox: readonly ActivityPubStoredMessage[];
   readonly inbox: readonly ActivityPubStoredMessage[];
   readonly acknowledgedMessageIds: readonly CanopyId[];
+  readonly inboundCanonicalResults: readonly ActivityPubInboundCanonicalResult[];
+  readonly inboundConflicts: readonly ActivityPubInboundConflictReport[];
+  readonly inboundAdapterAudits: readonly AdapterAuditRecord[];
 }
 
 export interface ActivityPubTransportPrototypeOptions {
@@ -150,6 +193,10 @@ export class ActivityPubTransportAdapter implements FederationTransportAdapter {
   private readonly rules = new Map<string, ActivityPubTransportRule>();
   private readonly outbox = new Map<CanopyId, ActivityPubStoredMessage>();
   private readonly inbox = new Map<CanopyId, ActivityPubStoredMessage>();
+  private readonly inboundCanonicalResults = new Map<CanopyId, ActivityPubInboundCanonicalResult>();
+  private readonly inboundConflicts: ActivityPubInboundConflictReport[] = [];
+  private readonly inboundAdapterAudits = new Map<CanopyId, AdapterAuditRecord>();
+  private auditSequence = 0;
 
   constructor(options: ActivityPubTransportPrototypeOptions = {}) {
     this.now = options.now ?? defaultNow;
@@ -272,6 +319,85 @@ export class ActivityPubTransportAdapter implements FederationTransportAdapter {
     return ok(cloneMessage(stored.message));
   }
 
+  async receiveCanonical(
+    message: FederationTransportMessage
+  ): Promise<AdapterResult<ActivityPubInboundCanonicalResult>> {
+    const startedAt = this.now();
+    const rule = this.ruleFor(message.federationRuleRef);
+    const validation = validateMessageForRule(message, rule, "inbound");
+    if (validation !== undefined) {
+      this.recordInboundAuditForMessage(message, "failed", startedAt, {
+        errors: [validation.message],
+        metadata: toJsonValue({
+          reason: validation.code,
+          path: validation.path
+        })
+      });
+      return failure(validation.code, validation.message, validation.path);
+    }
+
+    const sanitized = sanitizeMessage(message, rule);
+    const dedupeKey = inboundDedupeKey(sanitized);
+    if (sanitized.objectRefs.length === 0) {
+      const report = this.recordInboundConflict({
+        messageId: sanitized.id,
+        dedupeKey,
+        code: "missing-object-ref",
+        message: "Inbound ActivityPub messages require at least one canonical object ref.",
+        occurredAt: startedAt
+      });
+      this.recordInboundAuditForMessage(sanitized, "failed", startedAt, {
+        errors: [report.message],
+        metadata: toJsonValue({
+          reason: report.code,
+          dedupeKey,
+          conflicts: [report]
+        })
+      });
+      return failure("validation_failed", report.message, ["objectRefs"]);
+    }
+
+    const existing = this.inbox.get(sanitized.id);
+    if (existing !== undefined) {
+      if (
+        stableStringify(stripTransportTimestamps(existing.message)) ===
+        stableStringify(stripTransportTimestamps(sanitized))
+      ) {
+        const result = this.inboundCanonicalResultFromStored(
+          existing,
+          "duplicate",
+          startedAt,
+          []
+        );
+        this.inboundCanonicalResults.set(result.message.id, result);
+        return ok(result);
+      }
+
+      const report = this.recordInboundConflict({
+        messageId: sanitized.id,
+        dedupeKey,
+        code: "message-id-conflict",
+        message: `Inbound federation message ${sanitized.id} already exists and cannot be mutated.`,
+        existingMessageId: existing.message.id,
+        occurredAt: startedAt
+      });
+      this.recordInboundAuditForMessage(sanitized, "failed", startedAt, {
+        errors: [report.message],
+        metadata: toJsonValue({
+          reason: report.code,
+          dedupeKey,
+          conflicts: [report]
+        })
+      });
+      return failure("conflict", report.message, ["id"]);
+    }
+
+    const stored = this.store(sanitized, "inbound", rule);
+    const result = this.inboundCanonicalResultFromStored(stored, "accepted", startedAt, []);
+    this.inboundCanonicalResults.set(result.message.id, result);
+    return ok(result);
+  }
+
   async exportMessages(
     pageRequest?: AdapterPageRequest
   ): Promise<AdapterResult<AdapterPage<FederationTransportMessage>>> {
@@ -296,7 +422,16 @@ export class ActivityPubTransportAdapter implements FederationTransportAdapter {
     return freeze({
       outbox,
       inbox,
-      acknowledgedMessageIds
+      acknowledgedMessageIds,
+      inboundCanonicalResults: sortedByString(
+        this.inboundCanonicalResults.values(),
+        (result) => result.message.id
+      ).map((result) => freeze(result)),
+      inboundConflicts: [...this.inboundConflicts].map((report) => freeze(report)),
+      inboundAdapterAudits: sortedByString(
+        this.inboundAdapterAudits.values(),
+        (record) => record.id
+      ).map((record) => freeze(record))
     });
   }
 
@@ -356,6 +491,331 @@ export class ActivityPubTransportAdapter implements FederationTransportAdapter {
       sharedInbox: this.defaultPeer.sharedInbox
     };
   }
+
+  private inboundCanonicalResultFromStored(
+    stored: ActivityPubStoredMessage,
+    status: ActivityPubInboundCanonicalStatus,
+    startedAt: IsoDateTime,
+    conflicts: readonly ActivityPubInboundConflictReport[]
+  ): ActivityPubInboundCanonicalResult {
+    const message = cloneMessage(stored.message);
+    const receivedAt = message.receivedAt ?? stored.storedAt;
+    const dedupeKey = inboundDedupeKey(message);
+    const objectRefs = uniqueRefs([
+      ...message.objectRefs,
+      message.federationRuleRef,
+      stored.peerRef
+    ]).map((ref) => objectRefRecord(ref, receivedAt));
+    const mapping = mappingRecordFromMessage(message, receivedAt);
+    const event = eventRecordFromInboundMessage(message, stored, receivedAt);
+    const outbox = outboxRecordFromInboundMessage(message, event, stored, dedupeKey);
+    const adapterAudit = this.recordInboundAuditForStored(stored, status, startedAt, {
+      eventIds: [event.eventId],
+      outboxIds: [outbox.id],
+      metadata: toJsonValue({
+        status,
+        dedupeKey,
+        messageKind: stored.messageKind,
+        activityId: stored.activity.id,
+        conflicts
+      })
+    });
+    const canonicalRecords: readonly CanonicalDatabaseRecord[] = freeze([
+      ...objectRefs,
+      mapping,
+      event,
+      outbox,
+      adapterAudit
+    ]);
+
+    return freeze({
+      status,
+      dedupeKey,
+      message,
+      storedMessage: cloneStoredMessage(stored),
+      objectRefs,
+      mapping,
+      event,
+      outbox,
+      adapterAudit,
+      canonicalRecords,
+      canonicalSqlPlan: createCanonicalSqlExecutionPlan(canonicalRecords),
+      conflicts
+    });
+  }
+
+  private recordInboundConflict(
+    report: ActivityPubInboundConflictReport
+  ): ActivityPubInboundConflictReport {
+    const stored = freeze(report);
+    this.inboundConflicts.push(stored);
+    return stored;
+  }
+
+  private recordInboundAuditForStored(
+    stored: ActivityPubStoredMessage,
+    status: ActivityPubInboundCanonicalStatus,
+    startedAt: IsoDateTime,
+    details: {
+      readonly eventIds?: readonly CanopyId[];
+      readonly outboxIds?: readonly CanopyId[];
+      readonly errors?: readonly string[];
+      readonly warnings?: readonly string[];
+      readonly metadata?: JsonValue;
+    } = {}
+  ): AdapterAuditRecord {
+    return this.recordInboundAuditForMessage(stored.message, status === "duplicate" ? "skipped" : "succeeded", startedAt, {
+      ...details,
+      externalRef: {
+        provider: "activitypub",
+        resourceType: "activity",
+        resourceId: stored.activity.id,
+        sourceProject: "canopy"
+      },
+      ...optionalTargetRef(stored.message.objectRefs[0])
+    });
+  }
+
+  private recordInboundAuditForMessage(
+    message: FederationTransportMessage,
+    status: AdapterAuditRecord["status"],
+    startedAt: IsoDateTime,
+    details: {
+      readonly eventIds?: readonly CanopyId[];
+      readonly outboxIds?: readonly CanopyId[];
+      readonly errors?: readonly string[];
+      readonly warnings?: readonly string[];
+      readonly metadata?: JsonValue;
+      readonly externalRef?: AdapterAuditRecord["externalRef"];
+      readonly targetRef?: ObjectRef;
+    } = {}
+  ): AdapterAuditRecord {
+    const completedAt = this.now();
+    const record: AdapterAuditRecord = freeze(
+      withoutUndefined({
+        id: `adapter-audit.activitypub.receive.${++this.auditSequence}`,
+        kind: "adapter-audit",
+        schemaVersion: 1,
+        createdAt: completedAt,
+        adapterName: activitypubTransportAdapterDescriptor.id,
+        direction: "ingress",
+        operation: "receiveCanonical",
+        status,
+        startedAt,
+        completedAt,
+        targetRef: details.targetRef ?? message.objectRefs[0],
+        externalRef: details.externalRef,
+        eventIds: details.eventIds ?? [],
+        outboxIds: details.outboxIds ?? [],
+        requestHash: message.contentHash,
+        warnings: details.warnings ?? [],
+        errors: details.errors ?? [],
+        metadata: details.metadata ?? {}
+      }) as AdapterAuditRecord
+    );
+    this.inboundAdapterAudits.set(record.id, record);
+    return record;
+  }
+}
+
+function objectRefRecord(ref: ObjectRef, timestamp: IsoDateTime): CanonicalObjectRefRecord {
+  return freeze(
+    withoutUndefined({
+      id: `object-ref.${ref.namespace}.${ref.type}.${ref.id}`,
+      kind: "canonical-object-ref",
+      schemaVersion: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      ref: cloneRef(ref),
+      objectId: ref.id,
+      objectType: ref.type,
+      namespace: ref.namespace,
+      lifecycleStatus: ref.lifecycleStatus,
+      source: ref.source,
+      supersedes: ref.supersedes ?? [],
+      relationshipRefs: []
+    }) as CanonicalObjectRefRecord
+  );
+}
+
+function mappingRecordFromMessage(
+  message: FederationTransportMessage,
+  timestamp: IsoDateTime
+): CanonicalMappingRecord {
+  const canonicalRef = message.objectRefs[0] as ObjectRef;
+
+  return freeze(
+    withoutUndefined({
+      id: `canonical-mapping.activitypub.${idToken(message.id)}`,
+      kind: "canonical-mapping",
+      schemaVersion: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      contentHash: message.contentHash,
+      source: {
+        sourceProject: "canopy",
+        sourceEntity: "activitypub-message",
+        sourceId: message.id,
+        sourceVersion: message.contentHash
+      },
+      sourcePointer: {
+        sourceProject: "canopy",
+        sourceEntity: "activitypub-message",
+        sourceId: message.id,
+        sourceVersion: message.contentHash,
+        importedAt: timestamp
+      },
+      localLabel: stringPayloadValue(message.payload, "importEnvelopeId") ??
+        stringPayloadValue(message.payload, "envelopeId") ??
+        message.id,
+      localType: classifyMessage(message),
+      canonicalRef: cloneRef(canonicalRef),
+      canonicalType: canonicalRef.type,
+      disposition: "artifact",
+      status: "approved",
+      confidence: 1,
+      mappedByRef: cloneRef(message.federationRuleRef),
+      authorityRefs: [cloneRef(message.federationRuleRef)],
+      evidenceRefs: message.objectRefs.map(cloneRef),
+      reviewedAt: timestamp
+    }) as CanonicalMappingRecord
+  );
+}
+
+function eventRecordFromInboundMessage(
+  message: FederationTransportMessage,
+  stored: ActivityPubStoredMessage,
+  timestamp: IsoDateTime
+): EventRecord {
+  const event = inboundEventFromMessage(message, stored, timestamp);
+
+  return freeze(
+    withoutUndefined({
+      id: `event.${event.id}`,
+      kind: "event",
+      schemaVersion: 1,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      contentHash: event.contentHash,
+      eventId: event.id,
+      eventType: event.type,
+      occurredAt: event.occurredAt,
+      recordedAt: timestamp,
+      systemActor: event.systemActor,
+      objectRef: cloneRef(event.objectRef),
+      relatedRefs: event.relatedRefs.map(cloneRef),
+      authorityRefs: event.authorityRefs.map(cloneRef),
+      scope: {},
+      sourceCapability: event.sourceCapability,
+      visibility: event.visibility,
+      dataState: event.dataState,
+      payload: toJsonValue(event.payload),
+      event
+    }) as EventRecord
+  );
+}
+
+function inboundEventFromMessage(
+  message: FederationTransportMessage,
+  stored: ActivityPubStoredMessage,
+  timestamp: IsoDateTime
+): CanopyEvent {
+  const objectRef = message.objectRefs[0] as ObjectRef;
+  const relatedRefs = uniqueRefs([
+    ...message.objectRefs.slice(1),
+    message.federationRuleRef,
+    stored.peerRef
+  ]);
+
+  return freeze(
+    withoutUndefined({
+      id: inboundEventId(message),
+      type: "federation.import.received",
+      occurredAt: message.receivedAt ?? timestamp,
+      systemActor: "federation_peer",
+      objectRef: cloneRef(objectRef),
+      relatedRefs,
+      authorityRefs: [cloneRef(message.federationRuleRef)],
+      sourceCapability: "federation",
+      payload: {
+        messageId: message.id,
+        activityId: stored.activity.id,
+        messageKind: stored.messageKind,
+        eventIds: [...message.eventIds],
+        objectRefs: message.objectRefs.map(refKey),
+        contentHash: message.contentHash,
+        dedupeKey: inboundDedupeKey(message),
+        payload: cloneRecord(message.payload)
+      },
+      schemaVersion: 1,
+      visibility: "federation",
+      dataState: "unverified",
+      contentHash: message.contentHash
+    }) as CanopyEvent
+  );
+}
+
+function outboxRecordFromInboundMessage(
+  message: FederationTransportMessage,
+  event: EventRecord,
+  stored: ActivityPubStoredMessage,
+  dedupeKey: string
+): OutboxRecord {
+  return freeze({
+    id: `outbox.${event.eventId}.federation-receive`,
+    kind: "outbox",
+    schemaVersion: 1,
+    createdAt: event.recordedAt,
+    ...optionalContentHash(message.contentHash),
+    eventId: event.eventId,
+    eventType: event.eventType,
+    destination: {
+      kind: "workflow",
+      name: "federation-receive",
+      targetRef: cloneRef(event.objectRef)
+    },
+    status: "pending",
+    payload: toJsonValue({
+      messageId: message.id,
+      activityId: stored.activity.id,
+      canonicalRef: refKey(event.objectRef),
+      receivedAt: event.recordedAt,
+      dedupeKey
+    }),
+    dedupeKey,
+    attemptCount: 0
+  });
+}
+
+function inboundEventId(message: FederationTransportMessage): CanopyId {
+  return (
+    message.eventIds.find((eventId) => eventId.includes("federation.import.received")) ??
+    `event.federation.import.received.${idToken(message.id)}`
+  );
+}
+
+function inboundDedupeKey(message: FederationTransportMessage): string {
+  return `activitypub:inbound:${message.id}`;
+}
+
+function uniqueRefs(refs: readonly ObjectRef[]): readonly ObjectRef[] {
+  const byKey = new Map<string, ObjectRef>();
+  for (const ref of refs) {
+    byKey.set(refKey(ref), cloneRef(ref));
+  }
+  return [...byKey.values()];
+}
+
+function stringPayloadValue(
+  payload: Readonly<Record<string, unknown>>,
+  key: string
+): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function idToken(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-");
 }
 
 function validateMessageForRule(
@@ -696,6 +1156,13 @@ function compareStrings(left: string, right: string): number {
   return left.localeCompare(right);
 }
 
+function sortedByString<TValue>(
+  values: Iterable<TValue>,
+  value: (entry: TValue) => string
+): readonly TValue[] {
+  return [...values].sort((left, right) => compareStrings(value(left), value(right)));
+}
+
 function refKey(ref: ObjectRef): string {
   return `${ref.namespace}:${ref.type}:${ref.id}:${ref.lifecycleStatus}`;
 }
@@ -727,6 +1194,33 @@ function stableStringify(value: unknown): string {
   }
 
   return JSON.stringify(value);
+}
+
+function toJsonValue(value: unknown): JsonValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => toJsonValue(entry));
+  }
+
+  if (isRecord(value)) {
+    const record: Record<string, JsonValue> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (child !== undefined && typeof child !== "function" && typeof child !== "symbol") {
+        record[key] = toJsonValue(child);
+      }
+    }
+    return record;
+  }
+
+  return null;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -770,6 +1264,16 @@ function withoutUndefined<TValue extends Readonly<Record<string, unknown>>>(
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
   ) as TValue;
+}
+
+function optionalTargetRef(ref: ObjectRef | undefined): { readonly targetRef?: ObjectRef } {
+  return ref === undefined ? {} : { targetRef: ref };
+}
+
+function optionalContentHash(
+  contentHash: string | undefined
+): { readonly contentHash?: string } {
+  return contentHash === undefined ? {} : { contentHash };
 }
 
 function freeze<TValue>(value: TValue): TValue {

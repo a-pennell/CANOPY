@@ -12,6 +12,7 @@ import type {
 } from "@canopy/contracts-adapters";
 import type {
   AdapterAuditRecord,
+  CanonicalDatabaseRecord,
   CanonicalObjectRefRecord,
   JsonValue,
   ProjectionStateRecord
@@ -21,6 +22,10 @@ import type {
   IsoDateTime,
   ObjectRef
 } from "@canopy/contracts-kernel";
+import {
+  createCanonicalSqlExecutionPlan,
+  type CanonicalSqlExecutionPlan
+} from "@canopy/database-runtime";
 
 export interface ProviderAdapterTrack {
   readonly id: CanopyId;
@@ -61,6 +66,7 @@ export interface PostgresPersistencePrototypeTables {
   readonly idempotencyKeys: readonly PostgresIdempotencyRow[];
   readonly projectionStates: readonly ProjectionStateRecord[];
   readonly adapterAudits: readonly AdapterAuditRecord[];
+  readonly canonicalSqlPlan: CanonicalSqlExecutionPlan;
 }
 
 export const postgresPersistenceAdapterDescriptor: AdapterDescriptor & {
@@ -317,6 +323,8 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
   }
 
   snapshotTables(): PostgresPersistencePrototypeTables {
+    const canonicalRecords = this.canonicalRecords();
+
     return {
       objectSnapshots: [...this.snapshots.values()]
         .sort((left, right) => compareStrings(left.refKey, right.refKey))
@@ -327,8 +335,21 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
         (row) => row.idempotencyKey
       ).map((row) => freeze(row)),
       projectionStates: sortedById(this.projectionStates.values()).map((record) => freeze(record)),
-      adapterAudits: sortedById(this.adapterAudits.values()).map((record) => freeze(record))
+      adapterAudits: sortedById(this.adapterAudits.values()).map((record) => freeze(record)),
+      canonicalSqlPlan: createCanonicalSqlExecutionPlan(canonicalRecords)
     };
+  }
+
+  canonicalRecords(): readonly CanonicalDatabaseRecord[] {
+    return [
+      ...sortedById(this.objectRefs.values()),
+      ...sortedById(this.projectionStates.values()),
+      ...sortedById(this.adapterAudits.values())
+    ];
+  }
+
+  canonicalSqlPlan(): CanonicalSqlExecutionPlan {
+    return createCanonicalSqlExecutionPlan(this.canonicalRecords());
   }
 
   private rowFromWrite(

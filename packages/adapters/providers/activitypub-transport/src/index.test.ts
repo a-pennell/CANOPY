@@ -239,6 +239,80 @@ describe("ActivityPubTransportAdapter prototype", () => {
     expect(adapter.snapshot().inbox[0]?.activity.object.messageKind).toBe("import");
   });
 
+  it("receives inbound ActivityPub messages as canonical mapping, event, outbox, audit, and SQL-plan records", async () => {
+    const adapter = createActivityPubTransportAdapter({
+      now: () => "2026-06-13T11:15:00.000Z"
+    });
+    const message: FederationTransportMessage = {
+      ...baseMessage,
+      id: "federation.message.import.canonical",
+      eventIds: ["event.federation.import.received.canonical"],
+      payload: {
+        importEnvelopeId: "import.canonical",
+        schemaVersion: 1,
+        public: "peer claim"
+      }
+    };
+
+    const received = await adapter.receiveCanonical(message);
+    const duplicate = await adapter.receiveCanonical(message);
+
+    expect(received.ok).toBe(true);
+    expect(received.value).toMatchObject({
+      status: "accepted",
+      dedupeKey: "activitypub:inbound:federation.message.import.canonical",
+      mapping: {
+        kind: "canonical-mapping",
+        source: {
+          sourceEntity: "activitypub-message",
+          sourceId: "federation.message.import.canonical"
+        },
+        canonicalRef: evidenceRef,
+        disposition: "artifact",
+        status: "approved"
+      },
+      event: {
+        kind: "event",
+        eventId: "event.federation.import.received.canonical",
+        eventType: "federation.import.received",
+        objectRef: evidenceRef
+      },
+      outbox: {
+        kind: "outbox",
+        eventId: "event.federation.import.received.canonical",
+        destination: {
+          kind: "workflow",
+          name: "federation-receive"
+        },
+        status: "pending"
+      },
+      adapterAudit: {
+        kind: "adapter-audit",
+        operation: "receiveCanonical",
+        status: "succeeded"
+      }
+    });
+    expect(
+      received.value?.canonicalSqlPlan.statements.map((statement) => statement.tableName)
+    ).toEqual([
+      "canopy_object_refs",
+      "canopy_object_refs",
+      "canopy_object_refs",
+      "canopy_canonical_mappings",
+      "canopy_events",
+      "canopy_outbox",
+      "canopy_adapter_audit"
+    ]);
+    expect(duplicate.ok).toBe(true);
+    expect(duplicate.value?.status).toBe("duplicate");
+    expect(duplicate.value?.adapterAudit.status).toBe("skipped");
+    expect(adapter.snapshot().inboundCanonicalResults[0]?.status).toBe("duplicate");
+    expect(adapter.snapshot().inboundAdapterAudits.map((record) => record.status)).toEqual([
+      "succeeded",
+      "skipped"
+    ]);
+  });
+
   it("dedupes repeated inbound messages by envelope id", async () => {
     const adapter = createActivityPubTransportAdapter({
       now: () => "2026-06-13T11:30:00.000Z"
@@ -270,6 +344,54 @@ describe("ActivityPubTransportAdapter prototype", () => {
     expect(conflict.errors[0]?.code).toBe("conflict");
     expect(received.value?.items.map((item) => item.id)).toEqual([
       "federation.message.import.dedupe"
+    ]);
+  });
+
+  it("reports canonical receive conflicts without mutating the stored inbound message", async () => {
+    const adapter = createActivityPubTransportAdapter({
+      now: () => "2026-06-13T11:45:00.000Z"
+    });
+    const message: FederationTransportMessage = {
+      ...baseMessage,
+      id: "federation.message.import.conflict",
+      eventIds: ["event.federation.import.received.conflict"],
+      payload: {
+        importEnvelopeId: "import.conflict",
+        schemaVersion: 1
+      }
+    };
+
+    const first = await adapter.receiveCanonical(message);
+    const conflict = await adapter.receiveCanonical({
+      ...message,
+      payload: {
+        importEnvelopeId: "import.conflict.changed",
+        schemaVersion: 1
+      }
+    });
+
+    expect(first.ok).toBe(true);
+    expect(conflict.ok).toBe(false);
+    expect(conflict.errors[0]?.code).toBe("conflict");
+    expect(adapter.snapshot().inboundConflicts).toEqual([
+      {
+        messageId: "federation.message.import.conflict",
+        dedupeKey: "activitypub:inbound:federation.message.import.conflict",
+        code: "message-id-conflict",
+        message: "Inbound federation message federation.message.import.conflict already exists and cannot be mutated.",
+        existingMessageId: "federation.message.import.conflict",
+        occurredAt: "2026-06-13T11:45:00.000Z"
+      }
+    ]);
+    expect(adapter.snapshot().inbox.map((stored) => stored.message.payload)).toEqual([
+      {
+        importEnvelopeId: "import.conflict",
+        schemaVersion: 1
+      }
+    ]);
+    expect(adapter.snapshot().inboundAdapterAudits.map((record) => record.status)).toEqual([
+      "succeeded",
+      "failed"
     ]);
   });
 

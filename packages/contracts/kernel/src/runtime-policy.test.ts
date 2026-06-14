@@ -87,6 +87,17 @@ describe("runtime policy contracts", () => {
         authorityRefs: [policyRef]
       }).ok
     ).toBe(true);
+
+    expect(
+      validateEventAuthority({
+        eventType: "stewardship.use_right.denied",
+        authorityRefs: []
+      })
+    ).toMatchObject({
+      ok: false,
+      authorityRequired: true,
+      issues: [{ code: "authority_refs_missing" }]
+    });
   });
 });
 

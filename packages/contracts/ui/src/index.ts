@@ -318,6 +318,7 @@ export interface CanopyUiFederationExportStateViewModel {
   readonly localMappingIds: readonly CanopyId[];
   readonly redactionSummary?: RedactionSummary;
   readonly readinessWarnings: readonly ImportWarning[];
+  readonly projectionRead: CanopyUiProjectionRead;
 }
 
 export interface CanopyUiImportReviewCandidate {

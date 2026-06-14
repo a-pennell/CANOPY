@@ -173,6 +173,151 @@ describe("buildAuthorityProjection", () => {
     });
   });
 
+  it("tracks full stewardship use-right enforcement lifecycle in authority traces", () => {
+    const appealRef = ref("appeal.grazing", "appeal");
+    const projection = buildAuthorityProjection([
+      event({
+        id: "event.use-right-granted",
+        type: "stewardship.use_right.granted",
+        objectRef: useRightRef,
+        relatedRefs: [actorRef, resourceRef],
+        authorityRefs: [mandateRef],
+        payload: {
+          holderRefId: actorRef.id,
+          resourceRefId: resourceRef.id,
+          review: {
+            reviewPathRefId: ref("issue.grazing-review", "issue").id,
+            reviewAt: "2026-08-01T00:00:00.000Z"
+          },
+          revocation: {
+            revocationPathRefId: ref("issue.grazing-review", "issue").id,
+            revocationConditions: ["threshold breach"]
+          }
+        }
+      }),
+      event({
+        id: "event.use-right-denied",
+        type: "stewardship.use_right.denied",
+        occurredAt: "2026-01-02T00:00:00.000Z",
+        objectRef: useRightRef,
+        relatedRefs: [actorRef, resourceRef],
+        authorityRefs: [mandateRef],
+        payload: {
+          holderRefId: actorRef.id,
+          resourceRefId: resourceRef.id,
+          reason: "Ecological threshold already breached.",
+          appealPathRefId: ref("issue.grazing-review", "issue").id
+        }
+      }),
+      event({
+        id: "event.use-right-revoked",
+        type: "stewardship.use_right.revoked",
+        occurredAt: "2026-01-03T00:00:00.000Z",
+        objectRef: useRightRef,
+        relatedRefs: [actorRef, resourceRef],
+        authorityRefs: [mandateRef],
+        payload: {
+          holderRefId: actorRef.id,
+          resourceRefId: resourceRef.id,
+          reason: "Condition violation confirmed."
+        }
+      }),
+      event({
+        id: "event.use-right-appealed",
+        type: "stewardship.use_right.appealed",
+        occurredAt: "2026-01-04T00:00:00.000Z",
+        objectRef: appealRef,
+        relatedRefs: [useRightRef, actorRef],
+        authorityRefs: [],
+        payload: {
+          grounds: ["evidence is contested"]
+        }
+      })
+    ]);
+
+    expect(projection.findings).toEqual([]);
+    expect(projection.authorityEvents.map((authorityEvent) => authorityEvent.type)).toEqual([
+      "stewardship.use_right.granted",
+      "stewardship.use_right.denied",
+      "stewardship.use_right.revoked",
+      "stewardship.use_right.appealed"
+    ]);
+    expect(
+      projection.tracesByObject.find((trace) => trace.objectRef.id === useRightRef.id)?.events.map(
+        (traceEvent) => traceEvent.type
+      )
+    ).toEqual([
+      "stewardship.use_right.granted",
+      "stewardship.use_right.denied",
+      "stewardship.use_right.revoked",
+      "stewardship.use_right.appealed"
+    ]);
+    expect(projection.indicators.status).toBe("ok");
+  });
+
+  it("surfaces incomplete stewardship use-right enforcement records", () => {
+    const projection = buildAuthorityProjection([
+      event({
+        id: "event.bad-use-right-grant",
+        type: "stewardship.use_right.granted",
+        objectRef: useRightRef,
+        authorityRefs: [mandateRef],
+        payload: {
+          useRight: {
+            holderRef: actorRef,
+            resourceRef,
+            review: {},
+            revocation: {
+              revocationConditions: []
+            }
+          }
+        }
+      }),
+      event({
+        id: "event.bad-use-right-denial",
+        type: "stewardship.use_right.denied",
+        occurredAt: "2026-01-02T00:00:00.000Z",
+        objectRef: useRightRef,
+        authorityRefs: [mandateRef],
+        payload: {}
+      }),
+      event({
+        id: "event.bad-use-right-revocation",
+        type: "stewardship.use_right.revoked",
+        occurredAt: "2026-01-03T00:00:00.000Z",
+        objectRef: useRightRef,
+        authorityRefs: [mandateRef],
+        payload: {}
+      }),
+      event({
+        id: "event.bad-use-right-appeal",
+        type: "stewardship.use_right.appealed",
+        occurredAt: "2026-01-04T00:00:00.000Z",
+        objectRef: ref("appeal.grazing", "appeal"),
+        relatedRefs: [useRightRef],
+        authorityRefs: [],
+        payload: {
+          grounds: []
+        }
+      })
+    ]);
+
+    expect(projection.findings.map((finding) => finding.kind)).toEqual([
+      "appeal-missing-grounds",
+      "use-right-denial-missing-appeal-path",
+      "use-right-denial-missing-reason",
+      "use-right-missing-review-path",
+      "use-right-missing-revocation-semantics",
+      "use-right-revocation-missing-reason"
+    ]);
+    expect(projection.indicators.authorityFlowIssueEventIds).toEqual([
+      "event.bad-use-right-appeal",
+      "event.bad-use-right-denial",
+      "event.bad-use-right-grant",
+      "event.bad-use-right-revocation"
+    ]);
+  });
+
   it("surfaces executable governance authority flow findings from full record payloads", () => {
     const projection = buildAuthorityProjection([
       event({

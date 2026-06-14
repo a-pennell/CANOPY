@@ -29,6 +29,11 @@ import {
   createPersistentOutbox,
   type OutboxRuntime
 } from "@canopy/workflows-outbox";
+import {
+  rebuildAndPersistAllProjections,
+  type PersistentProjectionRebuildOptions,
+  type PersistentProjectionRebuildResult
+} from "@canopy/workflows-projection-rebuild";
 
 export type ImportReviewDecision = "accept" | "reject" | "needs-review";
 
@@ -113,6 +118,8 @@ export interface ExecuteImportInput {
   readonly enqueueProjectionRebuild?: boolean;
   readonly outboxDestination?: OutboxDestination;
   readonly writeAudit?: boolean;
+  readonly rebuildProjections?: boolean;
+  readonly projectionRebuildOptions?: Omit<PersistentProjectionRebuildOptions, "events">;
 }
 
 export interface ImportExecutionResult {
@@ -122,6 +129,7 @@ export interface ImportExecutionResult {
   readonly eventRecords: readonly EventRecord[];
   readonly outboxRecords: readonly OutboxRecord[];
   readonly adapterAuditRecords: readonly AdapterAuditRecord[];
+  readonly projectionRebuild?: PersistentProjectionRebuildResult;
 }
 
 export interface SampleExportBundleImportFileSummary {
@@ -329,6 +337,13 @@ export function executeReviewedImport(input: ExecuteImportInput): ImportExecutio
           recordedAt,
           ...optionalImportOutbox(input.outbox)
         });
+  const projectionRebuild =
+    input.rebuildProjections === false || eventRecords.length === 0
+      ? undefined
+      : rebuildAndPersistAllProjections(input.runtime, {
+          rebuiltAt: recordedAt,
+          ...input.projectionRebuildOptions
+        });
   const adapterAuditRecords = writeImportExecutionAudits({
     runtime: input.runtime,
     dryRun: input.dryRun,
@@ -346,7 +361,8 @@ export function executeReviewedImport(input: ExecuteImportInput): ImportExecutio
     mappingRecords,
     eventRecords,
     outboxRecords,
-    adapterAuditRecords
+    adapterAuditRecords,
+    ...optionalProjectionRebuild(projectionRebuild)
   };
 }
 
@@ -507,6 +523,8 @@ function optionalExecuteImportOptions(
     enqueueProjectionRebuild?: boolean;
     outboxDestination?: OutboxDestination;
     writeAudit?: boolean;
+    rebuildProjections?: boolean;
+    projectionRebuildOptions?: Omit<PersistentProjectionRebuildOptions, "events">;
   } = {};
 
   if (input.recordedAt !== undefined) {
@@ -527,6 +545,14 @@ function optionalExecuteImportOptions(
 
   if (input.writeAudit !== undefined) {
     options.writeAudit = input.writeAudit;
+  }
+
+  if (input.rebuildProjections !== undefined) {
+    options.rebuildProjections = input.rebuildProjections;
+  }
+
+  if (input.projectionRebuildOptions !== undefined) {
+    options.projectionRebuildOptions = input.projectionRebuildOptions;
   }
 
   return options;
@@ -665,6 +691,12 @@ function optionalImportWriteAudit(
   writeAudit: boolean | undefined
 ): { readonly writeAudit?: boolean } {
   return writeAudit === undefined ? {} : { writeAudit };
+}
+
+function optionalProjectionRebuild(
+  projectionRebuild: PersistentProjectionRebuildResult | undefined
+): { readonly projectionRebuild?: PersistentProjectionRebuildResult } {
+  return projectionRebuild === undefined ? {} : { projectionRebuild };
 }
 
 const defaultProjectionRebuildDestination: OutboxDestination = {

@@ -25,6 +25,10 @@ export type StewardshipCommandErrorCode =
   | "missing-review-path"
   | "missing-review-at"
   | "missing-revocation-semantics"
+  | "missing-denial-reason"
+  | "missing-revocation-reason"
+  | "missing-appeal-ref"
+  | "missing-appeal-grounds"
   | "missing-context";
 
 export class StewardshipCommandError extends Error {
@@ -103,6 +107,44 @@ export interface GrantUseRightCommand extends EventEnvelopeInput {
   readonly decisionRef?: ObjectRef;
   readonly relatedRefs?: readonly ObjectRef[];
   readonly grantNote?: string;
+}
+
+export type ApproveUseRightCommand = GrantUseRightCommand;
+
+export interface DenyUseRightCommand extends EventEnvelopeInput {
+  readonly useRightRef: ObjectRef;
+  readonly holderRef: ObjectRef;
+  readonly resourceRef: ObjectRef;
+  readonly decisionRef?: ObjectRef;
+  readonly proposalRef?: ObjectRef;
+  readonly appealPathRef: ObjectRef;
+  readonly relatedRefs?: readonly ObjectRef[];
+  readonly reason: string;
+  readonly conditions?: readonly string[];
+}
+
+export interface RevokeUseRightCommand extends EventEnvelopeInput {
+  readonly useRightRef: ObjectRef;
+  readonly holderRef: ObjectRef;
+  readonly resourceRef: ObjectRef;
+  readonly decisionRef?: ObjectRef;
+  readonly revocationPathRef: ObjectRef;
+  readonly appealPathRef?: ObjectRef;
+  readonly relatedRefs?: readonly ObjectRef[];
+  readonly reason: string;
+  readonly effectiveAt?: IsoDateTime;
+}
+
+export interface AppealUseRightCommand extends EventEnvelopeInput {
+  readonly appealRef: ObjectRef;
+  readonly useRightRef: ObjectRef;
+  readonly openedByRef?: ObjectRef;
+  readonly reviewPathRef: ObjectRef;
+  readonly reviewerRefs?: readonly ObjectRef[];
+  readonly relatedRefs?: readonly ObjectRef[];
+  readonly grounds: readonly string[];
+  readonly requestedRemedy?: string;
+  readonly note?: string;
 }
 
 export interface RecordResourceContextCommand extends EventEnvelopeInput {
@@ -239,6 +281,172 @@ export function grantUseRight(
       authorityRefIds: authorityRefs.map((ref) => ref.id),
       grantNote: command.grantNote,
       state: "active"
+    })
+  });
+
+  return { append, objectRef, relatedRefs, authorityRefs };
+}
+
+export function approveUseRight(
+  services: StewardshipServices,
+  command: ApproveUseRightCommand
+): StewardshipCommandResult {
+  return grantUseRight(services, command);
+}
+
+export function denyUseRight(
+  services: StewardshipServices,
+  command: DenyUseRightCommand
+): StewardshipCommandResult {
+  assertRefType(command.useRightRef, "use-right", "invalid-use-right-ref");
+  assertRef(command.holderRef, "missing-holder", "Use-right denials require a holderRef.");
+  assertRef(command.resourceRef, "missing-resource", "Use-right denials require a resourceRef.");
+  assertRef(command.appealPathRef, "missing-review-path", "Use-right denials require an appeal path.");
+  assertNonEmptyRefs(command.authorityRefs, "missing-authority", "Use-right denials require explicit authorityRefs.");
+  assertNonEmptyString(command.reason, "missing-denial-reason", "Use-right denials require a reason.");
+
+  const objectRef = services.registry.register(command.useRightRef);
+  registerRefs(services.registry, [
+    command.actorRef,
+    command.holderRef,
+    command.resourceRef,
+    command.decisionRef,
+    command.proposalRef,
+    command.appealPathRef,
+    ...(command.authorityRefs ?? []),
+    ...(command.relatedRefs ?? [])
+  ]);
+
+  const authorityRefs = canonicalRefs(services.registry, command.authorityRefs ?? []);
+  const relatedRefs = canonicalRefs(services.registry, [
+    command.holderRef,
+    command.resourceRef,
+    command.decisionRef,
+    command.proposalRef,
+    command.appealPathRef,
+    ...(command.relatedRefs ?? [])
+  ]);
+  const append = appendStewardshipEvent(services.memory, {
+    command,
+    type: "stewardship.use_right.denied",
+    objectRef,
+    relatedRefs,
+    authorityRefs,
+    payload: compactPayload({
+      holderRefId: command.holderRef.id,
+      resourceRefId: command.resourceRef.id,
+      decisionRefId: command.decisionRef?.id,
+      proposalRefId: command.proposalRef?.id,
+      appealPathRefId: command.appealPathRef.id,
+      authorityRefIds: authorityRefs.map((ref) => ref.id),
+      reason: command.reason,
+      conditions: command.conditions,
+      state: "denied"
+    })
+  });
+
+  return { append, objectRef, relatedRefs, authorityRefs };
+}
+
+export function revokeUseRight(
+  services: StewardshipServices,
+  command: RevokeUseRightCommand
+): StewardshipCommandResult {
+  assertRefType(command.useRightRef, "use-right", "invalid-use-right-ref");
+  assertRef(command.holderRef, "missing-holder", "Use-right revocations require a holderRef.");
+  assertRef(command.resourceRef, "missing-resource", "Use-right revocations require a resourceRef.");
+  assertRef(command.revocationPathRef, "missing-revocation-semantics", "Use-right revocations require a revocation path.");
+  assertNonEmptyRefs(command.authorityRefs, "missing-authority", "Use-right revocations require explicit authorityRefs.");
+  assertNonEmptyString(command.reason, "missing-revocation-reason", "Use-right revocations require a reason.");
+
+  const objectRef = services.registry.register(command.useRightRef);
+  registerRefs(services.registry, [
+    command.actorRef,
+    command.holderRef,
+    command.resourceRef,
+    command.decisionRef,
+    command.revocationPathRef,
+    command.appealPathRef,
+    ...(command.authorityRefs ?? []),
+    ...(command.relatedRefs ?? [])
+  ]);
+
+  const authorityRefs = canonicalRefs(services.registry, command.authorityRefs ?? []);
+  const relatedRefs = canonicalRefs(services.registry, [
+    command.holderRef,
+    command.resourceRef,
+    command.decisionRef,
+    command.revocationPathRef,
+    command.appealPathRef,
+    ...(command.relatedRefs ?? [])
+  ]);
+  const append = appendStewardshipEvent(services.memory, {
+    command,
+    type: "stewardship.use_right.revoked",
+    objectRef,
+    relatedRefs,
+    authorityRefs,
+    payload: compactPayload({
+      holderRefId: command.holderRef.id,
+      resourceRefId: command.resourceRef.id,
+      decisionRefId: command.decisionRef?.id,
+      revocationPathRefId: command.revocationPathRef.id,
+      appealPathRefId: command.appealPathRef?.id,
+      authorityRefIds: authorityRefs.map((ref) => ref.id),
+      reason: command.reason,
+      revokedAt: command.occurredAt,
+      effectiveAt: command.effectiveAt ?? command.occurredAt,
+      state: "revoked"
+    })
+  });
+
+  return { append, objectRef, relatedRefs, authorityRefs };
+}
+
+export function appealUseRight(
+  services: StewardshipServices,
+  command: AppealUseRightCommand
+): StewardshipCommandResult {
+  assertRefType(command.appealRef, "appeal", "missing-appeal-ref");
+  assertRefType(command.useRightRef, "use-right", "invalid-use-right-ref");
+  assertRef(command.reviewPathRef, "missing-review-path", "Use-right appeals require a review path.");
+  assertNonEmptyStrings(command.grounds, "missing-appeal-grounds", "Use-right appeals require at least one stated ground.");
+
+  const objectRef = services.registry.register(command.appealRef);
+  registerRefs(services.registry, [
+    command.actorRef,
+    command.openedByRef,
+    command.useRightRef,
+    command.reviewPathRef,
+    ...(command.reviewerRefs ?? []),
+    ...(command.authorityRefs ?? []),
+    ...(command.relatedRefs ?? [])
+  ]);
+
+  const authorityRefs = canonicalRefs(services.registry, command.authorityRefs ?? []);
+  const relatedRefs = canonicalRefs(services.registry, [
+    command.openedByRef ?? command.actorRef,
+    command.useRightRef,
+    command.reviewPathRef,
+    ...(command.reviewerRefs ?? []),
+    ...(command.relatedRefs ?? [])
+  ]);
+  const append = appendStewardshipEvent(services.memory, {
+    command,
+    type: "stewardship.use_right.appealed",
+    objectRef,
+    relatedRefs,
+    authorityRefs,
+    payload: compactPayload({
+      appealRefId: objectRef.id,
+      useRightRefId: command.useRightRef.id,
+      openedByRefId: (command.openedByRef ?? command.actorRef)?.id,
+      reviewPathRefId: command.reviewPathRef.id,
+      reviewerRefIds: (command.reviewerRefs ?? []).map((ref) => ref.id),
+      grounds: [...command.grounds],
+      requestedRemedy: command.requestedRemedy,
+      note: command.note,
+      state: "appealed"
     })
   });
 
@@ -400,6 +608,16 @@ function assertNonEmptyStrings(
   message: string
 ): void {
   if (values.length === 0 || values.some((value) => value.trim().length === 0)) {
+    throw new StewardshipCommandError(code, message);
+  }
+}
+
+function assertNonEmptyString(
+  value: string,
+  code: StewardshipCommandErrorCode,
+  message: string
+): void {
+  if (value.trim().length === 0) {
     throw new StewardshipCommandError(code, message);
   }
 }

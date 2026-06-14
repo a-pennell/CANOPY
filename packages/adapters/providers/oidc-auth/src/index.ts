@@ -8,7 +8,17 @@ import type {
   LinkAuthAccountRequest,
   ResolveAuthSessionRequest
 } from "@canopy/contracts-adapters";
-import type { CanopyId, IsoDateTime, ObjectRef } from "@canopy/contracts-kernel";
+import {
+  evaluatePermissionPolicy,
+  type AccessRule,
+  type CanopyId,
+  type IsoDateTime,
+  type ObjectRef,
+  type PermissionAtom,
+  type PermissionCheckContext,
+  type PermissionCheckRequest,
+  type PermissionPolicyEvaluation
+} from "@canopy/contracts-kernel";
 
 export interface ProviderAdapterTrack {
   readonly id: CanopyId;
@@ -39,6 +49,28 @@ export interface OidcLinkedAccount {
 export interface OidcAuthPrototypeSnapshot {
   readonly issuer: string;
   readonly accounts: readonly OidcLinkedAccount[];
+}
+
+export interface OidcAuthoritySessionPrincipal extends AuthSessionPrincipal {
+  readonly authorityRefs: readonly ObjectRef[];
+}
+
+export interface OidcPermissionRequestInput {
+  readonly principal: OidcAuthoritySessionPrincipal;
+  readonly permission: PermissionAtom;
+  readonly targetRef: ObjectRef;
+  readonly context?: PermissionCheckContext;
+  readonly schemaVersion?: PermissionCheckRequest["schemaVersion"];
+}
+
+export interface OidcPermissionCheckRequest extends ResolveAuthSessionRequest {
+  readonly permission: PermissionAtom;
+  readonly targetRef: ObjectRef;
+  readonly accessRules: readonly AccessRule[];
+  readonly context?: PermissionCheckContext;
+  readonly facts?: Readonly<Record<string, string | number | boolean | readonly string[]>>;
+  readonly evaluatedAt?: IsoDateTime;
+  readonly schemaVersion?: PermissionCheckRequest["schemaVersion"];
 }
 
 export const oidcAuthAdapterDescriptor: AdapterDescriptor & { readonly kind: "auth" } = {
@@ -105,6 +137,12 @@ export class OidcAuthAdapter implements AuthAdapter {
   async resolveSession(
     request: ResolveAuthSessionRequest
   ): Promise<AdapterResult<AuthSessionPrincipal>> {
+    return this.resolveAuthoritySession(request);
+  }
+
+  async resolveAuthoritySession(
+    request: ResolveAuthSessionRequest
+  ): Promise<AdapterResult<OidcAuthoritySessionPrincipal>> {
     const subject = request.providerSubject ?? request.tokenHint ?? request.providerSessionId;
     if (subject === undefined) {
       return failure("unauthorized", "OIDC session resolution requires a subject hint.", [
@@ -127,8 +165,33 @@ export class OidcAuthAdapter implements AuthAdapter {
       ),
       roleAssignmentRefs: linked.authorityRefs.map((ref, index) =>
         authorityTraceRef("role-assignment", linked, ref, index)
-      )
+      ),
+      authorityRefs: linked.authorityRefs.map(cloneRef)
     });
+  }
+
+  async checkPermission(
+    request: OidcPermissionCheckRequest
+  ): Promise<AdapterResult<PermissionPolicyEvaluation>> {
+    const session = await this.resolveAuthoritySession(request);
+
+    if (!session.ok || session.value === undefined) {
+      return {
+        ok: false,
+        errors: session.errors
+      };
+    }
+
+    return ok(
+      evaluatePermissionPolicy({
+        request: permissionRequestFromOidcSession(
+          oidcPermissionRequestInput(session.value, request)
+        ),
+        accessRules: request.accessRules,
+        evaluatedAt: request.evaluatedAt ?? request.requestedAt,
+        ...optionalFacts(request.facts)
+      })
+    );
   }
 
   async linkAccount(
@@ -206,6 +269,43 @@ export class OidcAuthAdapter implements AuthAdapter {
   }
 }
 
+export function permissionRequestFromOidcSession(
+  input: OidcPermissionRequestInput
+): PermissionCheckRequest {
+  const actorRef = input.principal.personRef ?? input.principal.accountRef;
+  const relatedRefs = dedupeRefs([
+    input.principal.accountRef,
+    ...input.principal.membershipRefs,
+    ...input.principal.roleAssignmentRefs,
+    ...input.principal.authorityRefs,
+    ...(input.context?.relatedRefs ?? [])
+  ]);
+
+  return {
+    schemaVersion: input.schemaVersion ?? "0.0.0",
+    actorRef,
+    permission: input.permission,
+    targetRef: input.targetRef,
+    context: {
+      ...input.context,
+      relatedRefs
+    }
+  };
+}
+
+function oidcPermissionRequestInput(
+  principal: OidcAuthoritySessionPrincipal,
+  request: OidcPermissionCheckRequest
+): OidcPermissionRequestInput {
+  return {
+    principal,
+    permission: request.permission,
+    targetRef: request.targetRef,
+    ...optionalPermissionContext(request.context),
+    ...optionalPermissionSchemaVersion(request.schemaVersion)
+  };
+}
+
 function authorityTraceRef(
   kind: "membership" | "role-assignment",
   account: OidcLinkedAccount,
@@ -237,6 +337,10 @@ function refKey(ref: ObjectRef): string {
   return `${ref.namespace}:${ref.type}:${ref.id}:${ref.lifecycleStatus}`;
 }
 
+function dedupeRefs(refs: readonly ObjectRef[]): readonly ObjectRef[] {
+  return [...new Map(refs.map((ref) => [refKey(ref), ref])).values()];
+}
+
 function cloneRef(ref: ObjectRef): ObjectRef {
   return freeze(
     withoutUndefined({
@@ -261,6 +365,24 @@ function withoutUndefined<TValue extends Readonly<Record<string, unknown>>>(
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
   ) as TValue;
+}
+
+function optionalFacts(
+  facts: Readonly<Record<string, string | number | boolean | readonly string[]>> | undefined
+): { readonly facts?: Readonly<Record<string, string | number | boolean | readonly string[]>> } {
+  return facts === undefined ? {} : { facts };
+}
+
+function optionalPermissionContext(
+  context: PermissionCheckContext | undefined
+): { readonly context?: PermissionCheckContext } {
+  return context === undefined ? {} : { context };
+}
+
+function optionalPermissionSchemaVersion(
+  schemaVersion: PermissionCheckRequest["schemaVersion"] | undefined
+): { readonly schemaVersion?: PermissionCheckRequest["schemaVersion"] } {
+  return schemaVersion === undefined ? {} : { schemaVersion };
 }
 
 function freeze<TValue>(value: TValue): TValue {

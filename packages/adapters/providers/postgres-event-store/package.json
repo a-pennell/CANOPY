@@ -10,6 +10,7 @@
   "dependencies": {
     "@canopy/contracts-adapters": "0.0.0",
     "@canopy/contracts-database": "0.0.0",
-    "@canopy/contracts-kernel": "0.0.0"
+    "@canopy/contracts-kernel": "0.0.0",
+    "@canopy/database-runtime": "0.0.0"
   }
 }

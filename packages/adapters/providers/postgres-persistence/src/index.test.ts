@@ -60,6 +60,18 @@ describe("PostgresPersistenceAdapter prototype", () => {
     expect(adapter.snapshotTables().adapterAudits.map((record) => record.status)).toEqual([
       "succeeded"
     ]);
+    expect(adapter.canonicalSqlPlan()).toMatchObject({
+      dialect: "postgres",
+      migrationArtifact: "packages/database/migrations/sql/0000_canonical_homes.sql"
+    });
+    expect(
+      adapter.snapshotTables().canonicalSqlPlan.statements.map((statement) => statement.tableName)
+    ).toEqual([
+      "canopy_object_refs",
+      "canopy_object_refs",
+      "canopy_projection_state",
+      "canopy_adapter_audit"
+    ]);
 
     const read = await adapter.readObject(resourceRef);
 

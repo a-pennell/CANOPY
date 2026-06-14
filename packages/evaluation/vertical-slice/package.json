@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@canopy/app-shell": "0.0.0",
+    "@canopy/adapters-provider-oidc-auth": "0.0.0",
     "@canopy/capabilities-allocation-accounting": "0.0.0",
     "@canopy/capabilities-claims-evidence": "0.0.0",
     "@canopy/capabilities-data-stewardship": "0.0.0",
@@ -20,6 +21,7 @@
     "@canopy/database-runtime": "0.0.0",
     "@canopy/kernel-civic-memory": "0.0.0",
     "@canopy/kernel-object-registry": "0.0.0",
+    "@canopy/projections-authority": "0.0.0",
     "@canopy/projections-civic-memory": "0.0.0",
     "@canopy/projections-object-page": "0.0.0",
     "@canopy/workflows-command-runtime": "0.0.0",

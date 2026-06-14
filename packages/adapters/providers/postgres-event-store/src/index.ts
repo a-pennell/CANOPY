@@ -12,6 +12,7 @@ import type {
 } from "@canopy/contracts-adapters";
 import type {
   AdapterAuditRecord,
+  CanonicalDatabaseRecord,
   CanonicalObjectRefRecord,
   CanonicalScope,
   EventRecord,
@@ -26,6 +27,10 @@ import type {
   IsoDateTime,
   ObjectRef
 } from "@canopy/contracts-kernel";
+import {
+  createCanonicalSqlExecutionPlan,
+  type CanonicalSqlExecutionPlan
+} from "@canopy/database-runtime";
 
 export interface ProviderAdapterTrack {
   readonly id: CanopyId;
@@ -60,6 +65,7 @@ export interface PostgresEventStorePrototypeTables {
   readonly outbox: readonly OutboxRecord[];
   readonly projectionStates: readonly ProjectionStateRecord[];
   readonly adapterAudits: readonly AdapterAuditRecord[];
+  readonly canonicalSqlPlan: CanonicalSqlExecutionPlan;
 }
 
 export const postgresEventStoreAdapterDescriptor: AdapterDescriptor & {
@@ -279,6 +285,8 @@ export class PostgresEventStoreAdapter implements EventStoreAdapter {
   }
 
   snapshotTables(): PostgresEventStorePrototypeTables {
+    const canonicalRecords = this.canonicalRecords();
+
     return {
       events: this.sortedEvents().map((row) => freeze(row)),
       eventRecords: this.sortedEvents()
@@ -288,8 +296,25 @@ export class PostgresEventStoreAdapter implements EventStoreAdapter {
       objectRefs: sortedById(this.objectRefs.values()).map((record) => freeze(record)),
       outbox: sortedById(this.outbox.values()).map((record) => freeze(record)),
       projectionStates: sortedById(this.projectionStates.values()).map((record) => freeze(record)),
-      adapterAudits: sortedById(this.adapterAudits.values()).map((record) => freeze(record))
+      adapterAudits: sortedById(this.adapterAudits.values()).map((record) => freeze(record)),
+      canonicalSqlPlan: createCanonicalSqlExecutionPlan(canonicalRecords)
     };
+  }
+
+  canonicalRecords(): readonly CanonicalDatabaseRecord[] {
+    return [
+      ...sortedById(this.objectRefs.values()),
+      ...this.sortedEvents()
+        .map((row) => this.eventRecords.get(row.eventId))
+        .filter((record): record is EventRecord => record !== undefined),
+      ...sortedById(this.outbox.values()),
+      ...sortedById(this.projectionStates.values()),
+      ...sortedById(this.adapterAudits.values())
+    ];
+  }
+
+  canonicalSqlPlan(): CanonicalSqlExecutionPlan {
+    return createCanonicalSqlExecutionPlan(this.canonicalRecords());
   }
 
   private rowFromEvent(

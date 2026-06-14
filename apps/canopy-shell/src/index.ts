@@ -846,6 +846,7 @@ function renderFederationExportState(snapshot: CanopyShellSnapshot): readonly st
   return compactLines([
     `Federation Export: ${state.status}`,
     `Envelope: ${state.envelopeId}`,
+    `Projection: ${state.projectionRead.kind}/${state.projectionRead.freshness}`,
     `Format: ${state.format}; schema: ${state.schemaVersion}`,
     `Events: ${state.includedEventIds.length}; objects: ${state.includedObjectRefs.length}`,
     `Data stewardship agreements: ${state.dataStewardshipAgreementRefs.map(formatRef).join(", ") || "none"}`,
@@ -1458,7 +1459,10 @@ function buildShellSurfaces(input: {
     federationExportState:
       input.federationExport === undefined
         ? undefined
-        : buildFederationExportStateViewModel(input.federationExport),
+        : buildFederationExportStateViewModel(
+            input.federationExport,
+            projectionReadFor(input.projectionReads, "federation-export")
+          ),
     importReview
   });
 }
@@ -1720,7 +1724,8 @@ function buildResourceStewardshipViewModel(
 }
 
 function buildFederationExportStateViewModel(
-  federationExport: FederationExportEnvelopeReadModel
+  federationExport: FederationExportEnvelopeReadModel,
+  projectionRead: CanopyUiProjectionRead
 ): CanopyUiFederationExportStateViewModel {
   return optionalFederationExportStateViewModel({
     kind: "federation-export-state",
@@ -1740,7 +1745,8 @@ function buildFederationExportStateViewModel(
     dataStewardshipAgreementRefs: federationExport.preview.dataStewardshipAgreementRefs,
     localMappingIds: federationExport.preview.localMappings.map((mapping) => mapping.id),
     redactionSummary: federationExport.envelope.redactionSummary,
-    readinessWarnings: federationExport.preview.federationReadinessWarnings
+    readinessWarnings: federationExport.preview.federationReadinessWarnings,
+    projectionRead
   });
 }
 
@@ -1994,7 +2000,8 @@ const projectionRebuilderNames = [
   "authority",
   "claim-evidence",
   "resource-stewardship",
-  "decision-packet"
+  "decision-packet",
+  "federation-export"
 ] as const satisfies readonly ProjectionRebuilderName[];
 
 const canopyObjectTypes = [
@@ -2611,6 +2618,7 @@ function optionalFederationExportStateViewModel(
     authorityRefs: viewModel.authorityRefs,
     dataStewardshipAgreementRefs: viewModel.dataStewardshipAgreementRefs,
     localMappingIds: viewModel.localMappingIds,
+    projectionRead: viewModel.projectionRead,
     ...optionalFields,
     readinessWarnings: viewModel.readinessWarnings
   };

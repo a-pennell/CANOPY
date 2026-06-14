@@ -40,6 +40,13 @@ export type AuthorityFindingKind =
   | "delegation-revoked"
   | "appeal-missing-grounds"
   | "appeal-missing-reviewer"
+  | "use-right-missing-holder"
+  | "use-right-missing-resource"
+  | "use-right-missing-review-path"
+  | "use-right-missing-revocation-semantics"
+  | "use-right-denial-missing-reason"
+  | "use-right-denial-missing-appeal-path"
+  | "use-right-revocation-missing-reason"
   | "emergency-missing-authority"
   | "emergency-missing-constraints";
 
@@ -140,6 +147,7 @@ const AUTHORITY_EVENT_TYPES = [
   "governance.decision.recorded",
   "governance.policy.versioned",
   "stewardship.use_right.granted",
+  "stewardship.use_right.denied",
   "stewardship.use_right.revoked"
 ] as const satisfies readonly CanopyEventType[];
 
@@ -412,6 +420,10 @@ const collectAuthorityFlowFindings = (
       findings.push(...appealFindings(event, record));
     }
 
+    if (event.type.startsWith("stewardship.use_right.")) {
+      findings.push(...useRightFindings(event, record));
+    }
+
     findings.push(...emergencyAuthorityFindings(event, record));
   }
 
@@ -631,6 +643,122 @@ const appealFindings = (
         "Appeals under review or later require at least one reviewerRef."
       )
     );
+  }
+
+  return findings;
+};
+
+const useRightFindings = (
+  event: CanopyEvent,
+  record: Readonly<Record<string, unknown>>
+): readonly AuthorityFinding[] => {
+  if (event.authorityRefs.length === 0 && event.type !== "stewardship.use_right.appealed") {
+    return [];
+  }
+
+  const findings: AuthorityFinding[] = [];
+
+  if (
+    hasField(record, "holderRef") &&
+    recordField(record, "holderRef") === undefined
+  ) {
+    findings.push(
+      finding(
+        "use-right-missing-holder",
+        event,
+        "Use-right workflow events must preserve the holder ref."
+      )
+    );
+  }
+
+  if (
+    hasField(record, "resourceRef") &&
+    recordField(record, "resourceRef") === undefined
+  ) {
+    findings.push(
+      finding(
+        "use-right-missing-resource",
+        event,
+        "Use-right workflow events must preserve the resource ref."
+      )
+    );
+  }
+
+  const review = recordField(record, "review");
+  const hasApprovalEnforcementMetadata =
+    hasField(record, "review") || hasField(record, "revocation");
+  if (
+    event.type === "stewardship.use_right.granted" &&
+    hasApprovalEnforcementMetadata &&
+    (review === undefined || stringField(review, "reviewAt") === undefined)
+  ) {
+    findings.push(
+      finding(
+        "use-right-missing-review-path",
+        event,
+        "Use-right approvals must preserve review timing and path metadata."
+      )
+    );
+  }
+
+  const revocation = recordField(record, "revocation");
+  if (
+    event.type === "stewardship.use_right.granted" &&
+    hasApprovalEnforcementMetadata &&
+    (revocation === undefined ||
+      stringField(revocation, "revocationPathRefId") === undefined ||
+      arrayField(revocation, "revocationConditions").length === 0)
+  ) {
+    findings.push(
+      finding(
+        "use-right-missing-revocation-semantics",
+        event,
+        "Use-right approvals must preserve revocation path and conditions."
+      )
+    );
+  }
+
+  if (
+    event.type === "stewardship.use_right.denied" &&
+    stringField(record, "reason") === undefined
+  ) {
+    findings.push(
+      finding(
+        "use-right-denial-missing-reason",
+        event,
+        "Use-right denials must preserve a reason."
+      )
+    );
+  }
+
+  if (
+    event.type === "stewardship.use_right.denied" &&
+    stringField(record, "appealPathRefId") === undefined
+  ) {
+    findings.push(
+      finding(
+        "use-right-denial-missing-appeal-path",
+        event,
+        "Use-right denials must preserve an appeal path."
+      )
+    );
+  }
+
+  if (
+    event.type === "stewardship.use_right.revoked" &&
+    stringField(record, "reason") === undefined
+  ) {
+    findings.push(
+      finding(
+        "use-right-revocation-missing-reason",
+        event,
+        "Use-right revocations must preserve a reason."
+      )
+    );
+  }
+
+  if (event.type === "stewardship.use_right.appealed") {
+    findings.push(...appealFindings(event, record));
   }
 
   return findings;
@@ -883,7 +1011,9 @@ const payloadRecord = (event: CanopyEvent): Readonly<Record<string, unknown>> =>
     "delegation",
     "proposal",
     "decision",
-    "appeal"
+    "appeal",
+    "useRight",
+    "useRightAppeal"
   ]) {
     const value = event.payload[key];
 

@@ -332,7 +332,8 @@ const expectedProjectionNames = [
   "authority",
   "claim-evidence",
   "resource-stewardship",
-  "decision-packet"
+  "decision-packet",
+  "federation-export"
 ] as const;
 
 export function buildCanopyOperationsReport(
@@ -636,6 +637,22 @@ function executeCanopyOperationsRemediationCommand(input: {
   readonly command: CanopyOperationsRemediationCommand;
   readonly now: IsoDateTime;
 }): CanopyOperationsRemediationCommandResult {
+  const result = executeCanopyOperationsRemediationCommandAction(input);
+  writeCommandOutcomeAudit(input.runtime, {
+    command: input.command,
+    result,
+    now: input.now
+  });
+
+  return result;
+}
+
+function executeCanopyOperationsRemediationCommandAction(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly outbox: OutboxRuntime;
+  readonly command: CanopyOperationsRemediationCommand;
+  readonly now: IsoDateTime;
+}): CanopyOperationsRemediationCommandResult {
   try {
     switch (input.command.type) {
       case "retry-failed-outbox":
@@ -673,6 +690,28 @@ function executeCanopyOperationsRemediationCommand(input: {
   } catch (error) {
     return failedCommandResult(input.command, error);
   }
+}
+
+function writeCommandOutcomeAudit(
+  runtime: CanonicalPersistenceRuntime,
+  input: {
+    readonly command: CanopyOperationsRemediationCommand;
+    readonly result: CanopyOperationsRemediationCommandResult;
+    readonly now: IsoDateTime;
+  }
+): AdapterAuditRecord {
+  return runtime.putAdapterAudit(
+    operatorAudit({
+      id: `adapter-audit.operations.command.${input.command.id}`,
+      now: input.now,
+      operation: "operations.remediation-command",
+      status: commandAuditStatus(input.result.status),
+      eventIds: [],
+      outboxIds: commandOutboxIds(input.command),
+      errors: input.result.error === undefined ? [] : [input.result.error],
+      metadata: commandOutcomeMetadata(input)
+    })
+  );
 }
 
 function executeRetryFailedOutboxCommand(input: {
@@ -888,6 +927,70 @@ function failedCommandResult(
   });
 }
 
+function commandAuditStatus(
+  status: CanopyOperationsRemediationCommandStatus
+): AdapterAuditStatus {
+  if (status === "applied") {
+    return "succeeded";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+
+  return "skipped";
+}
+
+function commandOutboxIds(
+  command: CanopyOperationsRemediationCommand
+): readonly CanopyId[] {
+  if (
+    command.type === "retry-failed-outbox" ||
+    command.type === "quarantine-failed-import"
+  ) {
+    return command.outboxRecordIds;
+  }
+
+  return [];
+}
+
+function commandOutcomeMetadata(input: {
+  readonly command: CanopyOperationsRemediationCommand;
+  readonly result: CanopyOperationsRemediationCommandResult;
+  readonly now: IsoDateTime;
+}): JsonValue {
+  return optionalMetadataError({
+    commandId: input.command.id,
+    commandType: input.command.type,
+    commandCreatedAt: input.command.createdAt,
+    executedAt: input.now,
+    reason: input.command.reason,
+    evidenceIds: input.command.evidenceIds,
+    status: input.result.status,
+    changedRecordIds: input.result.changedRecordIds,
+    skippedRecordIds: input.result.skippedRecordIds,
+    affectedProjectionStateIds: input.result.changedRecordIds.filter(isProjectionStateId),
+    remediatedAdapterAuditIds: commandAdapterAuditIds(input.command),
+    error: input.result.error
+  });
+}
+
+function commandAdapterAuditIds(
+  command: CanopyOperationsRemediationCommand
+): readonly CanopyId[] {
+  if (
+    command.type === "quarantine-failed-import" ||
+    command.type === "acknowledge-adapter-audit-failure"
+  ) {
+    return command.adapterAuditIds;
+  }
+
+  return [];
+}
+
+function isProjectionStateId(id: CanopyId): boolean {
+  return id.startsWith("projection-state.");
+}
+
 function operatorAudit(input: {
   readonly id: CanopyId;
   readonly now: IsoDateTime;
@@ -895,6 +998,7 @@ function operatorAudit(input: {
   readonly status: AdapterAuditStatus;
   readonly eventIds: readonly CanopyId[];
   readonly outboxIds: readonly CanopyId[];
+  readonly errors?: readonly string[];
   readonly metadata: JsonValue;
 }): AdapterAuditRecord {
   return {
@@ -911,7 +1015,7 @@ function operatorAudit(input: {
     eventIds: input.eventIds,
     outboxIds: input.outboxIds,
     warnings: [],
-    errors: [],
+    errors: input.errors ?? [],
     metadata: input.metadata
   };
 }
@@ -1682,6 +1786,54 @@ function optionalCommandError(
     changedRecordIds: result.changedRecordIds,
     skippedRecordIds: result.skippedRecordIds,
     error: result.error
+  };
+}
+
+function optionalMetadataError(
+  metadata: {
+    readonly commandId: CanopyId;
+    readonly commandType: CanopyOperationsRemediationCommandType;
+    readonly commandCreatedAt: IsoDateTime;
+    readonly executedAt: IsoDateTime;
+    readonly reason: string;
+    readonly evidenceIds: readonly CanopyId[];
+    readonly status: CanopyOperationsRemediationCommandStatus;
+    readonly changedRecordIds: readonly CanopyId[];
+    readonly skippedRecordIds: readonly CanopyId[];
+    readonly affectedProjectionStateIds: readonly CanopyId[];
+    readonly remediatedAdapterAuditIds: readonly CanopyId[];
+    readonly error: string | undefined;
+  }
+): JsonValue {
+  if (metadata.error === undefined) {
+    return {
+      commandId: metadata.commandId,
+      commandType: metadata.commandType,
+      commandCreatedAt: metadata.commandCreatedAt,
+      executedAt: metadata.executedAt,
+      reason: metadata.reason,
+      evidenceIds: metadata.evidenceIds,
+      status: metadata.status,
+      changedRecordIds: metadata.changedRecordIds,
+      skippedRecordIds: metadata.skippedRecordIds,
+      affectedProjectionStateIds: metadata.affectedProjectionStateIds,
+      remediatedAdapterAuditIds: metadata.remediatedAdapterAuditIds
+    };
+  }
+
+  return {
+    commandId: metadata.commandId,
+    commandType: metadata.commandType,
+    commandCreatedAt: metadata.commandCreatedAt,
+    executedAt: metadata.executedAt,
+    reason: metadata.reason,
+    evidenceIds: metadata.evidenceIds,
+    status: metadata.status,
+    changedRecordIds: metadata.changedRecordIds,
+    skippedRecordIds: metadata.skippedRecordIds,
+    affectedProjectionStateIds: metadata.affectedProjectionStateIds,
+    remediatedAdapterAuditIds: metadata.remediatedAdapterAuditIds,
+    error: metadata.error
   };
 }
 

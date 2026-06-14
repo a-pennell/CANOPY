@@ -18,11 +18,15 @@
   ],
   "scripts": {
     "check": "npm run check:boundaries && npm run check:ascii && npm run check:exports && npm run check:contract-tests && npm run check:types",
+    "check:guardrails": "npm run check:boundaries && npm run check:ascii",
     "check:types": "tsc --noEmit",
     "check:ascii": "node tools/dependency-checks/check-ascii.mjs",
     "check:boundaries": "node tools/dependency-checks/check-boundaries.mjs",
+    "check:db": "node tools/dependency-checks/run-db-checks.mjs",
     "check:contract-tests": "vitest run --config vitest.workspace.ts",
     "check:exports": "node tools/dependency-checks/check-package-exports.mjs",
+    "check:tests": "npm run check:contract-tests",
+    "audit:report": "npm audit --audit-level=moderate || true",
     "test": "npm run check"
   },
   "devDependencies": {

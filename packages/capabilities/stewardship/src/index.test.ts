@@ -4,10 +4,14 @@ import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import { createObjectRegistry } from "@canopy/kernel-object-registry";
 import {
   StewardshipCommandError,
+  appealUseRight,
+  approveUseRight,
   createResource,
+  denyUseRight,
   grantUseRight,
   proposeUseRight,
-  recordResourceContext
+  recordResourceContext,
+  revokeUseRight
 } from "./index.js";
 
 const occurredAt = "2026-06-13T12:00:00.000Z";
@@ -26,6 +30,7 @@ const mandateRef = ref("mandate.watershed.steward.2026", "mandate");
 const issueRef = ref("issue.north-pasture-review", "issue");
 const decisionRef = ref("decision.north-pasture-use-right", "decision");
 const proposalRef = ref("proposal.north-pasture-use-right", "proposal");
+const appealRef = ref("appeal.north-pasture-use-right", "appeal");
 
 const scope = {
   holderRef,
@@ -150,6 +155,123 @@ describe("stewardship capability", () => {
         state: "active"
       }
     });
+  });
+
+  it("approves, denies, revokes, and appeals use rights with stewardship enforcement metadata", () => {
+    const ctx = services();
+
+    const approved = approveUseRight(ctx, {
+      eventId: "event.stewardship.use_right.approved.north-pasture",
+      occurredAt,
+      useRightRef,
+      scope,
+      decisionRef,
+      authorityRefs: [mandateRef]
+    });
+    const denied = denyUseRight(ctx, {
+      eventId: "event.stewardship.use_right.denied.north-pasture",
+      occurredAt,
+      useRightRef,
+      holderRef,
+      resourceRef,
+      proposalRef,
+      decisionRef,
+      appealPathRef: issueRef,
+      reason: "Riparian recovery threshold is already stressed.",
+      authorityRefs: [mandateRef]
+    });
+    const revoked = revokeUseRight(ctx, {
+      eventId: "event.stewardship.use_right.revoked.north-pasture",
+      occurredAt,
+      useRightRef,
+      holderRef,
+      resourceRef,
+      decisionRef,
+      revocationPathRef: issueRef,
+      appealPathRef: issueRef,
+      reason: "Condition violation confirmed.",
+      authorityRefs: [mandateRef]
+    });
+    const appealed = appealUseRight(ctx, {
+      eventId: "event.stewardship.use_right.appealed.north-pasture",
+      occurredAt,
+      actorRef: holderRef,
+      appealRef,
+      useRightRef,
+      reviewPathRef: issueRef,
+      grounds: ["condition violation evidence is contested"],
+      requestedRemedy: "restore the use right pending review"
+    });
+
+    expect(approved.append.event.type).toBe("stewardship.use_right.granted");
+    expect(denied.append.event).toMatchObject({
+      type: "stewardship.use_right.denied",
+      authorityRefs: [mandateRef],
+      payload: {
+        state: "denied",
+        reason: "Riparian recovery threshold is already stressed.",
+        appealPathRefId: issueRef.id
+      }
+    });
+    expect(revoked.append.event).toMatchObject({
+      type: "stewardship.use_right.revoked",
+      authorityRefs: [mandateRef],
+      payload: {
+        state: "revoked",
+        reason: "Condition violation confirmed.",
+        revocationPathRefId: issueRef.id
+      }
+    });
+    expect(appealed.append.event).toMatchObject({
+      type: "stewardship.use_right.appealed",
+      objectRef: appealRef,
+      authorityRefs: [],
+      payload: {
+        state: "appealed",
+        useRightRefId: useRightRef.id,
+        grounds: ["condition violation evidence is contested"]
+      }
+    });
+  });
+
+  it("rejects denials, revocations, and appeals without stewardship enforcement requirements", () => {
+    const ctx = services();
+
+    expect(() =>
+      denyUseRight(ctx, {
+        eventId: "event.stewardship.use_right.denied.no-reason",
+        occurredAt,
+        useRightRef,
+        holderRef,
+        resourceRef,
+        appealPathRef: issueRef,
+        reason: " ",
+        authorityRefs: [mandateRef]
+      })
+    ).toThrow(StewardshipCommandError);
+
+    expect(() =>
+      revokeUseRight(ctx, {
+        eventId: "event.stewardship.use_right.revoked.no-authority",
+        occurredAt,
+        useRightRef,
+        holderRef,
+        resourceRef,
+        revocationPathRef: issueRef,
+        reason: "condition breach"
+      })
+    ).toThrow(StewardshipCommandError);
+
+    expect(() =>
+      appealUseRight(ctx, {
+        eventId: "event.stewardship.use_right.appealed.no-grounds",
+        occurredAt,
+        appealRef,
+        useRightRef,
+        reviewPathRef: issueRef,
+        grounds: []
+      })
+    ).toThrow(StewardshipCommandError);
   });
 
   it("rejects grants without complete scope and revocation or review semantics", () => {
