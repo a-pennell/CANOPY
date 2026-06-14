@@ -15,10 +15,15 @@ describe("fold-in validation", () => {
     const report = validateGoldenFixtureFoldIn(firstReplayableGoldenFixtureManifest, {
       objectPageRefs: [
         goldenFixtureRefs.decisionUseRight,
+        goldenFixtureRefs.decisionIrrigationWindow,
         goldenFixtureRefs.useRightNorthPasture,
+        goldenFixtureRefs.useRightIrrigationGate,
         goldenFixtureRefs.resourceNorthPasture
       ],
-      resourceRefs: [goldenFixtureRefs.resourceNorthPasture],
+      resourceRefs: [
+        goldenFixtureRefs.resourceNorthPasture,
+        goldenFixtureRefs.resourceIrrigationGate
+      ],
       shellNavigation: [
         { label: "Objects", href: "/objects" },
         { label: "Capabilities", href: "/capabilities" }
@@ -30,7 +35,7 @@ describe("fold-in validation", () => {
       ]
     });
 
-    expect(report.status).toBe("warn");
+    expect(report.status).toBe("pass");
     expect(report.mappingCoverage.missingRefIds).toEqual([]);
     expect(report.eventCoverage.missingEventTypes).toEqual([]);
     expect(report.authorityCoverage.missingAuthorityEventIds).toEqual([]);
@@ -39,14 +44,39 @@ describe("fold-in validation", () => {
       firstReplayableGoldenFixtureManifest.events.length
     );
     expect(report.shellLeakage.findings).toEqual([]);
-    expect(report.ecologicalHookCoverage.stewardshipResourcesMissingHooks).toContain(
+    expect(report.ecologicalHookCoverage.stewardshipResourcesMissingHooks).toEqual([]);
+    expect(report.ecologicalHookCoverage.stewardshipResourcesWithHooks).toEqual([
+      goldenFixtureRefs.resourceIrrigationGate.id,
       goldenFixtureRefs.resourceNorthPasture.id
-    );
+    ]);
     expect(report.federationReadiness.readyEventIds).toContain(
       "event.federation.export.created.first-commons"
     );
-    expect(report.projections.objectPages).toHaveLength(3);
-    expect(report.projections.resourceStewardship).toHaveLength(1);
+    expect(report.federationReadiness.readyEventIds).toContain(
+      "event.federation.import.received.icos-irrigation-window"
+    );
+    expect(report.projections.objectPages).toHaveLength(5);
+    expect(report.projections.resourceStewardship).toHaveLength(2);
+    expect(
+      report.projections.objectPages
+        .find((page) => page.objectRef.id === goldenFixtureRefs.decisionIrrigationWindow.id)
+        ?.authorityRefs.map((ref) => ref.id)
+    ).toEqual(
+      expect.arrayContaining([
+        goldenFixtureRefs.mandateWatershedSteward.id,
+        goldenFixtureRefs.policyDroughtProtocol.id
+      ])
+    );
+    expect(
+      report.projections.resourceStewardship
+        .find((projection) => projection.resourceRef.id === goldenFixtureRefs.resourceIrrigationGate.id)
+        ?.useRights[0]
+    ).toMatchObject({
+      useRightRef: { id: goldenFixtureRefs.useRightIrrigationGate.id },
+      holderRefId: goldenFixtureRefs.personKai.id,
+      permissions: ["open_gate.dawn_window"],
+      decisionRefIds: [goldenFixtureRefs.decisionIrrigationWindow.id]
+    });
   });
 
   it("allows source project names in source metadata and import plans", () => {
@@ -106,6 +136,7 @@ describe("fold-in validation", () => {
       "governance.decision.recorded"
     ]);
     expect(report.authorityCoverage.missingAuthorityEventIds).toEqual([
+      "event.stewardship.use-right.granted.irrigation-window",
       "event.stewardship.use-right.granted.north-pasture"
     ]);
     expect(report.replayParity.status).toBe("pass");

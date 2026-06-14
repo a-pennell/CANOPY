@@ -217,7 +217,11 @@ export class InMemoryCanonicalPersistence implements CanonicalPersistenceRuntime
     }
 
     this.upsertObjectRef(event.objectRef, { scope: eventScope(event) });
-    for (const ref of [...event.relatedRefs, ...event.authorityRefs]) {
+    for (const ref of [
+      ...optionalRef(event.actorRef),
+      ...event.relatedRefs,
+      ...event.authorityRefs
+    ]) {
       this.upsertObjectRef(ref, { scope: eventScope(event) });
     }
 
@@ -407,6 +411,10 @@ function sameRef(left: ObjectRef, right: ObjectRef): boolean {
 
 function sameOptionalRef(left: ObjectRef, right: ObjectRef | undefined): boolean {
   return right !== undefined && sameRef(left, right);
+}
+
+function optionalRef(ref: ObjectRef | undefined): readonly ObjectRef[] {
+  return ref === undefined ? [] : [ref];
 }
 
 function refKey(ref: ObjectRef): string {

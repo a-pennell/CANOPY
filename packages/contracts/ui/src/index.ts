@@ -4,9 +4,13 @@ import type {
   CanopyEventType,
   CanopyId,
   CanopyObjectType,
+  ContentHash,
+  ExportFormat,
+  ImportWarning,
   IsoDateTime,
   LocalSourcePointer,
   ObjectRef,
+  RedactionSummary,
   SourceProject
 } from "@canopy/contracts-kernel";
 
@@ -15,6 +19,10 @@ export type CanopyUiSurfaceKind =
   | "civic-memory-stream"
   | "source-provenance-panel"
   | "authority-trace"
+  | "claim-evidence"
+  | "decision-packet"
+  | "resource-stewardship"
+  | "federation-export-state"
   | "import-review";
 
 export type CanopyUiProjectionReadKind = "live" | "materialized";
@@ -143,6 +151,163 @@ export interface CanopyUiAuthorityTraceViewModel {
   readonly projectionRead: CanopyUiProjectionRead;
 }
 
+export interface CanopyUiClaimEvidenceClaimSummary {
+  readonly claimRef: ObjectRef;
+  readonly status: string;
+  readonly title?: string;
+  readonly summary?: string;
+  readonly evidenceRefs: readonly ObjectRef[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly sourceCapabilities: readonly CanopyCapability[];
+  readonly aiIndicatorEventIds: readonly CanopyId[];
+}
+
+export interface CanopyUiClaimEvidenceEvidenceSummary {
+  readonly evidenceRef: ObjectRef;
+  readonly title?: string;
+  readonly summary?: string;
+  readonly claimRefs: readonly ObjectRef[];
+  readonly sourceRefs: readonly ObjectRef[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly sourceCapabilities: readonly CanopyCapability[];
+  readonly isAiOrModelOutput: boolean;
+}
+
+export interface CanopyUiClaimEvidenceLinkSummary {
+  readonly claimRef: ObjectRef;
+  readonly evidenceRef: ObjectRef;
+  readonly relation: string;
+  readonly eventId: CanopyId;
+  readonly authorityRefs: readonly ObjectRef[];
+}
+
+export interface CanopyUiClaimEvidenceAiIndicator {
+  readonly eventId: CanopyId;
+  readonly objectRef: ObjectRef;
+  readonly relatedClaimRefs: readonly ObjectRef[];
+  readonly reason: string;
+  readonly sourceCapability: CanopyCapability;
+}
+
+export interface CanopyUiClaimEvidenceViewModel {
+  readonly kind: "claim-evidence";
+  readonly selectedClaim?: CanopyUiClaimEvidenceClaimSummary;
+  readonly selectedEvidence?: CanopyUiClaimEvidenceEvidenceSummary;
+  readonly claims: readonly CanopyUiClaimEvidenceClaimSummary[];
+  readonly evidence: readonly CanopyUiClaimEvidenceEvidenceSummary[];
+  readonly links: readonly CanopyUiClaimEvidenceLinkSummary[];
+  readonly aiNonAuthorityIndicators: readonly CanopyUiClaimEvidenceAiIndicator[];
+  readonly counts: {
+    readonly claims: number;
+    readonly evidence: number;
+    readonly evidenceLinks: number;
+    readonly reviews: number;
+    readonly contests: number;
+    readonly aiNonAuthorityIndicators: number;
+  };
+  readonly projectionRead: CanopyUiProjectionRead;
+}
+
+export interface CanopyUiDecisionPacketOutcomeSummary {
+  readonly ref: ObjectRef;
+  readonly eventId: CanopyId;
+  readonly type: CanopyEventType;
+  readonly state?: string;
+  readonly holderRef?: ObjectRef;
+  readonly resourceRef?: ObjectRef;
+  readonly permissions: readonly string[];
+  readonly conditions: readonly string[];
+}
+
+export interface CanopyUiDecisionPacketViewModel {
+  readonly kind: "decision-packet";
+  readonly decisionRef: ObjectRef;
+  readonly packetRef?: ObjectRef;
+  readonly status?: string;
+  readonly outcome?: string;
+  readonly rationale?: string;
+  readonly conditions: readonly string[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly claimRefs: readonly ObjectRef[];
+  readonly evidenceRefs: readonly ObjectRef[];
+  readonly unresolvedObjectionRefs: readonly ObjectRef[];
+  readonly stewardshipOutcomes: readonly CanopyUiDecisionPacketOutcomeSummary[];
+  readonly allocationAccountingOutcomeEventIds: readonly CanopyId[];
+  readonly timeline: readonly CanopyUiTimelineEntry[];
+  readonly hasRedactions: boolean;
+  readonly hasSupersessions: boolean;
+  readonly projectionRead: CanopyUiProjectionRead;
+}
+
+export interface CanopyUiResourceUseRightSummary {
+  readonly useRightRef: ObjectRef;
+  readonly state: string;
+  readonly holderRef?: ObjectRef;
+  readonly resourceRef: ObjectRef;
+  readonly permissions: readonly string[];
+  readonly conditions: readonly string[];
+  readonly decisionRefs: readonly ObjectRef[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly latestEventId: CanopyId;
+  readonly latestEventAt: IsoDateTime;
+}
+
+export interface CanopyUiResourceContextSummary {
+  readonly eventId: CanopyId;
+  readonly occurredAt: IsoDateTime;
+  readonly observedAt?: IsoDateTime;
+  readonly contextRef?: ObjectRef;
+  readonly ecologicalContextIds: readonly CanopyId[];
+  readonly summary: Readonly<Record<string, unknown>>;
+}
+
+export interface CanopyUiResourceStewardshipViewModel {
+  readonly kind: "resource-stewardship";
+  readonly resourceRef: ObjectRef;
+  readonly title?: string;
+  readonly summary?: string;
+  readonly resourceKind?: string;
+  readonly useRights: readonly CanopyUiResourceUseRightSummary[];
+  readonly contextEvents: readonly CanopyUiResourceContextSummary[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly linkedRefs: {
+    readonly proposals: readonly ObjectRef[];
+    readonly decisions: readonly ObjectRef[];
+    readonly claims: readonly ObjectRef[];
+    readonly evidence: readonly ObjectRef[];
+  };
+  readonly ecologicalContextIds: readonly CanopyId[];
+  readonly timeline: readonly CanopyUiTimelineEntry[];
+  readonly counts: {
+    readonly totalEvents: number;
+    readonly contextEvents: number;
+    readonly proposedUseRights: number;
+    readonly grantedUseRights: number;
+    readonly revokedUseRights: number;
+  };
+  readonly projectionRead: CanopyUiProjectionRead;
+}
+
+export interface CanopyUiFederationExportStateViewModel {
+  readonly kind: "federation-export-state";
+  readonly status: "ready" | "attention";
+  readonly envelopeId: CanopyId;
+  readonly exportedAt: IsoDateTime;
+  readonly exportedByRef: ObjectRef;
+  readonly scopeRef: ObjectRef;
+  readonly format: ExportFormat;
+  readonly schemaVersion: number;
+  readonly contentHash: ContentHash;
+  readonly includedEventIds: readonly CanopyId[];
+  readonly includedObjectRefs: readonly ObjectRef[];
+  readonly includedObjectTypes: readonly CanopyObjectType[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly dataStewardshipAgreementRefs: readonly ObjectRef[];
+  readonly localMappingIds: readonly CanopyId[];
+  readonly redactionSummary?: RedactionSummary;
+  readonly readinessWarnings: readonly ImportWarning[];
+}
+
 export interface CanopyUiImportReviewCandidate {
   readonly id: CanopyId;
   readonly source: LocalSourcePointer;
@@ -189,6 +354,10 @@ export interface CanopyUiShellSurfaces {
   readonly civicMemoryStream: CanopyUiCivicMemoryStreamViewModel;
   readonly sourceProvenancePanel: CanopyUiSourceProvenancePanelViewModel;
   readonly authorityTrace: CanopyUiAuthorityTraceViewModel;
+  readonly claimEvidence: CanopyUiClaimEvidenceViewModel;
+  readonly decisionPacket?: CanopyUiDecisionPacketViewModel;
+  readonly resourceStewardship?: CanopyUiResourceStewardshipViewModel;
+  readonly federationExportState?: CanopyUiFederationExportStateViewModel;
   readonly importReview?: CanopyUiImportReviewViewModel;
 }
 

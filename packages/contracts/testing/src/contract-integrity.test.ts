@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { CanopyEvent } from "@canopy/contracts-kernel";
 import {
   firstReplayableGoldenFixtureManifest,
+  goldenFixtureRefs,
   requiredFirstReplayableEventTypes,
   requiredGoldenFixtureDomains
 } from "./golden-fixtures";
@@ -272,6 +274,96 @@ describe("golden fixture contract manifest requirements", () => {
       redactionEventId: "event.system.redaction.applied.sensitive-evidence",
       preservedFields: ["id", "type", "occurredAt", "objectRef"],
       removedPayloadKeys: ["preciseLocation"]
+    });
+  });
+
+  it("covers representative folded CommonCredit, ICOS, Sensemaking, and Stewardship shape", () => {
+    const manifest = firstReplayableGoldenFixtureManifest;
+    const eventsById = new Map<string, CanopyEvent>(
+      manifest.events.map((event) => [event.id, event])
+    );
+    const objectsById = new Map(manifest.objects.map((object) => [object.ref.id, object]));
+    const foodHubLedgerEvent = eventsById.get(
+      "event.accounting.ledger-entry.posted.food-hub-distribution"
+    );
+    const foodHubCorrectionEvent = eventsById.get(
+      "event.accounting.ledger-entry.reversed.food-hub-correction"
+    );
+    const irrigationDecisionEvent = eventsById.get(
+      "event.governance.decision.recorded.irrigation-window"
+    );
+    const irrigationUseRightEvent = eventsById.get(
+      "event.stewardship.use-right.granted.irrigation-window"
+    );
+    const riparianClaimEvent = eventsById.get(
+      "event.claim.contested.riparian-stress"
+    );
+    const riparianModelEvent = eventsById.get(
+      "event.model.output.generated.riparian-risk"
+    );
+    const federationImportEvent = eventsById.get(
+      "event.federation.import.received.icos-irrigation-window"
+    );
+
+    expect(objectsById.get(goldenFixtureRefs.ledgerAccountFoodHub.id)?.ref.source?.sourceProject).toBe(
+      "common-credit"
+    );
+    expect(objectsById.get(goldenFixtureRefs.decisionIrrigationWindow.id)?.ref.source?.sourceProject).toBe(
+      "icos"
+    );
+    expect(objectsById.get(goldenFixtureRefs.claimRiparianStress.id)?.ref.source?.sourceProject).toBe(
+      "sensemaking"
+    );
+    expect(objectsById.get(goldenFixtureRefs.resourceIrrigationGate.id)?.ref.source?.sourceProject).toBe(
+      "stewardship"
+    );
+    expect(foodHubLedgerEvent?.payload).toMatchObject({
+      lineAccountRefIds: [
+        goldenFixtureRefs.ledgerAccountFoodHub.id,
+        goldenFixtureRefs.ledgerAccountCommons.id
+      ],
+      excludesAuthenticationAccountRefIds: [goldenFixtureRefs.accountMiraLogin.id]
+    });
+    expect(foodHubCorrectionEvent?.supersession).toMatchObject({
+      supersedesEventId: "event.accounting.ledger-entry.posted.food-hub-distribution",
+      authorityRefs: [
+        goldenFixtureRefs.decisionIrrigationWindow,
+        goldenFixtureRefs.agreementFoodHubDistribution
+      ]
+    });
+    expect(irrigationDecisionEvent?.authorityRefs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([
+        goldenFixtureRefs.mandateWatershedSteward.id,
+        goldenFixtureRefs.policyDroughtProtocol.id
+      ])
+    );
+    expect(irrigationDecisionEvent?.payload).toMatchObject({
+      machineOutputAuthorityRefIds: [],
+      unresolvedObjectionRefIds: []
+    });
+    expect(irrigationUseRightEvent?.payload).toMatchObject({
+      holderRefId: goldenFixtureRefs.personKai.id,
+      resourceRefId: goldenFixtureRefs.resourceIrrigationGate.id,
+      review: {
+        reviewPathRefId: goldenFixtureRefs.guardianReviewRiparian.id
+      },
+      revocation: {
+        revocable: true
+      }
+    });
+    expect(riparianClaimEvent?.payload).toMatchObject({
+      preservesUncertainty: true,
+      acceptedWithoutHumanReview: false
+    });
+    expect(riparianModelEvent?.authorityRefs).toEqual([]);
+    expect(riparianModelEvent?.payload).toMatchObject({
+      dataState: "model_derived",
+      canAuthorizeBindingAction: false
+    });
+    expect(federationImportEvent?.payload).toMatchObject({
+      sourceProject: "icos",
+      canonicalMappingRefId: goldenFixtureRefs.canonicalMapping.id,
+      preservesLocalIdentifiers: true
     });
   });
 });

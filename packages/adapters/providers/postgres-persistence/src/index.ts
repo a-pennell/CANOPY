@@ -11,6 +11,12 @@ import type {
   PersistenceAdapter
 } from "@canopy/contracts-adapters";
 import type {
+  AdapterAuditRecord,
+  CanonicalObjectRefRecord,
+  JsonValue,
+  ProjectionStateRecord
+} from "@canopy/contracts-database";
+import type {
   CanopyId,
   IsoDateTime,
   ObjectRef
@@ -43,8 +49,18 @@ export interface PostgresObjectSnapshotRow {
   readonly revision: number;
 }
 
+export interface PostgresIdempotencyRow {
+  readonly idempotencyKey: string;
+  readonly refKey: string;
+  readonly requestHash: string;
+}
+
 export interface PostgresPersistencePrototypeTables {
   readonly objectSnapshots: readonly PostgresObjectSnapshotRow[];
+  readonly objectRefs: readonly CanonicalObjectRefRecord[];
+  readonly idempotencyKeys: readonly PostgresIdempotencyRow[];
+  readonly projectionStates: readonly ProjectionStateRecord[];
+  readonly adapterAudits: readonly AdapterAuditRecord[];
 }
 
 export const postgresPersistenceAdapterDescriptor: AdapterDescriptor & {
@@ -94,14 +110,19 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
   readonly descriptor = postgresPersistenceAdapterDescriptor;
   private readonly now: () => IsoDateTime;
   private readonly snapshots = new Map<string, PostgresObjectSnapshotRow>();
-  private readonly idempotencyKeys = new Map<string, string>();
+  private readonly objectRefs = new Map<string, CanonicalObjectRefRecord>();
+  private readonly idempotencyKeys = new Map<string, PostgresIdempotencyRow>();
+  private readonly projectionStates = new Map<CanopyId, ProjectionStateRecord>();
+  private readonly adapterAudits = new Map<CanopyId, AdapterAuditRecord>();
   private transactionSequence = 0;
   private revisionSequence = 0;
+  private auditSequence = 0;
 
   constructor(options: PostgresPersistencePrototypeOptions = {}) {
     this.now = options.now ?? defaultNow;
 
     for (const snapshot of options.seedSnapshots ?? []) {
+      const writtenAt = snapshot.updatedAt ?? this.now();
       const row = this.rowFromWrite(
         {
           snapshot,
@@ -110,6 +131,8 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
         this.nextRevision()
       );
       this.snapshots.set(row.refKey, row);
+      this.upsertObjectRef(snapshot.ref, writtenAt);
+      this.updateProjectionState(row, writtenAt);
     }
   }
 
@@ -128,8 +151,15 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
     query: CanonicalObjectQuery
   ): Promise<AdapterResult<AdapterPage<CanonicalObjectSnapshot>>> {
     const requestedRefs = query.refs?.map(refKey);
+    const scopeRefs = query.scopeRefs?.map(refKey);
     const rows = [...this.snapshots.values()]
       .filter((row) => requestedRefs === undefined || requestedRefs.includes(row.refKey))
+      .filter(
+        (row) =>
+          scopeRefs === undefined ||
+          scopeRefs.includes(row.refKey) ||
+          row.authorityRefs.some((ref) => scopeRefs.includes(refKey(ref)))
+      )
       .filter(
         (row) =>
           query.objectTypes === undefined || query.objectTypes.includes(row.objectType)
@@ -150,7 +180,22 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
   async writeObject(
     write: CanonicalObjectWrite
   ): Promise<AdapterResult<CanonicalObjectSnapshot>> {
+    const startedAt = this.now();
+    if (write.snapshot.objectType !== write.snapshot.ref.type) {
+      const message = "Snapshot objectType must match the canonical object ref type.";
+      this.auditWrite(write, "failed", startedAt, {
+        errors: [message],
+        metadata: { reason: "object-type-mismatch" }
+      });
+      return failure("validation_failed", message, ["snapshot", "objectType"]);
+    }
+
     if (write.authorityRefs.length === 0) {
+      const message = "Postgres persistence writes require authority refs.";
+      this.auditWrite(write, "failed", startedAt, {
+        errors: [message],
+        metadata: { reason: "missing-authority-refs" }
+      });
       return failure("forbidden", "Postgres persistence writes require authority refs.", [
         "authorityRefs"
       ]);
@@ -158,13 +203,31 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
 
     const key = refKey(write.snapshot.ref);
     const existing = this.snapshots.get(key);
+    const requestHash = stableStringify(write);
+    const idempotency = write.idempotencyKey === undefined
+      ? undefined
+      : this.idempotencyKeys.get(write.idempotencyKey);
 
-    if (
-      write.idempotencyKey !== undefined &&
-      this.idempotencyKeys.get(write.idempotencyKey) === key &&
-      existing !== undefined
-    ) {
-      return ok(this.snapshotFromRow(existing));
+    if (idempotency !== undefined) {
+      if (idempotency.refKey === key && idempotency.requestHash === requestHash && existing !== undefined) {
+        this.auditWrite(write, "skipped", startedAt, {
+          metadata: {
+            reason: "idempotent-replay",
+            idempotencyKey: write.idempotencyKey ?? null
+          }
+        });
+        return ok(this.snapshotFromRow(existing));
+      }
+
+      const message = "Idempotency key was already used for a different object write.";
+      this.auditWrite(write, "failed", startedAt, {
+        errors: [message],
+        metadata: {
+          reason: "idempotency-key-conflict",
+          idempotencyKey: write.idempotencyKey ?? null
+        }
+      });
+      return failure("conflict", message, ["idempotencyKey"]);
     }
 
     if (
@@ -172,26 +235,51 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
       existing !== undefined &&
       existing.revision !== write.expectedVersion
     ) {
+      const message = `Expected object revision ${write.expectedVersion} but found ${existing.revision}.`;
+      this.auditWrite(write, "failed", startedAt, {
+        errors: [message],
+        metadata: { reason: "expected-version-conflict" }
+      });
       return failure(
         "conflict",
-        `Expected object revision ${write.expectedVersion} but found ${existing.revision}.`,
+        message,
         ["expectedVersion"]
       );
     }
 
     if (write.expectedVersion !== undefined && existing === undefined && write.expectedVersion !== 0) {
+      const message = "Expected an existing object revision but no object row exists.";
+      this.auditWrite(write, "failed", startedAt, {
+        errors: [message],
+        metadata: { reason: "missing-expected-row" }
+      });
       return failure(
         "conflict",
-        "Expected an existing object revision but no object row exists.",
+        message,
         ["expectedVersion"]
       );
     }
 
     const row = this.rowFromWrite(write, this.nextRevision());
     this.snapshots.set(key, row);
-    if (write.idempotencyKey !== undefined) {
-      this.idempotencyKeys.set(write.idempotencyKey, key);
+    this.upsertObjectRef(row.ref, row.updatedAt ?? startedAt);
+    for (const authorityRef of row.authorityRefs) {
+      this.upsertObjectRef(authorityRef, row.updatedAt ?? startedAt);
     }
+    this.updateProjectionState(row, row.updatedAt ?? startedAt);
+    if (write.idempotencyKey !== undefined) {
+      this.idempotencyKeys.set(write.idempotencyKey, freeze({
+        idempotencyKey: write.idempotencyKey,
+        refKey: key,
+        requestHash
+      }));
+    }
+    this.auditWrite(write, "succeeded", startedAt, {
+      metadata: {
+        idempotencyKey: write.idempotencyKey ?? null,
+        revision: row.revision
+      }
+    });
 
     return ok(this.snapshotFromRow(row));
   }
@@ -232,7 +320,14 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
     return {
       objectSnapshots: [...this.snapshots.values()]
         .sort((left, right) => compareStrings(left.refKey, right.refKey))
-        .map((row) => freeze(row))
+        .map((row) => freeze(row)),
+      objectRefs: sortedById(this.objectRefs.values()).map((record) => freeze(record)),
+      idempotencyKeys: sortedByString(
+        this.idempotencyKeys.values(),
+        (row) => row.idempotencyKey
+      ).map((row) => freeze(row)),
+      projectionStates: sortedById(this.projectionStates.values()).map((record) => freeze(record)),
+      adapterAudits: sortedById(this.adapterAudits.values()).map((record) => freeze(record))
     };
   }
 
@@ -267,6 +362,90 @@ export class PostgresPersistenceAdapter implements PersistenceAdapter {
       updatedAt: row.updatedAt
       }) as CanonicalObjectSnapshot
     );
+  }
+
+  private upsertObjectRef(ref: ObjectRef, updatedAt: IsoDateTime): CanonicalObjectRefRecord {
+    const key = refKey(ref);
+    const existing = this.objectRefs.get(key);
+    const record: CanonicalObjectRefRecord = freeze(
+      withoutUndefined({
+        id: `object-ref.${ref.namespace}.${ref.type}.${ref.id}`,
+        kind: "canonical-object-ref" as const,
+        schemaVersion: 1,
+        createdAt: existing?.createdAt ?? updatedAt,
+        updatedAt,
+        ref: cloneRef(ref),
+        objectId: ref.id,
+        objectType: ref.type,
+        namespace: ref.namespace,
+        lifecycleStatus: ref.lifecycleStatus,
+        source: ref.source,
+        supersedes: ref.supersedes ?? [],
+        relationshipRefs: existing?.relationshipRefs ?? []
+      }) as CanonicalObjectRefRecord
+    );
+    this.objectRefs.set(key, record);
+    return record;
+  }
+
+  private updateProjectionState(
+    row: PostgresObjectSnapshotRow,
+    processedAt: IsoDateTime
+  ): ProjectionStateRecord {
+    const record: ProjectionStateRecord = freeze({
+      id: "projection-state.postgres-persistence.object-snapshots",
+      kind: "projection-state",
+      schemaVersion: 1,
+      createdAt:
+        this.projectionStates.get("projection-state.postgres-persistence.object-snapshots")
+          ?.createdAt ?? processedAt,
+      updatedAt: processedAt,
+      projectionName: "postgres-persistence.object-snapshots",
+      projectionVersion: postgresPersistenceAdapterDescriptor.version,
+      status: "current",
+      checkpoint: {
+        processedAt,
+        cursor: String(row.revision),
+        sequence: row.revision
+      },
+      processedEventCount: row.revision,
+      rebuiltAt: processedAt
+    });
+    this.projectionStates.set(record.id, record);
+    return record;
+  }
+
+  private auditWrite(
+    write: CanonicalObjectWrite,
+    status: AdapterAuditRecord["status"],
+    startedAt: IsoDateTime,
+    details: {
+      readonly errors?: readonly string[];
+      readonly warnings?: readonly string[];
+      readonly metadata?: JsonValue;
+    } = {}
+  ): AdapterAuditRecord {
+    const completedAt = this.now();
+    const record: AdapterAuditRecord = freeze({
+      id: `adapter-audit.postgres-persistence.${++this.auditSequence}`,
+      kind: "adapter-audit",
+      schemaVersion: 1,
+      createdAt: completedAt,
+      adapterName: postgresPersistenceAdapterDescriptor.id,
+      direction: "ingress",
+      operation: "writeObject",
+      status,
+      startedAt,
+      completedAt,
+      targetRef: cloneRef(write.snapshot.ref),
+      eventIds: [],
+      outboxIds: [],
+      warnings: details.warnings ?? [],
+      errors: details.errors ?? [],
+      metadata: details.metadata ?? {}
+    });
+    this.adapterAudits.set(record.id, record);
+    return record;
   }
 
   private nextRevision(): number {
@@ -314,12 +493,41 @@ function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function sortedById<TValue extends { readonly id: string }>(
+  values: Iterable<TValue>
+): readonly TValue[] {
+  return sortedByString(values, (value) => value.id);
+}
+
+function sortedByString<TValue>(
+  values: Iterable<TValue>,
+  value: (entry: TValue) => string
+): readonly TValue[] {
+  return [...values].sort((left, right) => compareStrings(value(left), value(right)));
+}
+
 function cloneRef(ref: ObjectRef): ObjectRef {
   return freeze(ref);
 }
 
 function cloneRecord<TValue extends Readonly<Record<string, unknown>>>(value: TValue): TValue {
   return freeze(value);
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => compareStrings(left, right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
 }
 
 function withoutUndefined<TValue extends Record<string, unknown>>(value: TValue): TValue {

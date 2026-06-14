@@ -68,10 +68,18 @@ describe("first replayable golden fixture", () => {
   it("builds object-page projections from replayed civic memory", () => {
     const result = replayGoldenFixtureManifest(firstReplayableGoldenFixtureManifest, [
       goldenFixtureRefs.decisionUseRight,
+      goldenFixtureRefs.decisionIrrigationWindow,
       goldenFixtureRefs.useRightNorthPasture,
+      goldenFixtureRefs.useRightIrrigationGate,
       goldenFixtureRefs.resourceNorthPasture
     ]);
-    const [decisionPage, useRightPage, resourcePage] = result.projections;
+    const [
+      decisionPage,
+      irrigationDecisionPage,
+      useRightPage,
+      irrigationUseRightPage,
+      resourcePage
+    ] = result.projections;
 
     expect(result.replayedEvents).toHaveLength(
       firstReplayableGoldenFixtureManifest.events.length
@@ -83,8 +91,26 @@ describe("first replayable golden fixture", () => {
     expect(decisionPage?.authorityRefs.map((ref) => ref.id)).toContain(
       goldenFixtureRefs.mandateWatershedSteward.id
     );
+    expect(irrigationDecisionPage?.timelineEvents.map((event) => event.type)).toContain(
+      "governance.decision.recorded"
+    );
+    expect(irrigationDecisionPage?.authorityRefs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([
+        goldenFixtureRefs.mandateWatershedSteward.id,
+        goldenFixtureRefs.policyDroughtProtocol.id
+      ])
+    );
     expect(useRightPage?.timelineEvents.map((event) => event.type)).toContain(
       "stewardship.use_right.granted"
+    );
+    expect(irrigationUseRightPage?.timelineEvents.map((event) => event.type)).toContain(
+      "stewardship.use_right.granted"
+    );
+    expect(irrigationUseRightPage?.relatedRefs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([
+        goldenFixtureRefs.guardianReviewRiparian.id,
+        goldenFixtureRefs.resourceIrrigationGate.id
+      ])
     );
     expect(resourcePage?.relatedRefs.map((ref) => ref.id)).toContain(
       goldenFixtureRefs.useRightNorthPasture.id
@@ -100,6 +126,9 @@ describe("first replayable golden fixture", () => {
     });
     const ledgerEvents = memory.queryEvents({
       eventTypes: ["accounting.ledger_entry.posted"]
+    });
+    const ledgerCorrectionEvents = memory.queryEvents({
+      eventTypes: ["accounting.ledger_entry.reversed"]
     });
     const redactionEvents = memory.queryEvents({
       eventTypes: ["system.redaction.applied"]
@@ -122,6 +151,17 @@ describe("first replayable golden fixture", () => {
     expect(ledgerEvents[0]?.payload).toMatchObject({
       excludesAuthenticationAccountRefIds: [goldenFixtureRefs.accountMiraLogin.id]
     });
+    expect(ledgerCorrectionEvents[0]?.payload).toMatchObject({
+      reversesLedgerEntryRefId: goldenFixtureRefs.ledgerEntryFoodHubDistribution.id,
+      appendOnlyCorrection: true,
+      excludesAuthenticationAccountRefIds: [goldenFixtureRefs.accountMiraLogin.id]
+    });
+    expect(ledgerCorrectionEvents[0]?.supersession).toMatchObject({
+      supersedesEventId: "event.accounting.ledger-entry.posted.food-hub-distribution",
+      replacementObjectRef: {
+        id: goldenFixtureRefs.ledgerEntryFoodHubCorrection.id
+      }
+    });
     expect(redactionEvents[0]?.redaction).toMatchObject({
       originalEventId: "event.evidence.created.sensitive",
       redactionEventId: "event.system.redaction.applied.sensitive-evidence"
@@ -132,6 +172,58 @@ describe("first replayable golden fixture", () => {
     );
     expect(redactionProjection.redaction.redactionEventIds).toContain(
       "event.system.redaction.applied.sensitive-evidence"
+    );
+  });
+
+  it("replays the representative fold-in path through governance, stewardship, and federation shape", () => {
+    const result = replayGoldenFixtureManifest(firstReplayableGoldenFixtureManifest, [
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.agreementFoodHubDistribution,
+      goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+      goldenFixtureRefs.canonicalMapping
+    ]);
+    const [claimPage, resourcePage, agreementPage, ledgerPage, mappingPage] = result.projections;
+
+    expect(claimPage?.timelineEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "claim.contested",
+        "evidence.linked_to_claim",
+        "model.output.generated",
+        "governance.decision.recorded"
+      ])
+    );
+    expect(claimPage?.sourceCapabilities).toEqual(
+      expect.arrayContaining([
+        "claims-evidence",
+        "ecological-modeling",
+        "governance",
+        "stewardship"
+      ])
+    );
+    expect(resourcePage?.timelineEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "ecology.living_system.created",
+        "stewardship.resource.created",
+        "stewardship.use_right.granted",
+        "stewardship.task.completed"
+      ])
+    );
+    expect(agreementPage?.timelineEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "allocation.consent.recorded",
+        "accounting.ledger_entry.posted",
+        "accounting.ledger_entry.reversed"
+      ])
+    );
+    expect(ledgerPage?.timelineEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "accounting.ledger_entry.posted",
+        "accounting.ledger_entry.reversed"
+      ])
+    );
+    expect(mappingPage?.timelineEvents.map((event) => event.type)).toContain(
+      "federation.import.received"
     );
   });
 });

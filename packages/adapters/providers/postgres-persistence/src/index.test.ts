@@ -48,6 +48,18 @@ describe("PostgresPersistenceAdapter prototype", () => {
     expect(adapter.snapshotTables().objectSnapshots[0]?.refKey).toBe(
       "canopy.test:resource:resource.water-commons"
     );
+    expect(adapter.snapshotTables().objectRefs.map((record) => record.ref.id).sort()).toEqual([
+      "mandate.persistence-test",
+      "resource.water-commons"
+    ]);
+    expect(adapter.snapshotTables().projectionStates[0]).toMatchObject({
+      projectionName: "postgres-persistence.object-snapshots",
+      status: "current",
+      checkpoint: { cursor: "1", sequence: 1 }
+    });
+    expect(adapter.snapshotTables().adapterAudits.map((record) => record.status)).toEqual([
+      "succeeded"
+    ]);
 
     const read = await adapter.readObject(resourceRef);
 
@@ -82,6 +94,7 @@ describe("PostgresPersistenceAdapter prototype", () => {
 
     const page = await adapter.queryObjects({
       objectTypes: ["resource"],
+      scopeRefs: [authorityRef],
       lifecycleStatuses: ["retired"],
       updatedAfter: "2026-06-13T10:00:00.000Z",
       page: { limit: 1 }
@@ -117,6 +130,17 @@ describe("PostgresPersistenceAdapter prototype", () => {
     expect(conflict.ok).toBe(false);
     expect(conflict.errors[0]?.code).toBe("conflict");
 
+    const typeMismatch = await adapter.writeObject({
+      snapshot: {
+        ...snapshot(),
+        objectType: "claim"
+      },
+      authorityRefs: [authorityRef]
+    });
+
+    expect(typeMismatch.ok).toBe(false);
+    expect(typeMismatch.errors[0]?.code).toBe("validation_failed");
+
     const updated = await adapter.writeObject({
       snapshot: snapshot({ name: "Changed" }),
       authorityRefs: [authorityRef],
@@ -125,6 +149,46 @@ describe("PostgresPersistenceAdapter prototype", () => {
 
     expect(updated.ok).toBe(true);
     expect(adapter.snapshotTables().objectSnapshots[0]?.revision).toBe(2);
+    expect(adapter.snapshotTables().adapterAudits.map((record) => record.status)).toEqual([
+      "failed",
+      "succeeded",
+      "failed",
+      "failed",
+      "succeeded"
+    ]);
+  });
+
+  it("treats idempotency keys as durable postgres uniqueness rows", async () => {
+    const adapter = createPostgresPersistenceAdapter();
+
+    const first = await adapter.writeObject({
+      snapshot: snapshot(),
+      authorityRefs: [authorityRef],
+      idempotencyKey: "write.once"
+    });
+    const replay = await adapter.writeObject({
+      snapshot: snapshot(),
+      authorityRefs: [authorityRef],
+      idempotencyKey: "write.once"
+    });
+    const changedPayload = await adapter.writeObject({
+      snapshot: snapshot({ name: "Different payload" }),
+      authorityRefs: [authorityRef],
+      idempotencyKey: "write.once"
+    });
+
+    expect(first.ok).toBe(true);
+    expect(replay.ok).toBe(true);
+    expect(changedPayload.ok).toBe(false);
+    expect(changedPayload.errors[0]?.code).toBe("conflict");
+    expect(adapter.snapshotTables().idempotencyKeys).toEqual([
+      {
+        idempotencyKey: "write.once",
+        refKey: "canopy.test:resource:resource.water-commons",
+        requestHash: expect.any(String)
+      }
+    ]);
+    expect(adapter.snapshotTables().objectSnapshots).toHaveLength(1);
   });
 
   it("wraps work in authority-carrying transaction contexts", async () => {

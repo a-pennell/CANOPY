@@ -15,6 +15,8 @@ const claimRef = ref("claim.school-need", "claim");
 const decisionRef = ref("decision.school-need", "decision");
 const mandateRef = ref("mandate.food-commons", "mandate");
 const policyRef = ref("policy.export-foodshed", "policy");
+const resourceRef = ref("resource.cooling-center", "resource");
+const useRightRef = ref("use-right.cooling-center-shelter", "use-right");
 const agreementRef = ref(
   "agreement.data-stewardship.foodshed",
   "agreement",
@@ -103,6 +105,42 @@ describe("canopy shell snapshot", () => {
       objectRef: decisionRef,
       status: "ok"
     });
+    expect(snapshot.surfaces.claimEvidence).toMatchObject({
+      kind: "claim-evidence",
+      counts: {
+        claims: 1,
+        evidence: 1,
+        evidenceLinks: 0,
+        reviews: 0,
+        contests: 0,
+        aiNonAuthorityIndicators: 1
+      }
+    });
+    expect(snapshot.surfaces.claimEvidence.claims[0]).toMatchObject({
+      claimRef,
+      status: "review_required",
+      aiIndicatorEventIds: ["event.model.output.generated.school-need"]
+    });
+    expect(snapshot.surfaces.decisionPacket).toMatchObject({
+      kind: "decision-packet",
+      decisionRef,
+      claimRefs: [claimRef],
+      hasRedactions: false,
+      hasSupersessions: false
+    });
+    expect(snapshot.surfaces.claimEvidence.evidence[0]).toMatchObject({
+      evidenceRef: ref("evidence.model-output.school-need", "evidence"),
+      isAiOrModelOutput: true
+    });
+    expect(snapshot.surfaces.federationExportState).toMatchObject({
+      kind: "federation-export-state",
+      status: "ready",
+      envelopeId:
+        "export-envelope.canopy-export:event.claim.created.school-need|event.federation.export.approved.foodshed|event.governance.decision.recorded.school-need|event.model.output.generated.school-need",
+      dataStewardshipAgreementRefs: [agreementRef],
+      localMappingIds: ["mapping.school-need"],
+      readinessWarnings: []
+    });
     expect(snapshot.projectionReads.map((read) => read.projectionName)).toEqual([
       "object-page",
       "civic-memory",
@@ -171,6 +209,58 @@ describe("canopy shell snapshot", () => {
       projectionName: "object-page",
       targetRef: decisionRef
     });
+  });
+
+  it("exposes resource stewardship as a selected object surface", () => {
+    const snapshot = buildCanopyShellSnapshot({
+      events: stewardshipEvents,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      selectedObjectRef: resourceRef,
+      activeMode: "stewardship"
+    });
+
+    expect(snapshot.availableModes).toEqual([
+      "scope",
+      "objects",
+      "memory",
+      "decisions",
+      "stewardship",
+      "federation"
+    ]);
+    expect(snapshot.commands.map((command) => command.id)).toEqual(
+      expect.arrayContaining(["command.grant-use-right"])
+    );
+    expect(snapshot.resourceStewardship?.resourceRef).toEqual(resourceRef);
+    expect(snapshot.surfaces.resourceStewardship).toMatchObject({
+      kind: "resource-stewardship",
+      resourceRef,
+      title: "Cooling center",
+      resourceKind: "community-space",
+      ecologicalContextIds: ["living-system.heat-response"],
+      counts: {
+        totalEvents: 2,
+        contextEvents: 1,
+        proposedUseRights: 0,
+        grantedUseRights: 1,
+        revokedUseRights: 0
+      }
+    });
+    expect(snapshot.surfaces.resourceStewardship?.useRights).toEqual([
+      expect.objectContaining({
+        useRightRef,
+        state: "granted",
+        holderRef: ref("person.mira", "person"),
+        resourceRef,
+        permissions: ["shelter"],
+        conditions: ["heat emergency"],
+        decisionRefs: [decisionRef],
+        authorityRefs: [mandateRef]
+      })
+    ]);
+    expect(snapshot.surfaces.objectPage?.objectRef).toEqual(resourceRef);
   });
 
   it("exposes folded-source import review as a shell surface", () => {
@@ -294,6 +384,52 @@ const shellEvents = [
     },
     schemaVersion: 1,
     visibility: "federation",
+    dataState: "institutionally_certified"
+  }
+] as const satisfies readonly CanopyEvent[];
+
+const stewardshipEvents = [
+  ...shellEvents,
+  {
+    id: "event.stewardship.resource_context.recorded.cooling-center",
+    type: "stewardship.resource_context.recorded",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: resourceRef,
+    relatedRefs: [],
+    authorityRefs: [mandateRef],
+    orgId,
+    sourceCapability: "stewardship",
+    livingSystemId: "living-system.heat-response",
+    payload: {
+      title: "Cooling center",
+      resourceKind: "community-space",
+      observedAt: "2026-06-13T16:00:00.000Z",
+      context: { risk: "heat" }
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "locally_verified"
+  },
+  {
+    id: "event.stewardship.use_right.granted.cooling-center",
+    type: "stewardship.use_right.granted",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: useRightRef,
+    relatedRefs: [resourceRef, decisionRef, ref("person.mira", "person")],
+    authorityRefs: [mandateRef],
+    orgId,
+    sourceCapability: "stewardship",
+    payload: {
+      holderRefId: "person.mira",
+      resourceRefId: resourceRef.id,
+      decisionRefId: decisionRef.id,
+      permissions: ["shelter"],
+      conditions: ["heat emergency"]
+    },
+    schemaVersion: 1,
+    visibility: "commons",
     dataState: "institutionally_certified"
   }
 ] as const satisfies readonly CanopyEvent[];

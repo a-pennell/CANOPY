@@ -43,7 +43,8 @@ describe("in-memory canonical persistence runtime", () => {
     expect(runtime.queryEvents({ relatedRef: evidenceRef }).items.map((record) => record.eventId)).toEqual([
       event.id
     ]);
-    expect(runtime.counts()).toMatchObject({ objectRefs: 3, events: 1 });
+    expect(runtime.getObjectRef(ref("person.mira", "person"))?.objectId).toBe("person.mira");
+    expect(runtime.counts()).toMatchObject({ objectRefs: 4, events: 1 });
     expect(() =>
       runtime.appendEvent({ ...event, payload: { title: "Changed in place" } })
     ).toThrow(CanonicalPersistenceError);

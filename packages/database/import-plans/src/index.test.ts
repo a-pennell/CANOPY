@@ -187,6 +187,223 @@ describe("folded source import dry runs", () => {
       "publicly exposing protected ecological or cultural locations",
     );
   });
+
+  it("accepts representative folded-source records without leaking provider-shaped canonical types", () => {
+    const commonCredit = dryRunCommonCreditImport(
+      freezeRecords([
+        {
+          sourceObject: "member",
+          id: "cc-member-kai",
+          name: "Kai Chen",
+          memberKind: "person",
+          state: "active",
+        },
+        {
+          sourceObject: "account",
+          id: "cc-account-food-hub",
+          owner: "cc-member-kai",
+          kind: "reserve",
+          authorityRef: "agreement-food-hub-distribution",
+          balance: 0,
+        },
+        {
+          sourceObject: "allocation agreement",
+          id: "agreement-food-hub-distribution",
+          participants: "food hub, watershed commons",
+          scope: "dawn irrigation distribution",
+          status: "active",
+          decisionRef: "decision-irrigation-window",
+        },
+        {
+          sourceObject: "transaction",
+          id: "cc-tx-food-hub-1",
+          from: "cc-account-food-hub",
+          to: "cc-account-commons",
+          amount: 320,
+          postedAt: "2026-01-16T09:00:00.000Z",
+          posted_at: "2026-01-16T09:00:00.000Z",
+          status: "posted",
+          agreementRef: "agreement-food-hub-distribution",
+        },
+      ]),
+    );
+    const icos = dryRunIcosImport(
+      freezeRecords([
+        {
+          sourceObject: "actor",
+          id: "icos-council",
+          actorKind: "organization",
+          actor_kind: "organization",
+          name: "Riverbend Council",
+        },
+        {
+          sourceObject: "role assignment",
+          id: "role-steward-2026",
+          assignee: "person.mira",
+          role: "watershed steward",
+          status: "active",
+          policyRef: "policy-drought-protocol-v2",
+        },
+        {
+          sourceObject: "mandate",
+          id: "mandate-irrigation-window",
+          holder: "person.mira",
+          scope: "drought irrigation windows",
+          status: "active",
+          decisionRef: "decision-irrigation-window",
+        },
+        {
+          sourceObject: "governance item",
+          id: "decision-irrigation-window",
+          itemType: "decision",
+          item_type: "decision",
+          title: "Grant dawn irrigation window",
+          status: "recorded",
+          decisionMethod: "consent",
+        },
+      ]),
+    );
+    const sensemaking = dryRunSensemakingImport(
+      freezeRecords([
+        {
+          sourceObject: "source",
+          id: "riparian-survey",
+          kind: "field survey",
+          title: "Riparian survey",
+          contentHash: "sha256:riparian-survey",
+        },
+        {
+          sourceObject: "claim",
+          id: "riparian-stress",
+          statement: "The south canal corridor shows medium stress.",
+          status: "contested",
+          confidence: "medium",
+        },
+        {
+          sourceObject: "evidence link",
+          id: "survey-qualifies-claim",
+          claim: "riparian-stress",
+          source: "riparian-survey",
+          relation: "qualifies",
+        },
+        {
+          sourceObject: "model",
+          id: "riparian-scenario",
+          modelKind: "scenario",
+          model_kind: "scenario",
+          title: "Dawn window evaporation scenario",
+          status: "reviewed",
+          outputs: ["riparian-risk"],
+          outputClassification: "model_derived",
+        },
+      ]),
+    );
+    const stewardship = dryRunStewardshipImport(
+      freezeRecords([
+        {
+          sourceObject: "place",
+          id: "south-canal",
+          name: "South canal",
+          placeKind: "canal reach",
+          place_kind: "canal reach",
+          boundary: "generalized reach",
+        },
+        {
+          sourceObject: "living system",
+          id: "riparian-corridor",
+          name: "Riparian corridor",
+          livingSystemKind: "riparian corridor",
+          living_system_kind: "riparian corridor",
+          boundary: "generalized reach",
+          sensitivity: "protected",
+          locationTreatment: "generalized",
+        },
+        {
+          sourceObject: "resource",
+          id: "irrigation-gate",
+          name: "South canal irrigation gate",
+          resourceKind: "irrigation gate",
+          resource_kind: "irrigation gate",
+          location: "south-canal",
+        },
+        {
+          sourceObject: "use right",
+          id: "dawn-window",
+          holder: "cc-member-kai",
+          resource: "irrigation-gate",
+          permission: "open_gate.dawn_window",
+          state: "active",
+          mandateRef: "mandate-irrigation-window",
+        },
+      ]),
+    );
+    const results = [commonCredit, icos, sensemaking, stewardship];
+
+    expect(results.map((result) => result.status)).toEqual([
+      "pass",
+      "pass",
+      "pass",
+      "pass",
+    ]);
+    expect(results.flatMap((result) => result.prohibitedOutcomes)).toEqual([]);
+    expect(results.flatMap((result) => result.warnings)).toEqual([]);
+    expect(
+      results.flatMap((result) =>
+        result.mappingCandidates.map((candidate) => candidate.canonicalType),
+      ),
+    ).toEqual([
+      "person",
+      "ledger-account",
+      "agreement",
+      "ledger-entry",
+      "organization",
+      "role",
+      "mandate",
+      "decision",
+      "source",
+      "claim",
+      "evidence",
+      "model",
+      "place",
+      "living-system",
+      "resource",
+      "use-right",
+    ]);
+    expect(
+      results.flatMap((result) =>
+        result.candidateEvents.map((event) => event.payload.sourceProject),
+      ),
+    ).toEqual([
+      "common-credit",
+      "common-credit",
+      "common-credit",
+      "common-credit",
+      "icos",
+      "icos",
+      "icos",
+      "icos",
+      "sensemaking",
+      "sensemaking",
+      "sensemaking",
+      "sensemaking",
+      "stewardship",
+      "stewardship",
+      "stewardship",
+      "stewardship",
+    ]);
+    expect(
+      commonCredit.candidateEvents.find(
+        (event) => event.type === "accounting.ledger_entry.posted",
+      )?.payload.legacyRecord,
+    ).toMatchObject({
+      agreementRef: "agreement-food-hub-distribution",
+    });
+    expect(
+      sensemaking.candidateEvents.find((event) => event.type === "model.created")?.payload,
+    ).toMatchObject({
+      preservesUncertainty: true,
+    });
+  });
 });
 
 function expectCandidateSourceTreatment(

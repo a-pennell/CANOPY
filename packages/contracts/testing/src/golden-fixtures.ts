@@ -189,7 +189,28 @@ export const goldenFixtureRefs = {
   localTerm: ref("local-term.acequia", "source", "icos"),
   canonicalMapping: ref("mapping.acequia.commons", "source", "icos"),
   originalSensitiveEvidenceEvent: ref("event.evidence.created.sensitive", "evidence"),
-  redactionEvent: ref("event.system.redaction.applied", "evidence")
+  redactionEvent: ref("event.system.redaction.applied", "evidence"),
+  personKai: ref("person.kai", "person", "common-credit"),
+  organizationFoodHub: ref("org.riverbend-food-hub", "organization", "common-credit"),
+  ledgerAccountFoodHub: ref("ledger-account.food-hub.reserve", "ledger-account", "common-credit"),
+  ledgerEntryFoodHubDistribution: ref("ledger-entry.food-hub.distribution", "ledger-entry", "common-credit"),
+  ledgerEntryFoodHubCorrection: ref("ledger-entry.food-hub.correction", "ledger-entry", "common-credit"),
+  agreementFoodHubDistribution: ref("agreement.food-hub.distribution", "agreement", "common-credit"),
+  issueIrrigationWindow: ref("issue.irrigation-window", "issue", "icos"),
+  proposalIrrigationWindow: ref("proposal.irrigation-window", "proposal", "icos"),
+  decisionIrrigationWindow: ref("decision.irrigation-window", "decision", "icos"),
+  policyDroughtProtocol: ref("policy.drought-protocol", "policy", "icos"),
+  sourceRiparianSurvey: ref("source.riparian-survey", "source", "sensemaking"),
+  claimRiparianStress: ref("claim.riparian-stress", "claim", "sensemaking"),
+  evidenceRiparianSurvey: ref("evidence.riparian-survey", "evidence", "sensemaking"),
+  modelRiparianScenario: ref("model.riparian-scenario", "model", "sensemaking"),
+  modelOutputRiparianRisk: ref("model-output.riparian-risk", "evidence", "sensemaking"),
+  placeSouthCanal: ref("place.south-canal", "place", "stewardship"),
+  resourceIrrigationGate: ref("resource.irrigation-gate", "resource", "stewardship"),
+  livingSystemRiparianCorridor: ref("living-system.riparian-corridor", "living-system", "stewardship"),
+  useRightIrrigationGate: ref("use-right.irrigation-gate.window", "use-right", "stewardship"),
+  guardianReviewRiparian: ref("guardian-review.riparian-window", "guardian-review", "stewardship"),
+  taskCanalCheck: ref("task.south-canal-check", "task", "stewardship")
 } as const;
 
 const firstReplayableEventTypes = [
@@ -206,10 +227,20 @@ const firstReplayableEventTypes = [
   "governance.issue.created",
   "governance.proposal.created",
   "governance.decision.recorded",
+  "governance.policy.versioned",
   "stewardship.resource.created",
   "stewardship.use_right.granted",
+  "stewardship.task.completed",
+  "ecology.living_system.created",
+  "ecology.guardian.review_requested",
+  "allocation.consent.recorded",
   "accounting.ledger_entry.posted",
+  "accounting.ledger_entry.reversed",
+  "evidence.source.ingested",
+  "claim.contested",
+  "model.created",
   "federation.export.created",
+  "federation.import.received",
   "system.redaction.applied"
 ] as const;
 
@@ -555,6 +586,388 @@ export const firstReplayableGoldenFixtureObjects = [
       canonicalRefId: goldenFixtureRefs.commonsWatershed.id,
       confidence: 0.94
     }
+  },
+  {
+    ref: goldenFixtureRefs.personKai,
+    domain: "identity",
+    objectType: "person",
+    title: "Kai Chen CommonCredit member",
+    linkedRefs: [
+      goldenFixtureRefs.organizationFoodHub,
+      goldenFixtureRefs.ledgerAccountFoodHub
+    ],
+    invariantCaseIds: [
+      "invariant.identity-account-separation",
+      "invariant.ledger-account-auth-account-separation"
+    ],
+    attributes: {
+      displayName: "Kai Chen",
+      sourceMemberId: "cc-member-kai",
+      ledgerAccountsAreNotLoginAccounts: true
+    }
+  },
+  {
+    ref: goldenFixtureRefs.organizationFoodHub,
+    domain: "authority",
+    objectType: "organization",
+    title: "Riverbend Food Hub",
+    linkedRefs: [
+      goldenFixtureRefs.personKai,
+      goldenFixtureRefs.agreementFoodHubDistribution,
+      goldenFixtureRefs.policyDroughtProtocol
+    ],
+    invariantCaseIds: ["invariant.membership-authority-separation"],
+    attributes: {
+      kind: "food_hub",
+      importedFrom: "common-credit",
+      bindingAuthorityRequiresPolicyOrDecision: true
+    }
+  },
+  {
+    ref: goldenFixtureRefs.agreementFoodHubDistribution,
+    domain: "allocation-accounting",
+    objectType: "agreement",
+    title: "Food hub distribution agreement",
+    linkedRefs: [
+      goldenFixtureRefs.organizationFoodHub,
+      goldenFixtureRefs.decisionIrrigationWindow,
+      goldenFixtureRefs.ledgerEntryFoodHubDistribution
+    ],
+    invariantCaseIds: [
+      "invariant.ledger-account-auth-account-separation",
+      "invariant.event-append-rules"
+    ],
+    attributes: {
+      authorizesLedgerEntryRefIds: [
+        goldenFixtureRefs.ledgerEntryFoodHubDistribution.id
+      ],
+      consentRecorded: true,
+      provenancePreserved: true
+    }
+  },
+  {
+    ref: goldenFixtureRefs.ledgerAccountFoodHub,
+    domain: "allocation-accounting",
+    objectType: "ledger-account",
+    title: "Food hub reserve ledger account",
+    linkedRefs: [
+      goldenFixtureRefs.organizationFoodHub,
+      goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+      goldenFixtureRefs.ledgerEntryFoodHubCorrection
+    ],
+    invariantCaseIds: ["invariant.ledger-account-auth-account-separation"],
+    attributes: {
+      accountKind: "ledger",
+      sourceAccountId: "cc-account-food-hub-reserve",
+      acceptsAuthentication: false
+    }
+  },
+  {
+    ref: goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+    domain: "allocation-accounting",
+    objectType: "ledger-entry",
+    title: "Food hub distribution credit entry",
+    linkedRefs: [
+      goldenFixtureRefs.ledgerAccountFoodHub,
+      goldenFixtureRefs.ledgerAccountCommons,
+      goldenFixtureRefs.agreementFoodHubDistribution,
+      goldenFixtureRefs.useRightIrrigationGate
+    ],
+    invariantCaseIds: ["invariant.ledger-account-auth-account-separation"],
+    attributes: {
+      amount: 320,
+      unit: "COMMON_CREDIT",
+      correctedByEventRefId: goldenFixtureRefs.ledgerEntryFoodHubCorrection.id,
+      forbiddenAccountRefIds: [goldenFixtureRefs.accountMiraLogin.id]
+    }
+  },
+  {
+    ref: goldenFixtureRefs.ledgerEntryFoodHubCorrection,
+    domain: "allocation-accounting",
+    objectType: "ledger-entry",
+    title: "Append-only correction for food hub distribution entry",
+    linkedRefs: [
+      goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+      goldenFixtureRefs.ledgerAccountFoodHub,
+      goldenFixtureRefs.agreementFoodHubDistribution
+    ],
+    invariantCaseIds: [
+      "invariant.ledger-account-auth-account-separation",
+      "invariant.event-append-rules"
+    ],
+    attributes: {
+      reversesEntryRefId: goldenFixtureRefs.ledgerEntryFoodHubDistribution.id,
+      appendOnlyCorrection: true
+    }
+  },
+  {
+    ref: goldenFixtureRefs.policyDroughtProtocol,
+    domain: "governance",
+    objectType: "policy-version",
+    title: "Drought response protocol v2",
+    linkedRefs: [
+      goldenFixtureRefs.issueIrrigationWindow,
+      goldenFixtureRefs.decisionIrrigationWindow,
+      goldenFixtureRefs.guardianReviewRiparian
+    ],
+    invariantCaseIds: [
+      "invariant.membership-authority-separation",
+      "invariant.use-right-scope"
+    ],
+    attributes: {
+      policyVersion: "2",
+      requiresGuardianReviewForRiparianWindows: true
+    }
+  },
+  {
+    ref: goldenFixtureRefs.issueIrrigationWindow,
+    domain: "governance",
+    objectType: "issue",
+    title: "Irrigation timing under riparian stress",
+    linkedRefs: [
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.resourceIrrigationGate
+    ],
+    invariantCaseIds: [
+      "invariant.membership-authority-separation",
+      "invariant.ai-non-authority"
+    ],
+    attributes: {
+      sourceIssueId: "icos-issue-irrigation-window",
+      unresolvedObjectionsPreserved: true
+    }
+  },
+  {
+    ref: goldenFixtureRefs.proposalIrrigationWindow,
+    domain: "governance",
+    objectType: "proposal",
+    title: "Open south canal gate during dawn window",
+    linkedRefs: [
+      goldenFixtureRefs.issueIrrigationWindow,
+      goldenFixtureRefs.useRightIrrigationGate,
+      goldenFixtureRefs.guardianReviewRiparian
+    ],
+    invariantCaseIds: ["invariant.use-right-scope"],
+    attributes: {
+      decisionMethod: "consent_with_guardian_review",
+      parentIssueRefId: goldenFixtureRefs.issueIrrigationWindow.id
+    }
+  },
+  {
+    ref: goldenFixtureRefs.decisionIrrigationWindow,
+    domain: "governance",
+    objectType: "decision",
+    title: "Decision granting dawn irrigation window",
+    linkedRefs: [
+      goldenFixtureRefs.proposalIrrigationWindow,
+      goldenFixtureRefs.policyDroughtProtocol,
+      goldenFixtureRefs.guardianReviewRiparian,
+      goldenFixtureRefs.agreementFoodHubDistribution
+    ],
+    invariantCaseIds: [
+      "invariant.membership-authority-separation",
+      "invariant.ai-non-authority",
+      "invariant.use-right-scope"
+    ],
+    attributes: {
+      decidedByRefIds: [
+        goldenFixtureRefs.mandateWatershedSteward.id,
+        goldenFixtureRefs.policyDroughtProtocol.id
+      ],
+      machineOutputAuthorityRefIds: [],
+      unresolvedObjectionRefIds: []
+    }
+  },
+  {
+    ref: goldenFixtureRefs.sourceRiparianSurvey,
+    domain: "claims-evidence",
+    objectType: "source",
+    title: "Riparian corridor survey source",
+    linkedRefs: [
+      goldenFixtureRefs.evidenceRiparianSurvey,
+      goldenFixtureRefs.claimRiparianStress
+    ],
+    invariantCaseIds: ["invariant.ai-non-authority"],
+    attributes: {
+      sourceKind: "field_survey",
+      contentHash: "sha256:riparian-survey",
+      dataStewardshipAgreementRefId: goldenFixtureRefs.dataStewardshipAgreement.id
+    }
+  },
+  {
+    ref: goldenFixtureRefs.claimRiparianStress,
+    domain: "claims-evidence",
+    objectType: "claim",
+    title: "Riparian corridor stress claim",
+    linkedRefs: [
+      goldenFixtureRefs.evidenceRiparianSurvey,
+      goldenFixtureRefs.modelOutputRiparianRisk,
+      goldenFixtureRefs.issueIrrigationWindow
+    ],
+    invariantCaseIds: ["invariant.ai-non-authority"],
+    attributes: {
+      claimStatus: "contested",
+      confidence: "medium",
+      acceptedWithoutHumanReview: false
+    }
+  },
+  {
+    ref: goldenFixtureRefs.evidenceRiparianSurvey,
+    domain: "claims-evidence",
+    objectType: "evidence",
+    title: "Riparian survey evidence link",
+    linkedRefs: [
+      goldenFixtureRefs.sourceRiparianSurvey,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    invariantCaseIds: ["invariant.ai-non-authority"],
+    attributes: {
+      relation: "qualifies",
+      preservesUncertainty: true,
+      sensitiveLocationTreatment: "generalized"
+    }
+  },
+  {
+    ref: goldenFixtureRefs.modelRiparianScenario,
+    domain: "ecology",
+    objectType: "model",
+    title: "Riparian irrigation scenario model",
+    linkedRefs: [
+      goldenFixtureRefs.modelOutputRiparianRisk,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    invariantCaseIds: ["invariant.ai-non-authority"],
+    attributes: {
+      modelKind: "scenario",
+      assumptionRefIds: ["assumption.dawn-window-lower-evaporation"],
+      reviewedByRefId: goldenFixtureRefs.guardianReviewRiparian.id
+    }
+  },
+  {
+    ref: goldenFixtureRefs.modelOutputRiparianRisk,
+    domain: "claims-evidence",
+    objectType: "model-output",
+    title: "Riparian risk model output",
+    linkedRefs: [
+      goldenFixtureRefs.modelRiparianScenario,
+      goldenFixtureRefs.claimRiparianStress
+    ],
+    invariantCaseIds: ["invariant.ai-non-authority"],
+    attributes: {
+      dataState: "model_derived",
+      canAuthorizeBindingAction: false
+    }
+  },
+  {
+    ref: goldenFixtureRefs.placeSouthCanal,
+    domain: "stewardship",
+    objectType: "place",
+    title: "South canal place",
+    linkedRefs: [
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    invariantCaseIds: ["invariant.use-right-scope"],
+    attributes: {
+      placeKind: "canal_reach",
+      boundaryTreatment: "generalized"
+    }
+  },
+  {
+    ref: goldenFixtureRefs.resourceIrrigationGate,
+    domain: "stewardship",
+    objectType: "resource",
+    title: "South canal irrigation gate",
+    linkedRefs: [
+      goldenFixtureRefs.placeSouthCanal,
+      goldenFixtureRefs.useRightIrrigationGate,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    invariantCaseIds: ["invariant.use-right-scope"],
+    attributes: {
+      resourceKind: "irrigation_gate",
+      ecologicalContextRefId: goldenFixtureRefs.livingSystemRiparianCorridor.id
+    }
+  },
+  {
+    ref: goldenFixtureRefs.livingSystemRiparianCorridor,
+    domain: "ecology",
+    objectType: "living-system",
+    title: "South canal riparian corridor",
+    linkedRefs: [
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.guardianReviewRiparian
+    ],
+    invariantCaseIds: [
+      "invariant.use-right-scope",
+      "invariant.ai-non-authority"
+    ],
+    attributes: {
+      livingSystemKind: "riparian_corridor",
+      protectedLocationTreatment: "generalized",
+      guardianReviewRequired: true
+    }
+  },
+  {
+    ref: goldenFixtureRefs.guardianReviewRiparian,
+    domain: "stewardship",
+    objectType: "guardian-review",
+    title: "Riparian guardian review",
+    linkedRefs: [
+      goldenFixtureRefs.livingSystemRiparianCorridor,
+      goldenFixtureRefs.proposalIrrigationWindow,
+      goldenFixtureRefs.policyDroughtProtocol
+    ],
+    invariantCaseIds: ["invariant.use-right-scope"],
+    attributes: {
+      disposition: "approved_with_conditions",
+      conditions: ["generalized location", "dawn window only"]
+    }
+  },
+  {
+    ref: goldenFixtureRefs.useRightIrrigationGate,
+    domain: "stewardship",
+    objectType: "use-right",
+    title: "Dawn irrigation gate use right",
+    linkedRefs: [
+      goldenFixtureRefs.personKai,
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.decisionIrrigationWindow,
+      goldenFixtureRefs.guardianReviewRiparian
+    ],
+    invariantCaseIds: ["invariant.use-right-scope"],
+    attributes: {
+      holderRefId: goldenFixtureRefs.personKai.id,
+      resourceRefId: goldenFixtureRefs.resourceIrrigationGate.id,
+      permissions: ["open_gate.dawn_window"],
+      conditions: ["pause if threshold breached"],
+      revocable: true,
+      reviewPathRefId: goldenFixtureRefs.guardianReviewRiparian.id,
+      authorityRefIds: [
+        goldenFixtureRefs.mandateWatershedSteward.id,
+        goldenFixtureRefs.decisionIrrigationWindow.id
+      ]
+    }
+  },
+  {
+    ref: goldenFixtureRefs.taskCanalCheck,
+    domain: "stewardship",
+    objectType: "task",
+    title: "South canal post-window check",
+    linkedRefs: [
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.useRightIrrigationGate,
+      goldenFixtureRefs.claimRiparianStress
+    ],
+    invariantCaseIds: ["invariant.use-right-scope"],
+    attributes: {
+      activityType: "inspection",
+      status: "completed",
+      doesNotCertifyEcologicalImprovement: true
+    }
   }
 ] as const satisfies readonly GoldenFixtureObject[];
 
@@ -827,6 +1240,461 @@ export const firstReplayableGoldenFixtureEvents = [
     dataState: "institutionally_certified"
   },
   {
+    id: "event.evidence.source.ingested.riparian-survey",
+    type: "evidence.source.ingested",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.sourceRiparianSurvey,
+    relatedRefs: [
+      goldenFixtureRefs.evidenceRiparianSurvey,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.dataStewardshipAgreement
+    ],
+    authorityRefs: [goldenFixtureRefs.dataStewardshipAgreement],
+    sourceCapability: "claims-evidence",
+    payload: {
+      sourceKind: "field_survey",
+      contentHash: "sha256:riparian-survey",
+      dataStewardshipAgreementRef: goldenFixtureRefs.dataStewardshipAgreement.id
+    },
+    schemaVersion: 1,
+    visibility: "guardian_restricted",
+    dataState: "locally_verified",
+    contentHash: "sha256:riparian-survey"
+  },
+  {
+    id: "event.claim.contested.riparian-stress",
+    type: "claim.contested",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personKai,
+    objectRef: goldenFixtureRefs.claimRiparianStress,
+    relatedRefs: [
+      goldenFixtureRefs.evidenceRiparianSurvey,
+      goldenFixtureRefs.modelOutputRiparianRisk,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    authorityRefs: [],
+    sourceCapability: "claims-evidence",
+    payload: {
+      status: "contested",
+      confidence: "medium",
+      preservesUncertainty: true,
+      acceptedWithoutHumanReview: false
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "contested"
+  },
+  {
+    id: "event.evidence.linked_to_claim.riparian-survey",
+    type: "evidence.linked_to_claim",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.evidenceRiparianSurvey,
+    relatedRefs: [
+      goldenFixtureRefs.sourceRiparianSurvey,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    authorityRefs: [goldenFixtureRefs.dataStewardshipAgreement],
+    sourceCapability: "claims-evidence",
+    payload: {
+      claimRefId: goldenFixtureRefs.claimRiparianStress.id,
+      sourceRefId: goldenFixtureRefs.sourceRiparianSurvey.id,
+      relation: "qualifies",
+      locationTreatment: "generalized"
+    },
+    schemaVersion: 1,
+    visibility: "guardian_restricted",
+    dataState: "locally_verified"
+  },
+  {
+    id: "event.model.created.riparian-scenario",
+    type: "model.created",
+    occurredAt: fixtureTimestamp,
+    systemActor: "ai_assistant",
+    objectRef: goldenFixtureRefs.modelRiparianScenario,
+    relatedRefs: [
+      goldenFixtureRefs.sourceRiparianSurvey,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    authorityRefs: [],
+    sourceCapability: "ecological-modeling",
+    payload: {
+      modelKind: "scenario",
+      assumptionRefIds: ["assumption.dawn-window-lower-evaporation"],
+      status: "draft"
+    },
+    schemaVersion: 1,
+    visibility: "organization",
+    dataState: "model_derived"
+  },
+  {
+    id: "event.model.output.generated.riparian-risk",
+    type: "model.output.generated",
+    occurredAt: fixtureTimestamp,
+    systemActor: "ai_assistant",
+    objectRef: goldenFixtureRefs.modelOutputRiparianRisk,
+    relatedRefs: [
+      goldenFixtureRefs.modelRiparianScenario,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.livingSystemRiparianCorridor
+    ],
+    authorityRefs: [],
+    sourceCapability: "ecological-modeling",
+    payload: {
+      dataState: "model_derived",
+      outputClassification: "model_derived",
+      canAuthorizeBindingAction: false
+    },
+    schemaVersion: 1,
+    visibility: "organization",
+    dataState: "model_derived"
+  },
+  {
+    id: "event.governance.issue.created.irrigation-window",
+    type: "governance.issue.created",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.issueIrrigationWindow,
+    relatedRefs: [
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.policyDroughtProtocol
+    ],
+    authorityRefs: [],
+    sourceCapability: "governance",
+    payload: {
+      issueKind: "drought_protocol_window",
+      sourceProject: "icos",
+      unresolvedObjectionsPreserved: true
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "locally_verified"
+  },
+  {
+    id: "event.governance.proposal.created.irrigation-window",
+    type: "governance.proposal.created",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.proposalIrrigationWindow,
+    relatedRefs: [
+      goldenFixtureRefs.issueIrrigationWindow,
+      goldenFixtureRefs.useRightIrrigationGate,
+      goldenFixtureRefs.guardianReviewRiparian
+    ],
+    authorityRefs: [],
+    sourceCapability: "governance",
+    payload: {
+      proposedUseRightRefId: goldenFixtureRefs.useRightIrrigationGate.id,
+      parentIssueRefId: goldenFixtureRefs.issueIrrigationWindow.id
+    },
+    schemaVersion: 1,
+    visibility: "public",
+    dataState: "locally_verified"
+  },
+  {
+    id: "event.governance.policy.versioned.drought-protocol",
+    type: "governance.policy.versioned",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.policyDroughtProtocol,
+    relatedRefs: [
+      goldenFixtureRefs.issueIrrigationWindow,
+      goldenFixtureRefs.proposalIrrigationWindow,
+      goldenFixtureRefs.guardianReviewRiparian
+    ],
+    authorityRefs: [goldenFixtureRefs.mandateWatershedSteward],
+    sourceCapability: "governance",
+    payload: {
+      policyVersion: "2",
+      requiresGuardianReviewForRiparianWindows: true
+    },
+    schemaVersion: 1,
+    visibility: "public",
+    dataState: "institutionally_certified"
+  },
+  {
+    id: "event.ecology.living-system.created.riparian-corridor",
+    type: "ecology.living_system.created",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.livingSystemRiparianCorridor,
+    relatedRefs: [
+      goldenFixtureRefs.placeSouthCanal,
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.claimRiparianStress
+    ],
+    authorityRefs: [goldenFixtureRefs.policyDroughtProtocol],
+    sourceCapability: "ecological-modeling",
+    payload: {
+      livingSystemKind: "riparian_corridor",
+      protectedLocationTreatment: "generalized",
+      guardianReviewRequired: true
+    },
+    schemaVersion: 1,
+    visibility: "guardian_restricted",
+    dataState: "locally_verified",
+    livingSystemId: goldenFixtureRefs.livingSystemRiparianCorridor.id
+  },
+  {
+    id: "event.stewardship.resource.created.irrigation-gate",
+    type: "stewardship.resource.created",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.resourceIrrigationGate,
+    relatedRefs: [
+      goldenFixtureRefs.placeSouthCanal,
+      goldenFixtureRefs.livingSystemRiparianCorridor,
+      goldenFixtureRefs.useRightIrrigationGate
+    ],
+    authorityRefs: [goldenFixtureRefs.mandateWatershedSteward],
+    sourceCapability: "stewardship",
+    payload: {
+      title: "South canal irrigation gate",
+      resourceKind: "irrigation_gate",
+      ecologicalContextRefId: goldenFixtureRefs.livingSystemRiparianCorridor.id
+    },
+    schemaVersion: 1,
+    visibility: "public",
+    dataState: "locally_verified",
+    livingSystemId: goldenFixtureRefs.livingSystemRiparianCorridor.id
+  },
+  {
+    id: "event.ecology.guardian.review-requested.riparian-window",
+    type: "ecology.guardian.review_requested",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.guardianReviewRiparian,
+    relatedRefs: [
+      goldenFixtureRefs.proposalIrrigationWindow,
+      goldenFixtureRefs.livingSystemRiparianCorridor,
+      goldenFixtureRefs.useRightIrrigationGate
+    ],
+    authorityRefs: [
+      goldenFixtureRefs.policyDroughtProtocol,
+      goldenFixtureRefs.mandateWatershedSteward
+    ],
+    sourceCapability: "stewardship",
+    payload: {
+      disposition: "approved_with_conditions",
+      conditions: ["generalized location", "dawn window only"]
+    },
+    schemaVersion: 1,
+    visibility: "guardian_restricted",
+    dataState: "expert_reviewed",
+    livingSystemId: goldenFixtureRefs.livingSystemRiparianCorridor.id
+  },
+  {
+    id: "event.governance.decision.recorded.irrigation-window",
+    type: "governance.decision.recorded",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.decisionIrrigationWindow,
+    relatedRefs: [
+      goldenFixtureRefs.proposalIrrigationWindow,
+      goldenFixtureRefs.claimRiparianStress,
+      goldenFixtureRefs.guardianReviewRiparian,
+      goldenFixtureRefs.modelOutputRiparianRisk
+    ],
+    authorityRefs: [
+      goldenFixtureRefs.mandateWatershedSteward,
+      goldenFixtureRefs.policyDroughtProtocol
+    ],
+    sourceCapability: "governance",
+    payload: {
+      machineOutputAuthorityRefIds: [],
+      unresolvedObjectionRefIds: [],
+      guardianReviewRefId: goldenFixtureRefs.guardianReviewRiparian.id
+    },
+    schemaVersion: 1,
+    visibility: "public",
+    dataState: "institutionally_certified"
+  },
+  {
+    id: "event.stewardship.use-right.granted.irrigation-window",
+    type: "stewardship.use_right.granted",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.useRightIrrigationGate,
+    relatedRefs: [
+      goldenFixtureRefs.personKai,
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.guardianReviewRiparian,
+      goldenFixtureRefs.claimRiparianStress
+    ],
+    authorityRefs: [
+      goldenFixtureRefs.mandateWatershedSteward,
+      goldenFixtureRefs.decisionIrrigationWindow
+    ],
+    sourceCapability: "stewardship",
+    payload: {
+      holderRefId: goldenFixtureRefs.personKai.id,
+      resourceRefId: goldenFixtureRefs.resourceIrrigationGate.id,
+      decisionRefId: goldenFixtureRefs.decisionIrrigationWindow.id,
+      permissions: ["open_gate.dawn_window"],
+      conditions: ["pause if threshold breached"],
+      term: {
+        startsAt: "2026-01-16T05:00:00.000Z",
+        endsAt: "2026-01-16T08:00:00.000Z"
+      },
+      review: {
+        reviewPathRefId: goldenFixtureRefs.guardianReviewRiparian.id,
+        reviewAt: fixtureTimestamp
+      },
+      revocation: {
+        revocable: true,
+        revocationPathRefId: goldenFixtureRefs.guardianReviewRiparian.id,
+        revocationConditions: ["threshold breach", "guardian recall"]
+      }
+    },
+    schemaVersion: 1,
+    visibility: "public",
+    dataState: "institutionally_certified",
+    livingSystemId: goldenFixtureRefs.livingSystemRiparianCorridor.id
+  },
+  {
+    id: "event.stewardship.task.completed.south-canal-check",
+    type: "stewardship.task.completed",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personKai,
+    objectRef: goldenFixtureRefs.taskCanalCheck,
+    relatedRefs: [
+      goldenFixtureRefs.resourceIrrigationGate,
+      goldenFixtureRefs.useRightIrrigationGate,
+      goldenFixtureRefs.claimRiparianStress
+    ],
+    authorityRefs: [goldenFixtureRefs.decisionIrrigationWindow],
+    sourceCapability: "stewardship",
+    payload: {
+      activityType: "inspection",
+      status: "completed",
+      doesNotCertifyEcologicalImprovement: true
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "locally_verified",
+    livingSystemId: goldenFixtureRefs.livingSystemRiparianCorridor.id
+  },
+  {
+    id: "event.allocation.consent.recorded.food-hub-distribution",
+    type: "allocation.consent.recorded",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personKai,
+    objectRef: goldenFixtureRefs.agreementFoodHubDistribution,
+    relatedRefs: [
+      goldenFixtureRefs.organizationFoodHub,
+      goldenFixtureRefs.ledgerAccountFoodHub,
+      goldenFixtureRefs.useRightIrrigationGate
+    ],
+    authorityRefs: [goldenFixtureRefs.decisionIrrigationWindow],
+    sourceCapability: "allocation-accounting",
+    payload: {
+      participants: [
+        goldenFixtureRefs.organizationFoodHub.id,
+        goldenFixtureRefs.commonsWatershed.id
+      ],
+      authorizesLedgerEntryRefIds: [
+        goldenFixtureRefs.ledgerEntryFoodHubDistribution.id
+      ]
+    },
+    schemaVersion: 1,
+    visibility: "organization",
+    dataState: "institutionally_certified"
+  },
+  {
+    id: "event.accounting.ledger-entry.posted.food-hub-distribution",
+    type: "accounting.ledger_entry.posted",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personKai,
+    objectRef: goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+    relatedRefs: [
+      goldenFixtureRefs.ledgerAccountFoodHub,
+      goldenFixtureRefs.ledgerAccountCommons,
+      goldenFixtureRefs.agreementFoodHubDistribution,
+      goldenFixtureRefs.useRightIrrigationGate
+    ],
+    authorityRefs: [
+      goldenFixtureRefs.decisionIrrigationWindow,
+      goldenFixtureRefs.agreementFoodHubDistribution
+    ],
+    sourceCapability: "allocation-accounting",
+    payload: {
+      lineAccountRefIds: [
+        goldenFixtureRefs.ledgerAccountFoodHub.id,
+        goldenFixtureRefs.ledgerAccountCommons.id
+      ],
+      amount: 320,
+      unit: "COMMON_CREDIT",
+      excludesAuthenticationAccountRefIds: [goldenFixtureRefs.accountMiraLogin.id]
+    },
+    schemaVersion: 1,
+    visibility: "organization",
+    dataState: "institutionally_certified"
+  },
+  {
+    id: "event.accounting.ledger-entry.reversed.food-hub-correction",
+    type: "accounting.ledger_entry.reversed",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personKai,
+    objectRef: goldenFixtureRefs.ledgerEntryFoodHubCorrection,
+    relatedRefs: [
+      goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+      goldenFixtureRefs.ledgerAccountFoodHub,
+      goldenFixtureRefs.agreementFoodHubDistribution
+    ],
+    authorityRefs: [
+      goldenFixtureRefs.decisionIrrigationWindow,
+      goldenFixtureRefs.agreementFoodHubDistribution
+    ],
+    sourceCapability: "allocation-accounting",
+    payload: {
+      reversesLedgerEntryRefId: goldenFixtureRefs.ledgerEntryFoodHubDistribution.id,
+      appendOnlyCorrection: true,
+      excludesAuthenticationAccountRefIds: [goldenFixtureRefs.accountMiraLogin.id]
+    },
+    schemaVersion: 1,
+    visibility: "organization",
+    dataState: "institutionally_certified",
+    supersedesEventId: "event.accounting.ledger-entry.posted.food-hub-distribution",
+    supersession: {
+      supersedesEventId: "event.accounting.ledger-entry.posted.food-hub-distribution",
+      supersededAt: fixtureTimestamp,
+      reason: "source_correction_imported_append_only",
+      replacementObjectRef: goldenFixtureRefs.ledgerEntryFoodHubCorrection,
+      authorityRefs: [
+        goldenFixtureRefs.decisionIrrigationWindow,
+        goldenFixtureRefs.agreementFoodHubDistribution
+      ]
+    }
+  },
+  {
+    id: "event.federation.import.received.icos-irrigation-window",
+    type: "federation.import.received",
+    occurredAt: fixtureTimestamp,
+    actorRef: goldenFixtureRefs.personMira,
+    objectRef: goldenFixtureRefs.canonicalMapping,
+    relatedRefs: [
+      goldenFixtureRefs.localTerm,
+      goldenFixtureRefs.issueIrrigationWindow,
+      goldenFixtureRefs.proposalIrrigationWindow,
+      goldenFixtureRefs.decisionIrrigationWindow
+    ],
+    authorityRefs: [goldenFixtureRefs.federationRule],
+    sourceCapability: "federation",
+    payload: {
+      sourceProject: "icos",
+      localTermRefId: goldenFixtureRefs.localTerm.id,
+      canonicalMappingRefId: goldenFixtureRefs.canonicalMapping.id,
+      preservesLocalIdentifiers: true
+    },
+    schemaVersion: 1,
+    visibility: "federation",
+    dataState: "locally_verified"
+  },
+  {
     id: "event.federation.export.created.first-commons",
     type: "federation.export.created",
     occurredAt: fixtureTimestamp,
@@ -924,7 +1792,8 @@ export const firstReplayableGoldenFixtureManifest = {
       objectTypes: ["person", "account"],
       objectRefs: [
         goldenFixtureRefs.personMira,
-        goldenFixtureRefs.accountMiraLogin
+        goldenFixtureRefs.accountMiraLogin,
+        goldenFixtureRefs.personKai
       ],
       eventTypes: ["identity.person.created", "identity.account.linked"],
       fixtureFiles: [
@@ -941,6 +1810,7 @@ export const firstReplayableGoldenFixtureManifest = {
       objectTypes: ["organization", "membership", "role", "mandate"],
       objectRefs: [
         goldenFixtureRefs.organizationWatershed,
+        goldenFixtureRefs.organizationFoodHub,
         goldenFixtureRefs.membershipMiraWatershed,
         goldenFixtureRefs.roleWatershedSteward,
         goldenFixtureRefs.mandateWatershedSteward
@@ -961,14 +1831,20 @@ export const firstReplayableGoldenFixtureManifest = {
     },
     {
       domain: "claims-evidence",
-      objectTypes: ["claim", "evidence", "model-output"],
+      objectTypes: ["claim", "evidence", "model-output", "source"],
       objectRefs: [
         goldenFixtureRefs.claimFlowNeed,
+        goldenFixtureRefs.claimRiparianStress,
         goldenFixtureRefs.evidenceFlowGauge,
-        goldenFixtureRefs.modelOutputFlowRisk
+        goldenFixtureRefs.evidenceRiparianSurvey,
+        goldenFixtureRefs.modelOutputFlowRisk,
+        goldenFixtureRefs.modelOutputRiparianRisk,
+        goldenFixtureRefs.sourceRiparianSurvey
       ],
       eventTypes: [
         "claim.created",
+        "claim.contested",
+        "evidence.source.ingested",
         "evidence.created",
         "evidence.linked_to_claim",
         "model.output.generated"
@@ -983,16 +1859,21 @@ export const firstReplayableGoldenFixtureManifest = {
     },
     {
       domain: "governance",
-      objectTypes: ["issue", "proposal", "decision"],
+      objectTypes: ["issue", "proposal", "decision", "policy-version"],
       objectRefs: [
         goldenFixtureRefs.issueUseRight,
+        goldenFixtureRefs.issueIrrigationWindow,
         goldenFixtureRefs.proposalUseRight,
-        goldenFixtureRefs.decisionUseRight
+        goldenFixtureRefs.proposalIrrigationWindow,
+        goldenFixtureRefs.decisionUseRight,
+        goldenFixtureRefs.decisionIrrigationWindow,
+        goldenFixtureRefs.policyDroughtProtocol
       ],
       eventTypes: [
         "governance.issue.created",
         "governance.proposal.created",
-        "governance.decision.recorded"
+        "governance.decision.recorded",
+        "governance.policy.versioned"
       ],
       fixtureFiles: [
         {
@@ -1004,16 +1885,31 @@ export const firstReplayableGoldenFixtureManifest = {
     },
     {
       domain: "stewardship",
-      objectTypes: ["commons", "resource", "use-right", "access-rule"],
+      objectTypes: [
+        "commons",
+        "place",
+        "resource",
+        "use-right",
+        "access-rule",
+        "guardian-review",
+        "task"
+      ],
       objectRefs: [
         goldenFixtureRefs.commonsWatershed,
+        goldenFixtureRefs.placeSouthCanal,
         goldenFixtureRefs.resourceNorthPasture,
+        goldenFixtureRefs.resourceIrrigationGate,
         goldenFixtureRefs.useRightNorthPasture,
-        goldenFixtureRefs.accessRuleUseRight
+        goldenFixtureRefs.useRightIrrigationGate,
+        goldenFixtureRefs.accessRuleUseRight,
+        goldenFixtureRefs.guardianReviewRiparian,
+        goldenFixtureRefs.taskCanalCheck
       ],
       eventTypes: [
         "stewardship.resource.created",
-        "stewardship.use_right.granted"
+        "stewardship.use_right.granted",
+        "stewardship.task.completed",
+        "ecology.guardian.review_requested"
       ],
       fixtureFiles: [
         {
@@ -1025,14 +1921,22 @@ export const firstReplayableGoldenFixtureManifest = {
     },
     {
       domain: "allocation-accounting",
-      objectTypes: ["allocation", "ledger-account", "ledger-entry"],
+      objectTypes: ["allocation", "ledger-account", "ledger-entry", "agreement"],
       objectRefs: [
         goldenFixtureRefs.allocationStewardship,
         goldenFixtureRefs.ledgerAccountCommons,
         goldenFixtureRefs.ledgerAccountStewardship,
-        goldenFixtureRefs.ledgerEntryAllocation
+        goldenFixtureRefs.ledgerAccountFoodHub,
+        goldenFixtureRefs.ledgerEntryAllocation,
+        goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+        goldenFixtureRefs.ledgerEntryFoodHubCorrection,
+        goldenFixtureRefs.agreementFoodHubDistribution
       ],
-      eventTypes: ["accounting.ledger_entry.posted"],
+      eventTypes: [
+        "allocation.consent.recorded",
+        "accounting.ledger_entry.posted",
+        "accounting.ledger_entry.reversed"
+      ],
       fixtureFiles: [
         {
           path: "golden/first-commons/allocation-accounting.json",
@@ -1046,9 +1950,15 @@ export const firstReplayableGoldenFixtureManifest = {
       objectTypes: ["living-system", "model"],
       objectRefs: [
         goldenFixtureRefs.livingSystemRiverbend,
-        goldenFixtureRefs.modelFlowForecast
+        goldenFixtureRefs.livingSystemRiparianCorridor,
+        goldenFixtureRefs.modelFlowForecast,
+        goldenFixtureRefs.modelRiparianScenario
       ],
-      eventTypes: ["model.output.generated"],
+      eventTypes: [
+        "ecology.living_system.created",
+        "model.created",
+        "model.output.generated"
+      ],
       fixtureFiles: [
         {
           path: "golden/first-commons/ecology.json",
@@ -1081,7 +1991,7 @@ export const firstReplayableGoldenFixtureManifest = {
         goldenFixtureRefs.exportEnvelope,
         goldenFixtureRefs.dataStewardshipAgreement
       ],
-      eventTypes: ["federation.export.created"],
+      eventTypes: ["federation.export.created", "federation.import.received"],
       fixtureFiles: [
         {
           path: "golden/first-commons/export-envelope.json",
@@ -1199,6 +2109,90 @@ export const firstReplayableGoldenFixtureManifest = {
       requiredEventTypes: [
         "model.output.generated",
         "governance.decision.recorded"
+      ]
+    },
+    {
+      id: "expectation.first-replay.common-credit-fold-in",
+      title: "CommonCredit fold-in keeps agreements and ledger corrections canonical",
+      domain: "allocation-accounting",
+      invariantCaseIds: [
+        "invariant.ledger-account-auth-account-separation",
+        "invariant.event-append-rules"
+      ],
+      requiredObjectRefs: [
+        goldenFixtureRefs.agreementFoodHubDistribution,
+        goldenFixtureRefs.ledgerAccountFoodHub,
+        goldenFixtureRefs.ledgerEntryFoodHubDistribution,
+        goldenFixtureRefs.ledgerEntryFoodHubCorrection
+      ],
+      requiredEventTypes: [
+        "allocation.consent.recorded",
+        "accounting.ledger_entry.posted",
+        "accounting.ledger_entry.reversed"
+      ]
+    },
+    {
+      id: "expectation.first-replay.icos-governance-fold-in",
+      title: "ICOS fold-in preserves governance parentage and federation mapping",
+      domain: "governance",
+      invariantCaseIds: [
+        "invariant.membership-authority-separation",
+        "invariant.use-right-scope"
+      ],
+      requiredObjectRefs: [
+        goldenFixtureRefs.issueIrrigationWindow,
+        goldenFixtureRefs.proposalIrrigationWindow,
+        goldenFixtureRefs.decisionIrrigationWindow,
+        goldenFixtureRefs.policyDroughtProtocol,
+        goldenFixtureRefs.canonicalMapping
+      ],
+      requiredEventTypes: [
+        "governance.issue.created",
+        "governance.proposal.created",
+        "governance.policy.versioned",
+        "governance.decision.recorded",
+        "federation.import.received"
+      ]
+    },
+    {
+      id: "expectation.first-replay.sensemaking-fold-in",
+      title: "Sensemaking fold-in preserves uncertainty and model-derived evidence",
+      domain: "claims-evidence",
+      invariantCaseIds: ["invariant.ai-non-authority"],
+      requiredObjectRefs: [
+        goldenFixtureRefs.sourceRiparianSurvey,
+        goldenFixtureRefs.claimRiparianStress,
+        goldenFixtureRefs.evidenceRiparianSurvey,
+        goldenFixtureRefs.modelRiparianScenario,
+        goldenFixtureRefs.modelOutputRiparianRisk
+      ],
+      requiredEventTypes: [
+        "evidence.source.ingested",
+        "claim.contested",
+        "evidence.linked_to_claim",
+        "model.created",
+        "model.output.generated"
+      ]
+    },
+    {
+      id: "expectation.first-replay.stewardship-fold-in",
+      title: "Stewardship fold-in preserves ecological hooks and scoped use rights",
+      domain: "stewardship",
+      invariantCaseIds: ["invariant.use-right-scope"],
+      requiredObjectRefs: [
+        goldenFixtureRefs.placeSouthCanal,
+        goldenFixtureRefs.resourceIrrigationGate,
+        goldenFixtureRefs.livingSystemRiparianCorridor,
+        goldenFixtureRefs.guardianReviewRiparian,
+        goldenFixtureRefs.useRightIrrigationGate,
+        goldenFixtureRefs.taskCanalCheck
+      ],
+      requiredEventTypes: [
+        "ecology.living_system.created",
+        "ecology.guardian.review_requested",
+        "stewardship.resource.created",
+        "stewardship.use_right.granted",
+        "stewardship.task.completed"
       ]
     }
   ],

@@ -9,11 +9,22 @@ import type {
   CanopyUiAuthorityFinding,
   CanopyUiAuthorityTraceEvent,
   CanopyUiAuthorityTraceViewModel,
+  CanopyUiClaimEvidenceAiIndicator,
+  CanopyUiClaimEvidenceClaimSummary,
+  CanopyUiClaimEvidenceEvidenceSummary,
+  CanopyUiClaimEvidenceLinkSummary,
+  CanopyUiClaimEvidenceViewModel,
   CanopyUiCivicMemoryStreamViewModel,
+  CanopyUiDecisionPacketOutcomeSummary,
+  CanopyUiDecisionPacketViewModel,
+  CanopyUiFederationExportStateViewModel,
   CanopyUiImportReviewCandidate,
   CanopyUiImportReviewViewModel,
   CanopyUiObjectPageViewModel,
   CanopyUiProjectionRead,
+  CanopyUiResourceContextSummary,
+  CanopyUiResourceStewardshipViewModel,
+  CanopyUiResourceUseRightSummary,
   CanopyUiShellSurfaces,
   CanopyUiSourceProvenancePanelViewModel,
   CanopyUiTimelineEntry
@@ -187,6 +198,10 @@ export function buildCanopyShellSnapshot(
     objectPage,
     civicMemory,
     authority,
+    claimEvidence,
+    decisionPacket,
+    federationExport,
+    resourceStewardship,
     projectionReads,
     importDryRun: input.importDryRun
   });
@@ -458,6 +473,10 @@ function buildShellSurfaces(input: {
   readonly objectPage: ObjectPageProjection | undefined;
   readonly civicMemory: CivicMemoryProjection;
   readonly authority: AuthorityProjection;
+  readonly claimEvidence: ClaimEvidenceProjection;
+  readonly decisionPacket: DecisionPacketProjection | undefined;
+  readonly federationExport: FederationExportEnvelopeReadModel | undefined;
+  readonly resourceStewardship: ResourceStewardshipProjection | undefined;
   readonly projectionReads: readonly CanopyUiProjectionRead[];
   readonly importDryRun: ImportDryRunResult | undefined;
 }): CanopyUiShellSurfaces {
@@ -484,6 +503,29 @@ function buildShellSurfaces(input: {
       input.selectedObjectRef,
       projectionReadFor(input.projectionReads, "authority")
     ),
+    claimEvidence: buildClaimEvidenceViewModel(
+      input.claimEvidence,
+      input.selectedObjectRef,
+      projectionReadFor(input.projectionReads, "claim-evidence")
+    ),
+    decisionPacket:
+      input.decisionPacket === undefined
+        ? undefined
+        : buildDecisionPacketViewModel(
+            input.decisionPacket,
+            projectionReadFor(input.projectionReads, "decision-packet", input.decisionPacket.decisionRef)
+          ),
+    resourceStewardship:
+      input.resourceStewardship === undefined
+        ? undefined
+        : buildResourceStewardshipViewModel(
+            input.resourceStewardship,
+            projectionReadFor(input.projectionReads, "resource-stewardship", input.resourceStewardship.resourceRef)
+          ),
+    federationExportState:
+      input.federationExport === undefined
+        ? undefined
+        : buildFederationExportStateViewModel(input.federationExport),
     importReview
   });
 }
@@ -616,6 +658,254 @@ function buildAuthorityTraceViewModel(
     events,
     findings,
     projectionRead
+  });
+}
+
+function buildClaimEvidenceViewModel(
+  claimEvidence: ClaimEvidenceProjection,
+  selectedObjectRef: ObjectRef | undefined,
+  projectionRead: CanopyUiProjectionRead
+): CanopyUiClaimEvidenceViewModel {
+  const claims = claimEvidence.claims.map(toClaimEvidenceClaimSummary);
+  const evidence = claimEvidence.evidence.map(toClaimEvidenceEvidenceSummary);
+  const selectedClaim =
+    selectedObjectRef?.type === "claim"
+      ? claims.find((claim) => sameRef(claim.claimRef, selectedObjectRef))
+      : undefined;
+  const selectedEvidence =
+    selectedObjectRef?.type === "evidence"
+      ? evidence.find((entry) => sameRef(entry.evidenceRef, selectedObjectRef))
+      : undefined;
+
+  return optionalClaimEvidenceViewModel({
+    kind: "claim-evidence",
+    selectedClaim,
+    selectedEvidence,
+    claims,
+    evidence,
+    links: claimEvidence.evidenceLinks.map(toClaimEvidenceLinkSummary),
+    aiNonAuthorityIndicators: claimEvidence.aiNonAuthorityIndicators.map(toClaimEvidenceAiIndicator),
+    counts: {
+      claims: claimEvidence.counts.claims,
+      evidence: claimEvidence.counts.evidence,
+      evidenceLinks: claimEvidence.counts.evidenceLinks,
+      reviews: claimEvidence.counts.reviews,
+      contests: claimEvidence.counts.contests,
+      aiNonAuthorityIndicators: claimEvidence.counts.aiNonAuthorityIndicators
+    },
+    projectionRead
+  });
+}
+
+function buildDecisionPacketViewModel(
+  decisionPacket: DecisionPacketProjection,
+  projectionRead: CanopyUiProjectionRead
+): CanopyUiDecisionPacketViewModel {
+  return optionalDecisionPacketViewModel({
+    kind: "decision-packet",
+    decisionRef: decisionPacket.decisionRef,
+    packetRef: decisionPacket.packetRef,
+    status: decisionPacket.status,
+    outcome: decisionPacket.outcome,
+    rationale: decisionPacket.rationale,
+    conditions: decisionPacket.conditions,
+    authorityRefs: decisionPacket.authorityRefs,
+    claimRefs: decisionPacket.claimRefs,
+    evidenceRefs: decisionPacket.evidenceRefs,
+    unresolvedObjectionRefs: decisionPacket.unresolvedObjectionRefs,
+    stewardshipOutcomes: decisionPacket.stewardshipOutcomes.map(toDecisionPacketOutcomeSummary),
+    allocationAccountingOutcomeEventIds: decisionPacket.allocationAccountingOutcomes.map(
+      (outcome) => outcome.eventId
+    ),
+    timeline: decisionPacket.eventTrail.map((entry) =>
+      timelineEntry({
+        id: entry.id,
+        type: entry.type,
+        namespace: entry.namespace,
+        occurredAt: entry.occurredAt,
+        actorRef: entry.actorRef,
+        systemActor: entry.systemActor,
+        objectRef: entry.objectRef,
+        relatedRefs: entry.relatedRefs,
+        authorityRefs: entry.authorityRefs,
+        sourceCapability: entry.sourceCapability,
+        title: entry.title,
+        summary: entry.summary,
+        isRedacted: entry.isRedacted,
+        isSuperseded: entry.isSuperseded
+      })
+    ),
+    hasRedactions: decisionPacket.redaction.hasRedactions,
+    hasSupersessions: decisionPacket.supersession.hasSupersessions,
+    projectionRead
+  });
+}
+
+function buildResourceStewardshipViewModel(
+  resourceStewardship: ResourceStewardshipProjection,
+  projectionRead: CanopyUiProjectionRead
+): CanopyUiResourceStewardshipViewModel {
+  return optionalResourceStewardshipViewModel({
+    kind: "resource-stewardship",
+    resourceRef: resourceStewardship.resourceRef,
+    title: resourceStewardship.title,
+    summary: resourceStewardship.summary,
+    resourceKind: resourceStewardship.resourceKind,
+    useRights: resourceStewardship.useRights.map(toResourceUseRightSummary),
+    contextEvents: resourceStewardship.contextEvents.map(toResourceContextSummary),
+    authorityRefs: resourceStewardship.authorityRefs,
+    linkedRefs: resourceStewardship.linkedRefs,
+    ecologicalContextIds: resourceStewardship.ecologicalContextIds,
+    timeline: resourceStewardship.eventTrail.map((entry) =>
+      timelineEntry({
+        id: entry.id,
+        type: entry.type,
+        namespace: entry.namespace,
+        occurredAt: entry.occurredAt,
+        actorRef: entry.actorRef,
+        systemActor: entry.systemActor,
+        objectRef: entry.objectRef,
+        relatedRefs: entry.relatedRefs,
+        authorityRefs: entry.authorityRefs,
+        sourceCapability: entry.sourceCapability,
+        title: entry.title,
+        summary: entry.summary,
+        isRedacted: entry.isRedacted,
+        isSuperseded: entry.isSuperseded
+      })
+    ),
+    counts: {
+      totalEvents: resourceStewardship.counts.totalEvents,
+      contextEvents: resourceStewardship.counts.contextEvents,
+      proposedUseRights: resourceStewardship.counts.useRights.proposed,
+      grantedUseRights: resourceStewardship.counts.useRights.granted,
+      revokedUseRights: resourceStewardship.counts.useRights.revoked
+    },
+    projectionRead
+  });
+}
+
+function buildFederationExportStateViewModel(
+  federationExport: FederationExportEnvelopeReadModel
+): CanopyUiFederationExportStateViewModel {
+  return optionalFederationExportStateViewModel({
+    kind: "federation-export-state",
+    status:
+      federationExport.preview.federationReadinessWarnings.length === 0 ? "ready" : "attention",
+    envelopeId: federationExport.envelope.id,
+    exportedAt: federationExport.envelope.exportedAt,
+    exportedByRef: federationExport.envelope.exportedByRef,
+    scopeRef: federationExport.envelope.scopeRef,
+    format: federationExport.envelope.format,
+    schemaVersion: federationExport.envelope.schemaVersion,
+    contentHash: federationExport.envelope.contentHash,
+    includedEventIds: federationExport.preview.eventIds,
+    includedObjectRefs: federationExport.preview.includedObjects.map((object) => object.ref),
+    includedObjectTypes: federationExport.preview.includedObjectTypes,
+    authorityRefs: federationExport.preview.authorityRefs,
+    dataStewardshipAgreementRefs: federationExport.preview.dataStewardshipAgreementRefs,
+    localMappingIds: federationExport.preview.localMappings.map((mapping) => mapping.id),
+    redactionSummary: federationExport.envelope.redactionSummary,
+    readinessWarnings: federationExport.preview.federationReadinessWarnings
+  });
+}
+
+function toClaimEvidenceClaimSummary(
+  claim: ClaimEvidenceProjection["claims"][number]
+): CanopyUiClaimEvidenceClaimSummary {
+  return optionalClaimEvidenceClaimSummary({
+    claimRef: claim.claimRef,
+    status: claim.status,
+    title: claim.title,
+    summary: claim.summary,
+    evidenceRefs: claim.evidenceRefs,
+    authorityRefs: claim.authorityRefs,
+    sourceCapabilities: claim.sourceCapabilities,
+    aiIndicatorEventIds: claim.aiNonAuthorityIndicators.map((indicator) => indicator.eventId)
+  });
+}
+
+function toClaimEvidenceEvidenceSummary(
+  evidence: ClaimEvidenceProjection["evidence"][number]
+): CanopyUiClaimEvidenceEvidenceSummary {
+  return optionalClaimEvidenceEvidenceSummary({
+    evidenceRef: evidence.evidenceRef,
+    title: evidence.title,
+    summary: evidence.summary,
+    claimRefs: evidence.claimRefs,
+    sourceRefs: evidence.sourceRefs,
+    authorityRefs: evidence.authorityRefs,
+    sourceCapabilities: evidence.sourceCapabilities,
+    isAiOrModelOutput: evidence.isAiOrModelOutput
+  });
+}
+
+function toClaimEvidenceLinkSummary(
+  link: ClaimEvidenceProjection["evidenceLinks"][number]
+): CanopyUiClaimEvidenceLinkSummary {
+  return {
+    claimRef: link.claimRef,
+    evidenceRef: link.evidenceRef,
+    relation: link.relation,
+    eventId: link.eventId,
+    authorityRefs: link.authorityRefs
+  };
+}
+
+function toClaimEvidenceAiIndicator(
+  indicator: ClaimEvidenceProjection["aiNonAuthorityIndicators"][number]
+): CanopyUiClaimEvidenceAiIndicator {
+  return {
+    eventId: indicator.eventId,
+    objectRef: indicator.objectRef,
+    relatedClaimRefs: indicator.relatedClaimRefs,
+    reason: indicator.reason,
+    sourceCapability: indicator.sourceCapability
+  };
+}
+
+function toDecisionPacketOutcomeSummary(
+  outcome: DecisionPacketProjection["stewardshipOutcomes"][number]
+): CanopyUiDecisionPacketOutcomeSummary {
+  return optionalDecisionPacketOutcomeSummary({
+    ref: outcome.ref,
+    eventId: outcome.eventId,
+    type: outcome.type,
+    state: outcome.state,
+    holderRef: outcome.holderRef,
+    resourceRef: outcome.resourceRef,
+    permissions: outcome.permissions,
+    conditions: outcome.conditions
+  });
+}
+
+function toResourceUseRightSummary(
+  useRight: ResourceStewardshipProjection["useRights"][number]
+): CanopyUiResourceUseRightSummary {
+  return optionalResourceUseRightSummary({
+    useRightRef: useRight.useRightRef,
+    state: useRight.state,
+    holderRef: useRight.holderRef,
+    resourceRef: useRight.resourceRef,
+    permissions: useRight.permissions,
+    conditions: useRight.conditions,
+    decisionRefs: useRight.decisionRefs,
+    authorityRefs: useRight.authorityRefs,
+    latestEventId: useRight.latestEventId,
+    latestEventAt: useRight.latestEventAt
+  });
+}
+
+function toResourceContextSummary(
+  context: ResourceStewardshipProjection["contextEvents"][number]
+): CanopyUiResourceContextSummary {
+  return optionalResourceContextSummary({
+    eventId: context.eventId,
+    occurredAt: context.occurredAt,
+    observedAt: context.observedAt,
+    contextRef: context.contextRef,
+    ecologicalContextIds: context.ecologicalContextIds,
+    summary: context.summary
   });
 }
 
@@ -791,15 +1081,34 @@ function optionalShellSurfaces(surfaces: {
   readonly civicMemoryStream: CanopyUiCivicMemoryStreamViewModel;
   readonly sourceProvenancePanel: CanopyUiSourceProvenancePanelViewModel;
   readonly authorityTrace: CanopyUiAuthorityTraceViewModel;
+  readonly claimEvidence: CanopyUiClaimEvidenceViewModel;
+  readonly decisionPacket: CanopyUiDecisionPacketViewModel | undefined;
+  readonly resourceStewardship: CanopyUiResourceStewardshipViewModel | undefined;
+  readonly federationExportState: CanopyUiFederationExportStateViewModel | undefined;
   readonly importReview: CanopyUiImportReviewViewModel | undefined;
 }): CanopyUiShellSurfaces {
   const optionalFields: {
     objectPage?: CanopyUiObjectPageViewModel;
+    decisionPacket?: CanopyUiDecisionPacketViewModel;
+    resourceStewardship?: CanopyUiResourceStewardshipViewModel;
+    federationExportState?: CanopyUiFederationExportStateViewModel;
     importReview?: CanopyUiImportReviewViewModel;
   } = {};
 
   if (surfaces.objectPage !== undefined) {
     optionalFields.objectPage = surfaces.objectPage;
+  }
+
+  if (surfaces.decisionPacket !== undefined) {
+    optionalFields.decisionPacket = surfaces.decisionPacket;
+  }
+
+  if (surfaces.resourceStewardship !== undefined) {
+    optionalFields.resourceStewardship = surfaces.resourceStewardship;
+  }
+
+  if (surfaces.federationExportState !== undefined) {
+    optionalFields.federationExportState = surfaces.federationExportState;
   }
 
   if (surfaces.importReview !== undefined) {
@@ -810,7 +1119,8 @@ function optionalShellSurfaces(surfaces: {
     ...optionalFields,
     civicMemoryStream: surfaces.civicMemoryStream,
     sourceProvenancePanel: surfaces.sourceProvenancePanel,
-    authorityTrace: surfaces.authorityTrace
+    authorityTrace: surfaces.authorityTrace,
+    claimEvidence: surfaces.claimEvidence
   };
 }
 
@@ -989,6 +1299,322 @@ function optionalAuthorityTraceViewModel(
     events: viewModel.events,
     findings: viewModel.findings,
     projectionRead: viewModel.projectionRead
+  };
+}
+
+function optionalClaimEvidenceViewModel(
+  viewModel: Omit<
+    CanopyUiClaimEvidenceViewModel,
+    "selectedClaim" | "selectedEvidence"
+  > & {
+    readonly selectedClaim?: CanopyUiClaimEvidenceClaimSummary | undefined;
+    readonly selectedEvidence?: CanopyUiClaimEvidenceEvidenceSummary | undefined;
+  }
+): CanopyUiClaimEvidenceViewModel {
+  const optionalFields: {
+    selectedClaim?: CanopyUiClaimEvidenceClaimSummary;
+    selectedEvidence?: CanopyUiClaimEvidenceEvidenceSummary;
+  } = {};
+
+  if (viewModel.selectedClaim !== undefined) {
+    optionalFields.selectedClaim = viewModel.selectedClaim;
+  }
+
+  if (viewModel.selectedEvidence !== undefined) {
+    optionalFields.selectedEvidence = viewModel.selectedEvidence;
+  }
+
+  return {
+    kind: viewModel.kind,
+    ...optionalFields,
+    claims: viewModel.claims,
+    evidence: viewModel.evidence,
+    links: viewModel.links,
+    aiNonAuthorityIndicators: viewModel.aiNonAuthorityIndicators,
+    counts: viewModel.counts,
+    projectionRead: viewModel.projectionRead
+  };
+}
+
+function optionalClaimEvidenceClaimSummary(
+  claim: Omit<CanopyUiClaimEvidenceClaimSummary, "title" | "summary"> & {
+    readonly title?: string | undefined;
+    readonly summary?: string | undefined;
+  }
+): CanopyUiClaimEvidenceClaimSummary {
+  const optionalFields: {
+    title?: string;
+    summary?: string;
+  } = {};
+
+  if (claim.title !== undefined) {
+    optionalFields.title = claim.title;
+  }
+
+  if (claim.summary !== undefined) {
+    optionalFields.summary = claim.summary;
+  }
+
+  return {
+    claimRef: claim.claimRef,
+    status: claim.status,
+    ...optionalFields,
+    evidenceRefs: claim.evidenceRefs,
+    authorityRefs: claim.authorityRefs,
+    sourceCapabilities: claim.sourceCapabilities,
+    aiIndicatorEventIds: claim.aiIndicatorEventIds
+  };
+}
+
+function optionalClaimEvidenceEvidenceSummary(
+  evidence: Omit<CanopyUiClaimEvidenceEvidenceSummary, "title" | "summary"> & {
+    readonly title?: string | undefined;
+    readonly summary?: string | undefined;
+  }
+): CanopyUiClaimEvidenceEvidenceSummary {
+  const optionalFields: {
+    title?: string;
+    summary?: string;
+  } = {};
+
+  if (evidence.title !== undefined) {
+    optionalFields.title = evidence.title;
+  }
+
+  if (evidence.summary !== undefined) {
+    optionalFields.summary = evidence.summary;
+  }
+
+  return {
+    evidenceRef: evidence.evidenceRef,
+    ...optionalFields,
+    claimRefs: evidence.claimRefs,
+    sourceRefs: evidence.sourceRefs,
+    authorityRefs: evidence.authorityRefs,
+    sourceCapabilities: evidence.sourceCapabilities,
+    isAiOrModelOutput: evidence.isAiOrModelOutput
+  };
+}
+
+function optionalDecisionPacketViewModel(
+  viewModel: Omit<
+    CanopyUiDecisionPacketViewModel,
+    "packetRef" | "status" | "outcome" | "rationale"
+  > & {
+    readonly packetRef?: ObjectRef | undefined;
+    readonly status?: string | undefined;
+    readonly outcome?: string | undefined;
+    readonly rationale?: string | undefined;
+  }
+): CanopyUiDecisionPacketViewModel {
+  const optionalFields: {
+    packetRef?: ObjectRef;
+    status?: string;
+    outcome?: string;
+    rationale?: string;
+  } = {};
+
+  if (viewModel.packetRef !== undefined) {
+    optionalFields.packetRef = viewModel.packetRef;
+  }
+
+  if (viewModel.status !== undefined) {
+    optionalFields.status = viewModel.status;
+  }
+
+  if (viewModel.outcome !== undefined) {
+    optionalFields.outcome = viewModel.outcome;
+  }
+
+  if (viewModel.rationale !== undefined) {
+    optionalFields.rationale = viewModel.rationale;
+  }
+
+  return {
+    kind: viewModel.kind,
+    decisionRef: viewModel.decisionRef,
+    ...optionalFields,
+    conditions: viewModel.conditions,
+    authorityRefs: viewModel.authorityRefs,
+    claimRefs: viewModel.claimRefs,
+    evidenceRefs: viewModel.evidenceRefs,
+    unresolvedObjectionRefs: viewModel.unresolvedObjectionRefs,
+    stewardshipOutcomes: viewModel.stewardshipOutcomes,
+    allocationAccountingOutcomeEventIds: viewModel.allocationAccountingOutcomeEventIds,
+    timeline: viewModel.timeline,
+    hasRedactions: viewModel.hasRedactions,
+    hasSupersessions: viewModel.hasSupersessions,
+    projectionRead: viewModel.projectionRead
+  };
+}
+
+function optionalDecisionPacketOutcomeSummary(
+  outcome: Omit<
+    CanopyUiDecisionPacketOutcomeSummary,
+    "state" | "holderRef" | "resourceRef"
+  > & {
+    readonly state?: string | undefined;
+    readonly holderRef?: ObjectRef | undefined;
+    readonly resourceRef?: ObjectRef | undefined;
+  }
+): CanopyUiDecisionPacketOutcomeSummary {
+  const optionalFields: {
+    state?: string;
+    holderRef?: ObjectRef;
+    resourceRef?: ObjectRef;
+  } = {};
+
+  if (outcome.state !== undefined) {
+    optionalFields.state = outcome.state;
+  }
+
+  if (outcome.holderRef !== undefined) {
+    optionalFields.holderRef = outcome.holderRef;
+  }
+
+  if (outcome.resourceRef !== undefined) {
+    optionalFields.resourceRef = outcome.resourceRef;
+  }
+
+  return {
+    ref: outcome.ref,
+    eventId: outcome.eventId,
+    type: outcome.type,
+    ...optionalFields,
+    permissions: outcome.permissions,
+    conditions: outcome.conditions
+  };
+}
+
+function optionalResourceStewardshipViewModel(
+  viewModel: Omit<
+    CanopyUiResourceStewardshipViewModel,
+    "title" | "summary" | "resourceKind"
+  > & {
+    readonly title?: string | undefined;
+    readonly summary?: string | undefined;
+    readonly resourceKind?: string | undefined;
+  }
+): CanopyUiResourceStewardshipViewModel {
+  const optionalFields: {
+    title?: string;
+    summary?: string;
+    resourceKind?: string;
+  } = {};
+
+  if (viewModel.title !== undefined) {
+    optionalFields.title = viewModel.title;
+  }
+
+  if (viewModel.summary !== undefined) {
+    optionalFields.summary = viewModel.summary;
+  }
+
+  if (viewModel.resourceKind !== undefined) {
+    optionalFields.resourceKind = viewModel.resourceKind;
+  }
+
+  return {
+    kind: viewModel.kind,
+    resourceRef: viewModel.resourceRef,
+    ...optionalFields,
+    useRights: viewModel.useRights,
+    contextEvents: viewModel.contextEvents,
+    authorityRefs: viewModel.authorityRefs,
+    linkedRefs: viewModel.linkedRefs,
+    ecologicalContextIds: viewModel.ecologicalContextIds,
+    timeline: viewModel.timeline,
+    counts: viewModel.counts,
+    projectionRead: viewModel.projectionRead
+  };
+}
+
+function optionalResourceUseRightSummary(
+  useRight: Omit<CanopyUiResourceUseRightSummary, "holderRef"> & {
+    readonly holderRef?: ObjectRef | undefined;
+  }
+): CanopyUiResourceUseRightSummary {
+  const optionalFields: {
+    holderRef?: ObjectRef;
+  } = {};
+
+  if (useRight.holderRef !== undefined) {
+    optionalFields.holderRef = useRight.holderRef;
+  }
+
+  return {
+    useRightRef: useRight.useRightRef,
+    state: useRight.state,
+    ...optionalFields,
+    resourceRef: useRight.resourceRef,
+    permissions: useRight.permissions,
+    conditions: useRight.conditions,
+    decisionRefs: useRight.decisionRefs,
+    authorityRefs: useRight.authorityRefs,
+    latestEventId: useRight.latestEventId,
+    latestEventAt: useRight.latestEventAt
+  };
+}
+
+function optionalResourceContextSummary(
+  context: Omit<CanopyUiResourceContextSummary, "observedAt" | "contextRef"> & {
+    readonly observedAt?: string | undefined;
+    readonly contextRef?: ObjectRef | undefined;
+  }
+): CanopyUiResourceContextSummary {
+  const optionalFields: {
+    observedAt?: string;
+    contextRef?: ObjectRef;
+  } = {};
+
+  if (context.observedAt !== undefined) {
+    optionalFields.observedAt = context.observedAt;
+  }
+
+  if (context.contextRef !== undefined) {
+    optionalFields.contextRef = context.contextRef;
+  }
+
+  return {
+    eventId: context.eventId,
+    occurredAt: context.occurredAt,
+    ...optionalFields,
+    ecologicalContextIds: context.ecologicalContextIds,
+    summary: context.summary
+  };
+}
+
+function optionalFederationExportStateViewModel(
+  viewModel: Omit<CanopyUiFederationExportStateViewModel, "redactionSummary"> & {
+    readonly redactionSummary?: CanopyUiFederationExportStateViewModel["redactionSummary"] | undefined;
+  }
+): CanopyUiFederationExportStateViewModel {
+  const optionalFields: {
+    redactionSummary?: NonNullable<CanopyUiFederationExportStateViewModel["redactionSummary"]>;
+  } = {};
+
+  if (viewModel.redactionSummary !== undefined) {
+    optionalFields.redactionSummary = viewModel.redactionSummary;
+  }
+
+  return {
+    kind: viewModel.kind,
+    status: viewModel.status,
+    envelopeId: viewModel.envelopeId,
+    exportedAt: viewModel.exportedAt,
+    exportedByRef: viewModel.exportedByRef,
+    scopeRef: viewModel.scopeRef,
+    format: viewModel.format,
+    schemaVersion: viewModel.schemaVersion,
+    contentHash: viewModel.contentHash,
+    includedEventIds: viewModel.includedEventIds,
+    includedObjectRefs: viewModel.includedObjectRefs,
+    includedObjectTypes: viewModel.includedObjectTypes,
+    authorityRefs: viewModel.authorityRefs,
+    dataStewardshipAgreementRefs: viewModel.dataStewardshipAgreementRefs,
+    localMappingIds: viewModel.localMappingIds,
+    ...optionalFields,
+    readinessWarnings: viewModel.readinessWarnings
   };
 }
 

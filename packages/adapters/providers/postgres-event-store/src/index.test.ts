@@ -91,6 +91,28 @@ describe("PostgresEventStoreAdapter prototype", () => {
       "event.claim.1",
       "event.claim.2"
     ]);
+    expect(adapter.snapshotTables().eventRecords.map((record) => record.eventId)).toEqual([
+      "event.claim.1",
+      "event.claim.2"
+    ]);
+    expect(adapter.snapshotTables().outbox.map((record) => record.eventId).sort()).toEqual([
+      "event.claim.1",
+      "event.claim.2"
+    ]);
+    expect(adapter.snapshotTables().objectRefs.map((record) => record.ref.id).sort()).toEqual([
+      "claim.water-quality",
+      "evidence.sample-1",
+      "mandate.event-store-test"
+    ]);
+    expect(adapter.snapshotTables().projectionStates[0]).toMatchObject({
+      projectionName: "postgres-event-store.event-log",
+      status: "current",
+      checkpoint: { eventId: "event.claim.1", cursor: "2", sequence: 2 }
+    });
+    expect(adapter.snapshotTables().adapterAudits.map((record) => record.status)).toEqual([
+      "succeeded",
+      "succeeded"
+    ]);
   });
 
   it("allows identical idempotent appends and rejects event mutation", async () => {
@@ -110,12 +132,24 @@ describe("PostgresEventStoreAdapter prototype", () => {
         statement: "Changed after append."
       })
     });
+    const reusedIdempotencyKey = await adapter.appendEvent({
+      event: event("event.claim.other", "2026-06-13T10:00:00.000Z"),
+      idempotencyKey: "append.same"
+    });
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     expect(adapter.snapshotTables().events).toHaveLength(1);
     expect(mutated.ok).toBe(false);
     expect(mutated.errors[0]?.code).toBe("append_only_violation");
+    expect(reusedIdempotencyKey.ok).toBe(false);
+    expect(reusedIdempotencyKey.errors[0]?.code).toBe("conflict");
+    expect(adapter.snapshotTables().adapterAudits.map((record) => record.status)).toEqual([
+      "succeeded",
+      "skipped",
+      "failed",
+      "failed"
+    ]);
   });
 
   it("enforces expected previous event ids per object stream", async () => {
@@ -169,5 +203,11 @@ describe("PostgresEventStoreAdapter prototype", () => {
 
     expect(afterEvent).toEqual(["event.claim.replay.2", "event.claim.replay.3"]);
     expect(afterTime).toEqual(["event.claim.replay.3"]);
+    expect(adapter.snapshotTables().outbox).toHaveLength(3);
+    expect(adapter.snapshotTables().projectionStates[0]?.checkpoint).toMatchObject({
+      eventId: "event.claim.replay.3",
+      cursor: "3",
+      sequence: 3
+    });
   });
 });
