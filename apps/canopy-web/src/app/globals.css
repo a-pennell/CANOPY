@@ -179,6 +179,30 @@ a {
   font-size: 11px;
 }
 
+.scopeButtons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--canopy-grid);
+}
+
+.scopeButton {
+  min-height: 28px;
+  border: 1px solid var(--canopy-line);
+  border-radius: calc(var(--canopy-radius) - 2px);
+  background: var(--canopy-inset);
+  color: var(--canopy-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.scopeButton:hover,
+.scopeButton.active {
+  border-color: rgba(143, 216, 172, 0.32);
+  color: var(--canopy-mint);
+}
+
 .searchBlock input {
   width: 100%;
   min-height: 36px;
@@ -527,6 +551,122 @@ a {
   color: var(--canopy-text-soft);
 }
 
+.pathway {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: calc(var(--canopy-grid) * 2);
+}
+
+.pathStep,
+.objectListPane a,
+.commandDetail {
+  display: grid;
+  align-content: start;
+  gap: calc(var(--canopy-grid) * 2);
+  min-height: 112px;
+  padding: calc(var(--canopy-grid) * 3);
+  border: 1px solid var(--canopy-line);
+  border-radius: var(--canopy-radius);
+  background: var(--canopy-inset);
+}
+
+.pathStep:hover,
+.objectListPane a:hover {
+  border-color: var(--canopy-line-strong);
+  background: rgba(143, 216, 172, 0.06);
+}
+
+.pathStep span,
+.objectListPane span,
+.commandDetail > span {
+  color: var(--canopy-lake);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.pathStep strong,
+.objectListPane strong {
+  overflow-wrap: anywhere;
+  color: var(--canopy-text);
+  font-size: 13px;
+}
+
+.pathStep small {
+  color: var(--canopy-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.triad {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.6fr) minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: calc(var(--canopy-grid) * 3);
+}
+
+.mapPane {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  min-height: 280px;
+  border: 1px solid var(--canopy-line);
+  border-radius: var(--canopy-radius);
+  background:
+    linear-gradient(90deg, rgba(127, 182, 194, 0.08) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(127, 182, 194, 0.08) 1px, transparent 1px),
+    var(--canopy-inset);
+  background-size: 28px 28px;
+}
+
+.mapPane span,
+.mapPane small {
+  color: var(--canopy-text-muted);
+  font-size: 12px;
+}
+
+.mapPane strong {
+  color: var(--canopy-mint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 42px;
+}
+
+.graphPane,
+.objectListPane,
+.commandDetailGrid {
+  display: grid;
+  gap: calc(var(--canopy-grid) * 2);
+}
+
+.graphEdge {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: calc(var(--canopy-grid) * 2);
+  min-height: 36px;
+  padding: calc(var(--canopy-grid) * 2);
+  border: 1px solid var(--canopy-line);
+  border-radius: calc(var(--canopy-radius) - 2px);
+  background: var(--canopy-inset);
+}
+
+.graphEdge span {
+  overflow: hidden;
+  color: var(--canopy-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graphEdge strong {
+  color: var(--canopy-amber);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.commandDetailGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .screenText {
   overflow: auto;
   max-height: 360px;
@@ -565,11 +705,17 @@ a {
   .mainGrid,
   .opsGrid,
   .commandGrid,
-  .refGrid {
+  .refGrid,
+  .pathway,
+  .commandDetailGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .splitSurface {
+    grid-template-columns: 1fr;
+  }
+
+  .triad {
     grid-template-columns: 1fr;
   }
 
@@ -597,6 +743,8 @@ a {
   .opsGrid,
   .commandGrid,
   .refGrid,
+  .pathway,
+  .commandDetailGrid,
   .navList {
     grid-template-columns: 1fr;
   }

@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import type { CanopyWebModel, CanopyWebWorkspace } from "../lib/canopy-data";
+import { ObjectSearch } from "./object-search";
+import { ScopeSwitcher } from "./scope-switcher";
 
 const readinessTone = {
   ready: "toneGood",
@@ -42,33 +45,23 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
           <span>Scope</span>
           <strong>{snapshot.scope.label}</strong>
           <small>{formatScopeRef(snapshot.scope.scope.commonsRef)}</small>
+          <ScopeSwitcher options={model.scopeOptions} />
         </div>
 
         <nav className="navList" aria-label="Phase 5 workspaces">
-          {model.workspaces.map((workspace) => (
-            <a href={`#${workspace.id}`} key={workspace.id} className="navItem">
-              <span>{workspace.title}</span>
-              <small>{workspace.session.navigation.activePath}</small>
-            </a>
+          {model.routeMap.map((route) => (
+            <Link
+              href={routeHref(route.href, model.scopePreset)}
+              key={route.id}
+              className={route.active ? "navItem active" : "navItem"}
+            >
+              <span>{route.label}</span>
+              <small>{route.href}</small>
+            </Link>
           ))}
         </nav>
 
-        <div className="searchBlock" aria-label="Object search">
-          <label htmlFor="object-search">Object search</label>
-          <input id="object-search" readOnly value="resource, decision, claim..." />
-          <div className="searchResults">
-            {model.objectRefs.slice(0, 6).map((record) => (
-              <a
-                href={`#${workspaceIdForRef(record.ref)}`}
-                key={formatRef(record.ref)}
-                className="searchResult"
-              >
-                <span>{record.objectType}</span>
-                <strong>{displayRef(record.ref)}</strong>
-              </a>
-            ))}
-          </div>
-        </div>
+        <ObjectSearch objectRefs={model.objectRefs} scopePreset={model.scopePreset} />
 
         <div className="railFooter">
           <span>Generated</span>
@@ -126,10 +119,52 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
               {model.commandPreviews.map((preview) => (
                 <div className="commandTile" key={preview.command}>
                   <span>{model.session.prompt} {preview.command}</span>
-                  <strong>{preview.message}</strong>
+                  <strong>{displayText(preview.message)}</strong>
                   <small>{preview.screen.route.surfaceKind} / {preview.status}</small>
                 </div>
               ))}
+            </div>
+          </Panel>
+
+          <Panel title="Riverbend Pathway" kicker="observe to federate" className="spanTwo">
+            <div className="pathway">
+              {model.pathway.map((step) => (
+                <Link href={routeHref(step.href, model.scopePreset)} className="pathStep" key={step.label}>
+                  <span>{step.label}</span>
+                  <strong>{formatRef(step.ref)}</strong>
+                  <small>{step.detail}</small>
+                </Link>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Map / Graph / List" kicker="one object query model" className="spanTwo">
+            <div className="triad">
+              <div className="mapPane" aria-label="Scoped map preview">
+                <span>Riverbend Creek</span>
+                <strong>{model.relationshipGraph.nodes.length}</strong>
+                <small>object nodes in scope</small>
+              </div>
+              <div className="graphPane" aria-label="Relationship graph preview">
+                {model.relationshipGraph.edges.slice(0, 8).map((edge) => (
+                  <div className="graphEdge" key={`${edge.from}-${edge.to}-${edge.label}`}>
+                    <span>{labelForNode(model, edge.from)}</span>
+                    <strong>{edge.label}</strong>
+                    <span>{labelForNode(model, edge.to)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="objectListPane" aria-label="Object list preview">
+                {model.objectRefs.slice(0, 10).map((record) => (
+                  <Link
+                    href={routeHref(`/objects/${record.objectType}/${encodeURIComponent(record.objectId)}`, model.scopePreset)}
+                    key={`${record.objectType}-${record.objectId}`}
+                  >
+                    <span>{record.objectType}</span>
+                    <strong>{displayRef(record.ref)}</strong>
+                  </Link>
+                ))}
+              </div>
             </div>
           </Panel>
 
@@ -167,6 +202,20 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
           {model.workspaces.map((workspace) => (
             <WorkspacePanel key={workspace.id} model={model} workspace={workspace} />
           ))}
+
+          <Panel title="Command Detail" kicker="mutation preview contract" className="spanTwo">
+            <div className="commandDetailGrid">
+              {model.commandPreviews.slice(0, 4).map((preview) => (
+                <div className="commandDetail" key={preview.command}>
+                  <span>{preview.command}</span>
+                  <KeyValue label="Route" value={preview.screen.route.path} />
+                  <KeyValue label="Authority check" value={preview.status === "handled" ? "route available" : "review required"} />
+                  <KeyValue label="Event effect" value={preview.screen.route.surfaceKind} />
+                  <KeyValue label="Export impact" value={preview.screen.route.path === "/federation" ? "preview envelope" : "memory trace"} />
+                </div>
+              ))}
+            </div>
+          </Panel>
 
           <Panel title="Operations Loop" kicker="operator report" className="spanTwo">
             <div className="opsGrid">
@@ -217,7 +266,7 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <KeyValue label="Commands" value={String(snapshot.commands.length)} />
           <KeyValue label="Legacy primary routes" value={String(snapshot.legacyProjectNavigation.length)} />
         </div>
-        <pre className="screenText">{workspace.session.screen.text}</pre>
+        <pre className="screenText">{displayText(workspace.session.screen.text)}</pre>
       </div>
     );
   }
@@ -233,14 +282,14 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <div>
             <span>{objectPage.objectRef.type}</span>
             <strong>{objectPage.title ?? displayRef(objectPage.objectRef)}</strong>
-            <small>{objectPage.summary ?? formatRef(objectPage.objectRef)}</small>
+            <small>{displayText(objectPage.summary ?? formatRef(objectPage.objectRef))}</small>
           </div>
           <StatusPill label="projection" tone="toneGood">{objectPage.projectionRead.freshness}</StatusPill>
         </div>
         <div className="refGrid">
           <KeyValue label="Related refs" value={String(objectPage.relatedRefs.length)} />
           <KeyValue label="Authority refs" value={String(objectPage.authorityRefs.length)} />
-          <KeyValue label="Capabilities" value={objectPage.sourceCapabilities.join(", ")} />
+          <KeyValue label="Capabilities" value={objectPage.sourceCapabilities.map(formatCapability).join(", ")} />
         </div>
         <Timeline entries={objectPage.timeline.slice(0, 6)} />
       </div>
@@ -271,7 +320,7 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <div>
             <span>decision packet</span>
             <strong>{displayRef(packet.decisionRef)}</strong>
-            <small>{packet.rationale ?? "No rationale recorded in this seed."}</small>
+            <small>{displayText(packet.rationale ?? "No rationale recorded in this seed.")}</small>
           </div>
           <StatusPill label="outcome" tone={packet.outcome === undefined ? "toneWarn" : "toneGood"}>
             {packet.outcome ?? "pending"}
@@ -299,7 +348,7 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <div>
             <span>{stewardship.resourceKind ?? "resource"}</span>
             <strong>{stewardship.title ?? displayRef(stewardship.resourceRef)}</strong>
-            <small>{stewardship.summary ?? formatRef(stewardship.resourceRef)}</small>
+            <small>{displayText(stewardship.summary ?? formatRef(stewardship.resourceRef))}</small>
           </div>
           <StatusPill label="rights" tone="toneInfo">{stewardship.useRights.length}</StatusPill>
         </div>
@@ -336,7 +385,7 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
             <div className="listRow" key={formatRef(claim.claimRef)}>
               <div>
                 <strong>{claim.title ?? displayRef(claim.claimRef)}</strong>
-                <span>{claim.summary ?? claim.status}</span>
+                <span>{displayText(claim.summary ?? claim.status)}</span>
               </div>
               <StatusPill label="status" tone="toneInfo">{claim.status}</StatusPill>
             </div>
@@ -363,7 +412,7 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
             <div className="listRow" key={candidate.id}>
               <div>
                 <strong>{candidate.canonicalType}: {displayRef(candidate.canonicalRef)}</strong>
-                <span>{candidate.rationale}</span>
+                <span>{displayText(candidate.rationale)}</span>
               </div>
               <StatusPill label="disposition" tone={candidate.reviewDisposition === "accept" ? "toneGood" : "toneWarn"}>
                 {candidate.reviewDisposition}
@@ -413,7 +462,7 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
     );
   }
 
-  return <pre className="screenText">{workspace.session.screen.text}</pre>;
+  return <pre className="screenText">{displayText(workspace.session.screen.text)}</pre>;
 }
 
 function Timeline({ entries }: { readonly entries: readonly { readonly id: string; readonly type: string; readonly occurredAt: string; readonly objectRef: { readonly namespace: string; readonly type: string; readonly id: string } }[] }) {
@@ -516,19 +565,26 @@ function formatCounts(counts: Readonly<Record<string, number>>): string {
     .join(", ");
 }
 
-function workspaceIdForRef(ref: { readonly type: string }): string {
-  if (ref.type === "decision") return "decisions";
-  if (ref.type === "resource" || ref.type === "use-right") return "stewardship";
-  if (ref.type === "claim" || ref.type === "evidence") return "claims";
-  return "objects";
-}
-
 function formatRef(ref: { readonly namespace: string; readonly type: string; readonly id: string }) {
   return displayRef(ref);
 }
 
 function displayRef(ref: { readonly type: string; readonly id: string }) {
   return `${ref.type}:${ref.id.split(".").at(-1) ?? ref.id}`;
+}
+
+function displayText(value: string): string {
+  return value
+    .replaceAll("CommonCredit", "allocation/accounting")
+    .replaceAll("ICOS", "governance coordination")
+    .replaceAll("Sensemaking", "claims/evidence");
+}
+
+function formatCapability(value: string): string {
+  return displayText(value)
+    .replaceAll("common-credit", "allocation-accounting")
+    .replaceAll("icos", "governance-coordination")
+    .replaceAll("sensemaking", "claims-evidence");
 }
 
 function formatScopeRef(value: unknown): string {
@@ -552,4 +608,12 @@ function formatScopeRef(value: unknown): string {
 
 function formatTime(value: string): string {
   return value.replace("T", " ").replace(".000Z", "Z");
+}
+
+function routeHref(href: string, scopePreset: string): string {
+  return `${href}?scope=${scopePreset}`;
+}
+
+function labelForNode(model: CanopyWebModel, nodeId: string): string {
+  return model.relationshipGraph.nodes.find((node) => node.id === nodeId)?.label ?? nodeId;
 }

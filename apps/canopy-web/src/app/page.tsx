@@ -1,8 +1,9 @@
-import { CanopyDashboard } from "../components/canopy-dashboard";
-import { getCanopyWebModel } from "../lib/canopy-data";
+import { CanopyPage } from "./canopy-page";
 
-export default function Home() {
-  const model = getCanopyWebModel();
-
-  return <CanopyDashboard model={model} />;
+export default function Home({
+  searchParams
+}: {
+  readonly searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  return <CanopyPage searchParams={searchParams} />;
 }
