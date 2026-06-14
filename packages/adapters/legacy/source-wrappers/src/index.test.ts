@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  allocationAccountingCorrectionWrapperFixture,
   allocationAccountingWrapperFixture,
   claimsEvidenceWrapperFixture,
   executeLegacyCapabilityWrapper,
+  executeLegacyCapabilityWrappers,
   findUnknownLocalSubtypes,
+  governanceAuthorityReviewPathWrapperFixture,
   governanceAuthorityWrapperFixture,
   mappingForLocalRow,
+  canonicalRefForLocalRow,
+  phase6CombinedWrapperFixtures,
   readWrapperProjection,
   resourceCareWrapperFixture
 } from "./index.js";
@@ -242,6 +247,134 @@ describe("legacy capability source wrappers", () => {
     expect(ledgerPage?.projection.timelineEvents[0]?.summary).toBe("Food hub distribution credit");
   });
 
+  it("runs all four folded-source wrappers into one canonical graph with cross-source authority", () => {
+    const result = executeLegacyCapabilityWrappers();
+    const decisionMapping = mappingForLocalRow(
+      {
+        sourceProject: "icos",
+        canonicalMappings: result.canonicalMappings
+      },
+      "governance item",
+      "decision.water-window"
+    );
+    const useRightMapping = mappingForLocalRow(
+      {
+        sourceProject: "stewardship",
+        canonicalMappings: result.canonicalMappings
+      },
+      "use right",
+      "use-right.dawn-grazing-window"
+    );
+    const ledgerEntryMapping = mappingForLocalRow(
+      {
+        sourceProject: "common-credit",
+        canonicalMappings: result.canonicalMappings
+      },
+      "transaction",
+      "transaction.food-distribution-001"
+    );
+
+    expect(result.validation.unresolvedRisks).toEqual([]);
+    expect(result.validation.status).toBe("pass");
+    expect(result.executions).toHaveLength(phase6CombinedWrapperFixtures.length);
+    expect(result.adapterAuditRecords.filter((audit) => audit.operation === "import.execute-reviewed")).toHaveLength(4);
+    expect(result.unknownLocalSubtypes).toEqual([]);
+    expect(
+      canonicalRefForLocalRow(
+        {
+          sourceProject: "common-credit",
+          canonicalMappings: result.canonicalMappings
+        },
+        "transaction",
+        "transaction.food-distribution-001"
+      )
+    ).toEqual(ledgerEntryMapping?.canonicalRef);
+
+    const decisionRef = decisionMapping?.canonicalRef;
+    const useRightPage = readWrapperProjection(result, "object-page", useRightMapping!.canonicalRef);
+    const ledgerPage = readWrapperProjection(result, "object-page", ledgerEntryMapping!.canonicalRef);
+    const federation = readWrapperProjection(result, "federation-export", {
+      id: "projection.federation-export",
+      type: "source",
+      namespace: "canopy.projection-rebuild",
+      lifecycleStatus: "active"
+    });
+
+    expect(decisionRef).toBeDefined();
+    expect(useRightPage?.projection.authorityRefs.map((ref) => ref.id)).toContain(decisionRef?.id);
+    expect(ledgerPage?.projection.authorityRefs.map((ref) => ref.id)).toContain(decisionRef?.id);
+    expect(federation?.projection.preview.includedObjectTypes).toEqual(
+      expect.arrayContaining(["claim", "decision", "ledger-entry", "resource", "use-right"])
+    );
+    expect(federation?.projection.preview.eventTypes).toEqual(
+      expect.arrayContaining([
+        "stewardship.use_right.granted",
+        "accounting.ledger_entry.posted",
+        "governance.decision.recorded",
+        "claim.created"
+      ])
+    );
+  });
+
+  it("keeps generated wrapper projection labels free of folded source product names", () => {
+    const result = executeLegacyCapabilityWrappers();
+    const visibleText = [
+      ...result.objectRefs.map((ref) => ref.type),
+      ...result.executions.flatMap((execution) =>
+        execution.execution.eventRecords.flatMap((record) => [
+          record.event.payload.title,
+          record.event.payload.summary
+        ])
+      )
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .toLowerCase();
+
+    expect(visibleText).not.toContain("commoncredit");
+    expect(visibleText).not.toContain("common-credit");
+    expect(visibleText).not.toContain("icos");
+    expect(visibleText).not.toContain("sensemaking");
+    expect(visibleText).not.toContain("stewardship");
+  });
+
+  it("wraps CommonCredit reversal rows as canonical accounting corrections", () => {
+    const result = executeLegacyCapabilityWrapper(allocationAccountingCorrectionWrapperFixture);
+    const correctionMapping = mappingForLocalRow(
+      result,
+      "transaction",
+      "transaction.food-distribution-correction"
+    );
+    const correctionPage = readWrapperProjection(result, "object-page", correctionMapping!.canonicalRef);
+
+    expect(result.validation.unresolvedRisks).toEqual([]);
+    expect(result.validation.status).toBe("pass");
+    expect(correctionPage?.projection.timelineEvents[0]).toMatchObject({
+      type: "accounting.ledger_entry.reversed",
+      isSuperseded: true
+    });
+    expect(correctionPage?.projection.timelineEvents[0]?.summary).toBe(
+      "Reverse duplicated food hub distribution credit"
+    );
+  });
+
+  it("wraps ICOS objection, amendment, and appeal rows as governance review path memory", () => {
+    const result = executeLegacyCapabilityWrapper(governanceAuthorityReviewPathWrapperFixture);
+    const eventTypes = result.execution.eventRecords.map((record) => record.eventType);
+    const appealMapping = mappingForLocalRow(result, "governance item", "appeal.water-window");
+
+    expect(result.validation.unresolvedRisks).toEqual([]);
+    expect(result.validation.status).toBe("pass");
+    expect(eventTypes).toEqual(
+      expect.arrayContaining([
+        "governance.objection.raised",
+        "governance.amendment.submitted",
+        "governance.appeal.opened"
+      ])
+    );
+    expect(appealMapping?.canonicalRef.type).toBe("appeal");
+  });
+
   it("reports unknown local subtypes for review before execution", () => {
     const unknowns = findUnknownLocalSubtypes({
       ...resourceCareWrapperFixture,
@@ -262,6 +395,43 @@ describe("legacy capability source wrappers", () => {
         sourceId: "ritual.spring-opening",
         reason: "No explicit Phase 6 wrapper mapping exists for this local subtype."
       }
+    ]);
+  });
+
+  it("persists unknown local subtype reviews as adapter audit records", () => {
+    const result = executeLegacyCapabilityWrapper({
+      ...resourceCareWrapperFixture,
+      rows: [
+        ...resourceCareWrapperFixture.rows,
+        {
+          sourceObject: "ritual calendar",
+          id: "ritual.spring-opening",
+          name: "Spring opening"
+        },
+        {
+          sourceObject: "ceremonial harvest",
+          id: "ritual.harvest",
+          name: "Harvest"
+        }
+      ]
+    });
+
+    expect(result.unknownSubtypeAuditRecords).toHaveLength(2);
+    expect(result.unknownSubtypeAuditRecords[0]).toMatchObject({
+      adapterName: "import.stewardship",
+      direction: "migration",
+      operation: "import.unknown-local-subtype.review-required",
+      status: "partial",
+      systemActor: "migration",
+      warnings: ["unknown-local-subtype"],
+      metadata: {
+        reviewStatus: "review-required",
+        requiredAction: "Add an explicit Phase 6 wrapper mapping or retire/artifact the source subtype."
+      }
+    });
+    expect(result.unknownSubtypeAuditRecords.map((audit) => audit.externalRef?.resourceId)).toEqual([
+      "ritual.spring-opening",
+      "ritual.harvest"
     ]);
   });
 });

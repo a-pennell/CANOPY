@@ -1,4 +1,4 @@
-import type { CanonicalMappingRecord } from "@canopy/contracts-database";
+import type { AdapterAuditRecord, CanonicalMappingRecord } from "@canopy/contracts-database";
 import type {
   CanopyEvent,
   CanopyEventType,
@@ -69,6 +69,22 @@ export interface LegacyCapabilityWrapperExecution {
   readonly objectRefs: readonly ObjectRef[];
   readonly canonicalMappings: readonly CanonicalMappingRecord[];
   readonly unknownLocalSubtypes: readonly UnknownLocalSubtypeReviewItem[];
+  readonly unknownSubtypeAuditRecords: readonly AdapterAuditRecord[];
+}
+
+export interface LegacyCapabilityWrappersExecution {
+  readonly executions: readonly LegacyCapabilityWrapperExecution[];
+  readonly materializedProjections: MaterializedProjectionStore;
+  readonly validation: FoldInValidationReport;
+  readonly objectRefs: readonly ObjectRef[];
+  readonly canonicalMappings: readonly CanonicalMappingRecord[];
+  readonly unknownLocalSubtypes: readonly UnknownLocalSubtypeReviewItem[];
+  readonly adapterAuditRecords: readonly AdapterAuditRecord[];
+}
+
+export interface SourceRowLookup {
+  readonly sourceProject: SourceProject;
+  readonly canonicalMappings: readonly CanonicalMappingRecord[];
 }
 
 const importedAt = "2026-06-14T12:00:00.000Z";
@@ -407,29 +423,130 @@ export const allocationAccountingWrapperFixture = {
   ]
 } as const satisfies LegacyCapabilityWrapperFixture;
 
+export const allocationAccountingCorrectionWrapperFixture = {
+  ...allocationAccountingWrapperFixture,
+  rows: [
+    ...allocationAccountingWrapperFixture.rows,
+    {
+      sourceObject: "transaction",
+      id: "transaction.food-distribution-correction",
+      from: "account.kai",
+      to: "account.food-hub",
+      amount: 42,
+      unit: "credits",
+      posted_at: "2026-06-13T11:00:00.000Z",
+      status: "reversed",
+      memo: "Reverse duplicated food hub distribution credit",
+      agreementRef: "agreement.food-distribution",
+      reverses: "transaction.food-distribution-001"
+    }
+  ]
+} as const satisfies LegacyCapabilityWrapperFixture;
+
+export const governanceAuthorityReviewPathWrapperFixture = {
+  ...governanceAuthorityWrapperFixture,
+  rows: [
+    ...governanceAuthorityWrapperFixture.rows,
+    {
+      sourceObject: "governance item",
+      id: "objection.water-window-buffer",
+      itemType: "objection",
+      item_type: "objection",
+      title: "Riparian buffer objection",
+      status: "open",
+      parent: "proposal.water-window",
+      proposal: "proposal.water-window",
+      mandateRef: "mandate.water-steward"
+    },
+    {
+      sourceObject: "governance item",
+      id: "amendment.water-window-buffer",
+      itemType: "amendment",
+      item_type: "amendment",
+      title: "Add riparian buffer condition",
+      status: "submitted",
+      parent: "proposal.water-window",
+      proposal: "proposal.water-window",
+      mandateRef: "mandate.water-steward"
+    },
+    {
+      sourceObject: "governance item",
+      id: "appeal.water-window",
+      itemType: "appeal",
+      item_type: "appeal",
+      title: "Appeal water window review date",
+      status: "open",
+      parent: "decision.water-window",
+      decisionRef: "decision.water-window",
+      mandateRef: "mandate.water-steward"
+    }
+  ]
+} as const satisfies LegacyCapabilityWrapperFixture;
+
+export const phase6CombinedWrapperFixtures = [
+  {
+    ...governanceAuthorityWrapperFixture,
+    rows: governanceAuthorityWrapperFixture.rows
+  },
+  {
+    ...resourceCareWrapperFixture,
+    rows: resourceCareWrapperFixture.rows.map((row) =>
+      row.id === "use-right.dawn-grazing-window"
+        ? {
+            ...row,
+            policyRef: "policy.water-window",
+            decisionRef: "decision.water-window"
+          }
+        : row
+    )
+  },
+  {
+    ...claimsEvidenceWrapperFixture,
+    rows: claimsEvidenceWrapperFixture.rows.map((row) =>
+      row.id === "issue.riparian-stress"
+        ? {
+            ...row,
+            scope: "resource.north-pasture"
+          }
+        : row
+    )
+  },
+  {
+    ...allocationAccountingWrapperFixture,
+    rows: allocationAccountingWrapperFixture.rows.map((row) =>
+      row.id === "transaction.food-distribution-001"
+        ? {
+            ...row,
+            decisionRef: "decision.water-window"
+          }
+        : row
+    )
+  }
+] as const satisfies readonly LegacyCapabilityWrapperFixture[];
+
 export function executeLegacyCapabilityWrapper(
   fixture: LegacyCapabilityWrapperFixture
 ): LegacyCapabilityWrapperExecution {
   const baseDryRun = dryRunForFixture(fixture);
   const unknownLocalSubtypes = findUnknownLocalSubtypes(fixture);
+  const runtime = createInMemoryCanonicalPersistence({ now: () => importedAt });
   const dryRun = {
     ...baseDryRun,
     candidateEvents: enrichCandidateEvents(fixture.kind, baseDryRun)
   };
+  const materializedProjections = createInMemoryMaterializedProjectionStore();
+  const execution = executePreparedWrapperImport({
+    fixture,
+    dryRun,
+    runtime,
+    materializedProjections
+  });
   const review = createImportReviewReport(dryRun, {
     defaultDecision: "accept",
     reviewedAt: importedAt,
     reviewedByRef: reviewAuthorityRef(fixture.kind)
   });
-  const runtime = createInMemoryCanonicalPersistence({ now: () => importedAt });
-  const materializedProjections = createInMemoryMaterializedProjectionStore();
-  const execution = executeReviewedImport({
-    dryRun,
-    review,
-    runtime,
-    recordedAt: importedAt,
-    projectionRebuildOptions: { materializedProjections }
-  });
+  const unknownSubtypeAuditRecords = writeUnknownSubtypeAuditRecords(runtime, fixture, unknownLocalSubtypes);
   const objectRefs = runtime.queryObjectRefs().items.map((record) => record.ref);
   const canonicalMappings = runtime.listMappings();
   const events = execution.eventRecords.map((record) => record.event);
@@ -457,12 +574,87 @@ export function executeLegacyCapabilityWrapper(
     validation,
     objectRefs,
     canonicalMappings,
-    unknownLocalSubtypes
+    unknownLocalSubtypes,
+    unknownSubtypeAuditRecords
+  };
+}
+
+export function executeLegacyCapabilityWrappers(
+  fixtures: readonly LegacyCapabilityWrapperFixture[] = phase6CombinedWrapperFixtures
+): LegacyCapabilityWrappersExecution {
+  const runtime = createInMemoryCanonicalPersistence({ now: () => importedAt });
+  const materializedProjections = createInMemoryMaterializedProjectionStore();
+  const prepared = fixtures.map((fixture) => ({
+    fixture,
+    baseDryRun: dryRunForFixture(fixture),
+    unknownLocalSubtypes: findUnknownLocalSubtypes(fixture)
+  }));
+  const allCandidates = prepared.flatMap((item) => item.baseDryRun.mappingCandidates);
+  let eventSequenceOffset = 0;
+  const executions = prepared.map((item) => {
+    const dryRun = {
+      ...item.baseDryRun,
+      candidateEvents: enrichCandidateEvents(
+        item.fixture.kind,
+        item.baseDryRun,
+        allCandidates,
+        eventSequenceOffset
+      )
+    };
+    eventSequenceOffset += dryRun.candidateEvents.length;
+    const execution = executePreparedWrapperImport({
+      fixture: item.fixture,
+      dryRun,
+      runtime,
+      materializedProjections
+    });
+    const review = createImportReviewReport(dryRun, {
+      defaultDecision: "accept",
+      reviewedAt: importedAt,
+      reviewedByRef: reviewAuthorityRef(item.fixture.kind)
+    });
+    const unknownSubtypeAuditRecords = writeUnknownSubtypeAuditRecords(
+      runtime,
+      item.fixture,
+      item.unknownLocalSubtypes
+    );
+    const objectRefs = runtime.queryObjectRefs().items.map((record) => record.ref);
+    const canonicalMappings = runtime.listMappings();
+    const events = execution.eventRecords.map((record) => record.event);
+
+    return {
+      kind: item.fixture.kind,
+      sourceProject: item.fixture.sourceProject,
+      dryRun,
+      review,
+      execution,
+      materializedProjections,
+      validation: validationForFixtures([item.fixture], events, objectRefs, canonicalMappings),
+      objectRefs,
+      canonicalMappings,
+      unknownLocalSubtypes: item.unknownLocalSubtypes,
+      unknownSubtypeAuditRecords
+    };
+  });
+  const objectRefs = runtime.queryObjectRefs().items.map((record) => record.ref);
+  const canonicalMappings = runtime.listMappings();
+  const events = runtime.queryEvents().items.map((record) => record.event);
+  const validation = validationForFixtures(fixtures, events, objectRefs, canonicalMappings);
+  const adapterAuditRecords = runtime.listAdapterAudits();
+
+  return {
+    executions,
+    materializedProjections,
+    validation,
+    objectRefs,
+    canonicalMappings,
+    unknownLocalSubtypes: executions.flatMap((execution) => execution.unknownLocalSubtypes),
+    adapterAuditRecords
   };
 }
 
 export function readWrapperProjection<Name extends ProjectionRebuilderName>(
-  execution: LegacyCapabilityWrapperExecution,
+  execution: Pick<LegacyCapabilityWrapperExecution, "materializedProjections">,
   projectionName: Name,
   targetRef: ObjectRef
 ): MaterializedProjectionDocument<ProjectionDocumentPayload<Name>> | undefined {
@@ -473,7 +665,7 @@ export function readWrapperProjection<Name extends ProjectionRebuilderName>(
 }
 
 export function mappingForLocalRow(
-  execution: LegacyCapabilityWrapperExecution,
+  execution: SourceRowLookup,
   sourceEntity: string,
   sourceId: string
 ): CanonicalMappingRecord | undefined {
@@ -486,6 +678,14 @@ export function mappingForLocalRow(
       sourcePointer.sourceId === sourceId
     );
   });
+}
+
+export function canonicalRefForLocalRow(
+  execution: SourceRowLookup,
+  sourceEntity: string,
+  sourceId: string
+): ObjectRef | undefined {
+  return mappingForLocalRow(execution, sourceEntity, sourceId)?.canonicalRef;
 }
 
 export function findUnknownLocalSubtypes(
@@ -529,16 +729,39 @@ function dryRunForFixture(fixture: LegacyCapabilityWrapperFixture): ImportDryRun
 
 function enrichCandidateEvents(
   kind: LegacyCapabilityWrapperKind,
-  dryRun: ImportDryRunResult
+  dryRun: ImportDryRunResult,
+  sharedMappings: readonly CanonicalMappingCandidate[] = dryRun.mappingCandidates,
+  sequenceOffset = 0
 ): readonly CanopyEvent[] {
-  const mappings = dryRun.mappingCandidates;
+  const mappings = sharedMappings;
 
   return dryRun.candidateEvents.map((event, index) =>
     withImportSequenceTime(
       enrichEventForKind(kind, event, mappings),
-      index
+      sequenceOffset + index
     )
   );
+}
+
+function executePreparedWrapperImport(input: {
+  readonly fixture: LegacyCapabilityWrapperFixture;
+  readonly dryRun: ImportDryRunResult;
+  readonly runtime: ReturnType<typeof createInMemoryCanonicalPersistence>;
+  readonly materializedProjections: MaterializedProjectionStore;
+}): ImportExecutionResult {
+  const review = createImportReviewReport(input.dryRun, {
+    defaultDecision: "accept",
+    reviewedAt: importedAt,
+    reviewedByRef: reviewAuthorityRef(input.fixture.kind)
+  });
+
+  return executeReviewedImport({
+    dryRun: input.dryRun,
+    review,
+    runtime: input.runtime,
+    recordedAt: importedAt,
+    projectionRebuildOptions: { materializedProjections: input.materializedProjections }
+  });
 }
 
 function enrichEventForKind(
@@ -670,6 +893,7 @@ function enrichGovernanceAuthorityEvent(
   const mandateRef = refFromRecord(mappings, record, ["mandateRef", "mandate_ref", "mandate"], "mandate");
   const policyRef = refFromRecord(mappings, record, ["policyRef", "policy_ref", "policy"], "policy");
   const decisionRef = refFromRecord(mappings, record, ["decisionRef", "decision_ref", "decision"], "decision");
+  const itemType = textField(record, ["itemType", "item_type", "kind", "type"]);
   const authorityRefs = refsDefined([
     mandateRef,
     policyRef,
@@ -701,8 +925,11 @@ function enrichGovernanceAuthorityEvent(
       })
     : undefined;
 
+  const eventType = governanceEventTypeForItem(event, itemType);
+
   return optionalEvent({
     ...event,
+    type: eventType,
     relatedRefs,
     authorityRefs,
     payload: {
@@ -733,9 +960,11 @@ function enrichAllocationAccountingEvent(
   const fromAccountRef = refFromRecord(mappings, record, ["from", "fromAccount", "from_account"], "ledger-account");
   const toAccountRef = refFromRecord(mappings, record, ["to", "toAccount", "to_account"], "ledger-account");
   const agreementRef = refFromRecord(mappings, record, ["agreement", "agreementRef", "agreement_ref"], "agreement");
+  const decisionRef = refFromRecord(mappings, record, ["decision", "decisionRef", "decision_ref"], "decision");
   const authorityRefs = refsDefined([
     event.objectRef.type === "agreement" ? event.objectRef : undefined,
-    agreementRef
+    agreementRef,
+    decisionRef
   ]);
   const amount = numberField(record, ["amount"]);
   const unit = textField(record, ["unit", "currency"]) ?? "credits";
@@ -747,12 +976,35 @@ function enrichAllocationAccountingEvent(
         ]
       : [];
 
+  const originalTransactionRef = refFromRecord(
+    mappings,
+    record,
+    ["reverses", "reversalOf", "reversal_of", "originalTransaction", "original_transaction"],
+    "ledger-entry"
+  );
+  const isReversal = event.type === "accounting.ledger_entry.reversed";
+  const supersededEventId = isReversal && originalTransactionRef !== undefined
+    ? `event.import.common-credit.transaction.${slugForEventId(originalTransactionRef.source?.sourceId ?? originalTransactionRef.id)}.accounting-ledger-entry-posted`
+    : undefined;
+
   return optionalEvent({
     ...event,
-    relatedRefs: refsDefined([ownerRef, fromAccountRef, toAccountRef, agreementRef]).filter(
+    relatedRefs: refsDefined([ownerRef, fromAccountRef, toAccountRef, agreementRef, decisionRef, originalTransactionRef]).filter(
       (ref) => !sameRef(ref, event.objectRef)
     ),
     authorityRefs,
+    ...(supersededEventId === undefined ? {} : { supersedesEventId: supersededEventId }),
+    ...(supersededEventId === undefined
+      ? {}
+      : {
+          supersession: {
+            supersedesEventId: supersededEventId,
+            supersededAt: event.occurredAt,
+            reason: textField(record, ["memo", "reason"]) ?? "ledger entry reversed",
+            replacementObjectRef: event.objectRef,
+            authorityRefs
+          }
+        }),
     payload: {
       ...event.payload,
       title: titleForRecord(record),
@@ -760,12 +1012,86 @@ function enrichAllocationAccountingEvent(
       ownerRefId: ownerRef?.id,
       accountKind: textField(record, ["accountKind", "account_kind", "kind", "type"]),
       agreementRefId: agreementRef?.id,
+      decisionRefId: decisionRef?.id,
       memo: textField(record, ["memo", "summary", "description"]),
       effectiveAt: textField(record, ["postedAt", "posted_at", "effectiveAt", "effective_at"]),
+      originalLedgerEntryRefId: originalTransactionRef?.id,
+      originalEventId: supersededEventId,
       lines,
       totals: lines.length === 0 ? undefined : { [unit]: { debit: amount, credit: amount } }
     }
   });
+}
+
+function validationForFixtures(
+  fixtures: readonly LegacyCapabilityWrapperFixture[],
+  events: readonly CanopyEvent[],
+  objectRefs: readonly ObjectRef[],
+  canonicalMappings: readonly CanonicalMappingRecord[]
+): FoldInValidationReport {
+  return validateFoldIn({
+    events,
+    expectedRefs: objectRefs,
+    expectedEventTypes: events.map((event) => event.type),
+    objectPageRefs: objectRefs.filter((ref) =>
+      fixtures.some((fixture) => objectPageTypesFor(fixture.kind).includes(ref.type))
+    ),
+    resourceRefs: objectRefs.filter((ref) => ref.type === "resource"),
+    importPlans: fixtures.map((fixture) => ({
+      sourceProject: fixture.sourceProject,
+      planId: `${fixture.sourceProject}-fold-in`
+    })),
+    shellNavigation: fixtures.flatMap((fixture) => shellNavigationFor(fixture.kind)),
+    capabilityPackageNames: fixtures.flatMap((fixture) => capabilityPackagesFor(fixture.kind)),
+    canonicalMappingRefs: canonicalMappings.map((mapping) => mapping.canonicalRef)
+  });
+}
+
+function writeUnknownSubtypeAuditRecords(
+  runtime: ReturnType<typeof createInMemoryCanonicalPersistence>,
+  fixture: LegacyCapabilityWrapperFixture,
+  unknownLocalSubtypes: readonly UnknownLocalSubtypeReviewItem[]
+): readonly AdapterAuditRecord[] {
+  return unknownLocalSubtypes.map((item) =>
+    runtime.putAdapterAudit({
+      id: `adapter-audit.import.unknown-local-subtype.${item.sourceProject}.${slugForEventId(item.sourceObject)}.${slugForEventId(item.sourceId)}.${importedAt}`,
+      kind: "adapter-audit",
+      schemaVersion: 1,
+      createdAt: importedAt,
+      adapterName: `import.${item.sourceProject}`,
+      direction: "migration",
+      operation: "import.unknown-local-subtype.review-required",
+      status: "partial",
+      startedAt: importedAt,
+      completedAt: importedAt,
+      systemActor: "migration",
+      externalRef: {
+        provider: "phase-6-legacy-wrapper",
+        resourceType: item.sourceObject,
+        resourceId: item.sourceId,
+        sourceProject: item.sourceProject
+      },
+      eventIds: [],
+      outboxIds: [],
+      warnings: ["unknown-local-subtype"],
+      errors: [],
+      metadata: {
+        sourceProject: item.sourceProject,
+        wrapperKind: fixture.kind,
+        sourceObject: item.sourceObject,
+        sourceId: item.sourceId,
+        sourcePointer: {
+          sourceProject: item.sourceProject,
+          sourceEntity: item.sourceObject,
+          sourceId: item.sourceId,
+          importedAt
+        },
+        reason: item.reason,
+        reviewStatus: "review-required",
+        requiredAction: "Add an explicit Phase 6 wrapper mapping or retire/artifact the source subtype."
+      }
+    })
+  );
 }
 
 function reviewAuthorityRef(kind: LegacyCapabilityWrapperKind): ObjectRef {
@@ -782,6 +1108,21 @@ function withImportSequenceTime(event: CanopyEvent, index: number): CanopyEvent 
     ...event,
     occurredAt: `2026-06-14T12:00:${String(index).padStart(2, "0")}.000Z`
   };
+}
+
+function governanceEventTypeForItem(
+  event: CanopyEvent,
+  itemType: string | undefined
+): CanopyEventType {
+  if (containsToken(itemType, "objection")) {
+    return "governance.objection.raised";
+  }
+
+  if (containsToken(itemType, "amendment")) {
+    return "governance.amendment.submitted";
+  }
+
+  return event.type;
 }
 
 function refFromRecord(
@@ -812,21 +1153,47 @@ function legacyRecord(event: CanopyEvent): LegacySourceRecord {
 function shellNavigationFor(
   kind: LegacyCapabilityWrapperKind
 ): readonly { readonly label: string; readonly href: string }[] {
-  return kind === "resource-care"
-    ? [
-        { label: "Resource Care", href: "/resource-care" },
-        { label: "Objects", href: "/objects" }
-      ]
-    : [
-        { label: "Claims & Evidence", href: "/claims-evidence" },
-        { label: "Objects", href: "/objects" }
-      ];
+  if (kind === "resource-care") {
+    return [
+      { label: "Resource Care", href: "/resource-care" },
+      { label: "Objects", href: "/objects" }
+    ];
+  }
+
+  if (kind === "claims-evidence") {
+    return [
+      { label: "Claims & Evidence", href: "/claims-evidence" },
+      { label: "Objects", href: "/objects" }
+    ];
+  }
+
+  if (kind === "governance-authority") {
+    return [
+      { label: "Governance", href: "/governance" },
+      { label: "Authority", href: "/authority" }
+    ];
+  }
+
+  return [
+    { label: "Allocation Accounting", href: "/allocation-accounting" },
+    { label: "Objects", href: "/objects" }
+  ];
 }
 
 function capabilityPackagesFor(kind: LegacyCapabilityWrapperKind): readonly string[] {
-  return kind === "resource-care"
-    ? ["@canopy/capabilities-resource-care"]
-    : ["@canopy/capabilities-claims-evidence"];
+  if (kind === "resource-care") {
+    return ["@canopy/capabilities-resource-care"];
+  }
+
+  if (kind === "claims-evidence") {
+    return ["@canopy/capabilities-claims-evidence"];
+  }
+
+  if (kind === "governance-authority") {
+    return ["@canopy/capabilities-governance"];
+  }
+
+  return ["@canopy/capabilities-allocation-accounting"];
 }
 
 function titleForRecord(record: LegacySourceRecord): string | undefined {
@@ -920,6 +1287,17 @@ function refKey(ref: ObjectRef): string {
 
 function normalizeKind(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function containsToken(value: string | undefined, token: string): boolean {
+  return value?.toLowerCase().includes(token.toLowerCase()) ?? false;
+}
+
+function slugForEventId(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function isRecord(value: unknown): value is LegacySourceRecord {
