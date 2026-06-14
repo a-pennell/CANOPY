@@ -23,6 +23,7 @@ import {
   createInMemoryCanonicalPersistence,
   type CanonicalPersistenceRuntime
 } from "@canopy/database-runtime";
+import { executeRiverbendCyberneticSlice } from "@canopy/evaluation-vertical-slice";
 import {
   executeSampleExportBundleImports,
   type SampleExportBundleImportExecutionResult
@@ -205,6 +206,7 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   const scopePreset = options.scopePreset ?? "riverbend";
   const runtime = createInMemoryCanonicalPersistence({ now: () => generatedAt });
   const materializedProjectionStore = createInMemoryMaterializedProjectionStore();
+  const phase7Slice = executeRiverbendCyberneticSlice();
   const imports = executeSampleExportBundleImports({
     bundles: foldedSourceSampleExportBundles,
     runtime,
@@ -215,6 +217,9 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     }
   });
   for (const event of firstReplayableGoldenFixtureEvents) {
+    runtime.appendEvent(event, { recordedAt: generatedAt });
+  }
+  for (const event of phase7Slice.events) {
     runtime.appendEvent(event, { recordedAt: generatedAt });
   }
   rebuildAndPersistAllProjections(runtime, {
@@ -230,14 +235,15 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   const routeSelectedObjectRef = selectedObjectRefForRoute(objectRefs, routePath);
   const selectedObjectRef =
     routeSelectedObjectRef ??
+    phase7Slice.refs.resourceRef ??
     goldenFixtureRefs.resourceNorthPasture ??
     findRef(objectRefs, "resource") ??
     imports[0]?.execution.mappingRecords[0]?.canonicalRef ??
     imports[0]?.execution.eventRecords[0]?.objectRef;
-  const decisionRef = goldenFixtureRefs.decisionUseRight ?? findRef(objectRefs, "decision");
-  const resourceRef = goldenFixtureRefs.resourceNorthPasture ?? findRef(objectRefs, "resource");
-  const claimRef = goldenFixtureRefs.claimFlowNeed ?? findRef(objectRefs, "claim");
-  const useRightRef = goldenFixtureRefs.useRightNorthPasture;
+  const decisionRef = phase7Slice.refs.decisionRef ?? goldenFixtureRefs.decisionUseRight ?? findRef(objectRefs, "decision");
+  const resourceRef = phase7Slice.refs.resourceRef ?? goldenFixtureRefs.resourceNorthPasture ?? findRef(objectRefs, "resource");
+  const claimRef = phase7Slice.refs.claimRef ?? goldenFixtureRefs.claimFlowNeed ?? findRef(objectRefs, "claim");
+  const useRightRef = phase7Slice.refs.useRightRef ?? goldenFixtureRefs.useRightNorthPasture;
   const scope = scopeForPreset(scopePreset, selectedObjectRef);
   const persistedShell = buildPersistedCanopyShellSnapshot({
     runtime,
@@ -395,10 +401,13 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   const scopeOptions = buildScopeOptions(routePath, scopePreset);
   const relationshipGraph = buildRelationshipGraph(session.snapshot.surfaces.civicMemoryStream.timeline);
   const pathway = buildRiverbendPathway({
+    thresholdRef: phase7Slice.refs.thresholdRef,
     claimRef,
     decisionRef,
     resourceRef,
-    useRightRef
+    useRightRef,
+    outcomeRef: phase7Slice.refs.outcomeRef,
+    exportRef: phase7Slice.refs.exportRef
   });
   const attentionQueues = buildAttentionQueues(persistedShell.snapshot.attention);
   const objectPageSections = buildObjectPageSections(session);
@@ -618,18 +627,22 @@ function buildRelationshipGraph(
 }
 
 function buildRiverbendPathway(input: {
+  readonly thresholdRef: ObjectRef | undefined;
   readonly claimRef: ObjectRef | undefined;
   readonly decisionRef: ObjectRef | undefined;
   readonly resourceRef: ObjectRef | undefined;
   readonly useRightRef: ObjectRef | undefined;
+  readonly outcomeRef: ObjectRef | undefined;
+  readonly exportRef: ObjectRef | undefined;
 }): readonly CanopyWebPathwayStep[] {
   return [
-    pathwayStep("Observe", goldenFixtureRefs.livingSystemRiverbend, "/memory", "Riverbend Creek condition enters civic memory."),
-    pathwayStep("Claim", input.claimRef, "/claims-evidence", "Flow or food need is framed as a contestable claim."),
-    pathwayStep("Resource", input.resourceRef, objectRoute(input.resourceRef), "A commons resource becomes the object page anchor."),
-    pathwayStep("Decide", input.decisionRef, "/decisions", "Authority, evidence, and outcome gather into a decision packet."),
-    pathwayStep("Care", input.useRightRef, "/resource-care", "Use right links resource, holder, conditions, and review path."),
-    pathwayStep("Federate", goldenFixtureRefs.exportEnvelope, "/federation", "Export preview carries mappings, data rules, and redaction posture.")
+    pathwayStep("Observe", input.thresholdRef, "/memory", "Mill Creek threshold breach enters civic memory."),
+    pathwayStep("Understand", input.claimRef, "/claims-evidence", "School food need is framed as a contestable claim with evidence."),
+    pathwayStep("Coordinate", input.resourceRef, objectRoute(input.resourceRef), "Green Acre surplus becomes the resource anchor."),
+    pathwayStep("Deliberate", input.decisionRef, "/decisions", "Guardian review, evidence, and outcome gather into a decision packet."),
+    pathwayStep("Act", input.useRightRef, "/resource-care", "Use right links crop share, holder, conditions, and review path."),
+    pathwayStep("Learn", input.outcomeRef, objectRoute(input.outcomeRef), "Outcome and retrospective close the feedback loop."),
+    pathwayStep("Federate", input.exportRef, "/federation", "Export preview carries mappings, data rules, and redaction posture.")
   ].filter((step): step is CanopyWebPathwayStep => step !== undefined);
 }
 

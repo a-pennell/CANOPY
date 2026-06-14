@@ -14,6 +14,7 @@
     "@canopy/contracts-testing": "0.0.0",
     "@canopy/database-import-plans": "0.0.0",
     "@canopy/database-runtime": "0.0.0",
+    "@canopy/evaluation-vertical-slice": "0.0.0",
     "@canopy/workflows-import-execution": "0.0.0",
     "@canopy/workflows-operations": "0.0.0",
     "@canopy/workflows-projection-rebuild": "0.0.0",

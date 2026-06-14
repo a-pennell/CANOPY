@@ -155,7 +155,7 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
           <Panel title="Map / Graph / List" kicker="one object query model" className="spanTwo">
             <div className="triad">
               <div className="mapPane" aria-label="Scoped map preview">
-                <span>Riverbend Creek</span>
+                <span>Mill Creek</span>
                 <strong>{model.relationshipGraph.nodes.length}</strong>
                 <small>object nodes in scope</small>
               </div>
