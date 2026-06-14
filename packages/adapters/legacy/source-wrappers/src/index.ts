@@ -9,6 +9,8 @@ import type {
   SourceProject
 } from "@canopy/contracts-kernel";
 import {
+  dryRunCommonCreditImport,
+  dryRunIcosImport,
   dryRunSensemakingImport,
   dryRunStewardshipImport,
   sourceIdFor,
@@ -37,11 +39,15 @@ import {
   type ProjectionRebuilderName
 } from "@canopy/workflows-projection-rebuild";
 
-export type LegacyCapabilityWrapperKind = "resource-care" | "claims-evidence";
+export type LegacyCapabilityWrapperKind =
+  | "resource-care"
+  | "claims-evidence"
+  | "governance-authority"
+  | "allocation-accounting";
 
 export interface LegacyCapabilityWrapperFixture {
   readonly kind: LegacyCapabilityWrapperKind;
-  readonly sourceProject: Extract<SourceProject, "stewardship" | "sensemaking">;
+  readonly sourceProject: Extract<SourceProject, "stewardship" | "sensemaking" | "icos" | "common-credit">;
   readonly rows: readonly LegacySourceRecord[];
 }
 
@@ -259,6 +265,148 @@ export const claimsEvidenceWrapperFixture = {
   ]
 } as const satisfies LegacyCapabilityWrapperFixture;
 
+export const governanceAuthorityWrapperFixture = {
+  kind: "governance-authority",
+  sourceProject: "icos",
+  rows: [
+    {
+      sourceObject: "actor",
+      id: "person.mira",
+      actorKind: "person",
+      actor_kind: "person",
+      name: "Mira Waters",
+      state: "active"
+    },
+    {
+      sourceObject: "actor",
+      id: "organization.river-council",
+      actorKind: "organization",
+      actor_kind: "organization",
+      name: "River Council",
+      state: "active"
+    },
+    {
+      sourceObject: "governance item",
+      id: "issue.water-window",
+      itemType: "issue",
+      item_type: "issue",
+      title: "Define emergency water window",
+      status: "open"
+    },
+    {
+      sourceObject: "governance item",
+      id: "proposal.water-window",
+      itemType: "proposal",
+      item_type: "proposal",
+      title: "Open dawn water window",
+      status: "open",
+      parent: "issue.water-window",
+      issue: "issue.water-window"
+    },
+    {
+      sourceObject: "governance item",
+      id: "policy.water-window",
+      itemType: "policy",
+      item_type: "policy",
+      title: "Water Window Policy",
+      status: "active",
+      parent: "issue.water-window",
+      mandateRef: "mandate.water-steward"
+    },
+    {
+      sourceObject: "mandate",
+      id: "mandate.water-steward",
+      holder: "person.mira",
+      scope: "water window coordination",
+      status: "active",
+      decisionRef: "decision.water-window"
+    },
+    {
+      sourceObject: "role assignment",
+      id: "role.water-steward",
+      assignee: "person.mira",
+      role: "watershed steward",
+      status: "active",
+      mandateRef: "mandate.water-steward"
+    },
+    {
+      sourceObject: "governance item",
+      id: "decision.water-window",
+      itemType: "decision",
+      item_type: "decision",
+      title: "Approve dawn water window",
+      status: "recorded",
+      parent: "proposal.water-window",
+      issue: "issue.water-window",
+      proposal: "proposal.water-window",
+      policyRef: "policy.water-window",
+      mandateRef: "mandate.water-steward",
+      outcome: "passed",
+      effect: "binding",
+      decisionMethod: "consent"
+    }
+  ]
+} as const satisfies LegacyCapabilityWrapperFixture;
+
+export const allocationAccountingWrapperFixture = {
+  kind: "allocation-accounting",
+  sourceProject: "common-credit",
+  rows: [
+    {
+      sourceObject: "member",
+      id: "member.kai",
+      name: "Kai Chen",
+      memberKind: "person",
+      member_kind: "person",
+      state: "active"
+    },
+    {
+      sourceObject: "member",
+      id: "member.food-hub",
+      name: "Food Hub",
+      memberKind: "organization",
+      member_kind: "organization",
+      state: "active"
+    },
+    {
+      sourceObject: "account",
+      id: "account.kai",
+      owner: "member.kai",
+      accountKind: "member",
+      account_kind: "member",
+      unit: "credits"
+    },
+    {
+      sourceObject: "account",
+      id: "account.food-hub",
+      owner: "member.food-hub",
+      accountKind: "reserve",
+      account_kind: "reserve",
+      unit: "credits"
+    },
+    {
+      sourceObject: "allocation agreement",
+      id: "agreement.food-distribution",
+      participants: ["member.kai", "member.food-hub"],
+      scope: "food hub distribution credit",
+      status: "active",
+      termsSummary: "Authorize food distribution credits for the drought window."
+    },
+    {
+      sourceObject: "transaction",
+      id: "transaction.food-distribution-001",
+      from: "account.food-hub",
+      to: "account.kai",
+      amount: 42,
+      unit: "credits",
+      posted_at: "2026-06-13T09:00:00.000Z",
+      status: "posted",
+      memo: "Food hub distribution credit",
+      agreementRef: "agreement.food-distribution"
+    }
+  ]
+} as const satisfies LegacyCapabilityWrapperFixture;
+
 export function executeLegacyCapabilityWrapper(
   fixture: LegacyCapabilityWrapperFixture
 ): LegacyCapabilityWrapperExecution {
@@ -290,9 +438,7 @@ export function executeLegacyCapabilityWrapper(
     expectedRefs: objectRefs,
     expectedEventTypes: events.map((event) => event.type),
     objectPageRefs: objectRefs.filter((ref) =>
-      fixture.kind === "resource-care"
-        ? ["resource", "use-right", "policy", "decision", "flow"].includes(ref.type)
-        : ["issue", "claim", "evidence", "source"].includes(ref.type)
+      objectPageTypesFor(fixture.kind).includes(ref.type)
     ),
     resourceRefs: objectRefs.filter((ref) => ref.type === "resource"),
     importPlans: [{ sourceProject: fixture.sourceProject, planId: `${fixture.sourceProject}-fold-in` }],
@@ -345,7 +491,7 @@ export function mappingForLocalRow(
 export function findUnknownLocalSubtypes(
   fixture: LegacyCapabilityWrapperFixture
 ): readonly UnknownLocalSubtypeReviewItem[] {
-  const known = fixture.kind === "resource-care" ? resourceCareKnownSourceObjects : claimsEvidenceKnownSourceObjects;
+  const known = knownSourceObjectsFor(fixture.kind);
 
   return fixture.rows
     .map((row, index) => {
@@ -370,7 +516,15 @@ function dryRunForFixture(fixture: LegacyCapabilityWrapperFixture): ImportDryRun
     return dryRunStewardshipImport(fixture.rows);
   }
 
-  return dryRunSensemakingImport(fixture.rows);
+  if (fixture.kind === "claims-evidence") {
+    return dryRunSensemakingImport(fixture.rows);
+  }
+
+  if (fixture.kind === "governance-authority") {
+    return dryRunIcosImport(fixture.rows);
+  }
+
+  return dryRunCommonCreditImport(fixture.rows);
 }
 
 function enrichCandidateEvents(
@@ -381,12 +535,30 @@ function enrichCandidateEvents(
 
   return dryRun.candidateEvents.map((event, index) =>
     withImportSequenceTime(
-      kind === "resource-care"
-        ? enrichResourceCareEvent(event, mappings)
-        : enrichClaimsEvidenceEvent(event, mappings),
+      enrichEventForKind(kind, event, mappings),
       index
     )
   );
+}
+
+function enrichEventForKind(
+  kind: LegacyCapabilityWrapperKind,
+  event: CanopyEvent,
+  mappings: readonly CanonicalMappingCandidate[]
+): CanopyEvent {
+  if (kind === "resource-care") {
+    return enrichResourceCareEvent(event, mappings);
+  }
+
+  if (kind === "claims-evidence") {
+    return enrichClaimsEvidenceEvent(event, mappings);
+  }
+
+  if (kind === "governance-authority") {
+    return enrichGovernanceAuthorityEvent(event, mappings);
+  }
+
+  return enrichAllocationAccountingEvent(event, mappings);
 }
 
 function enrichResourceCareEvent(
@@ -487,6 +659,115 @@ function enrichClaimsEvidenceEvent(
   });
 }
 
+function enrichGovernanceAuthorityEvent(
+  event: CanopyEvent,
+  mappings: readonly CanonicalMappingCandidate[]
+): CanopyEvent {
+  const record = legacyRecord(event);
+  const assigneeRef = refFromRecord(mappings, record, ["assignee", "holder"], undefined);
+  const issueRef = refFromRecord(mappings, record, ["issue", "parent"], "issue");
+  const proposalRef = refFromRecord(mappings, record, ["proposal", "parent"], "proposal");
+  const mandateRef = refFromRecord(mappings, record, ["mandateRef", "mandate_ref", "mandate"], "mandate");
+  const policyRef = refFromRecord(mappings, record, ["policyRef", "policy_ref", "policy"], "policy");
+  const decisionRef = refFromRecord(mappings, record, ["decisionRef", "decision_ref", "decision"], "decision");
+  const authorityRefs = refsDefined([
+    mandateRef,
+    policyRef,
+    decisionRef
+  ]).filter((ref) => !sameRef(ref, event.objectRef));
+  const relatedRefs = refsDefined([
+    assigneeRef,
+    issueRef,
+    proposalRef,
+    mandateRef,
+    policyRef,
+    decisionRef
+  ]).filter((ref) => !sameRef(ref, event.objectRef));
+  const decisionPayload = event.objectRef.type === "decision"
+    ? optionalPayloadRecord({
+        id: event.objectRef.id,
+        type: "decision",
+        title: titleForRecord(record),
+        status: textField(record, ["status", "state"]),
+        issueRefs: refsDefined([issueRef]),
+        proposalRefs: refsDefined([proposalRef]),
+        authorityRefs,
+        outcome: textField(record, ["outcome"]),
+        effect: textField(record, ["effect"]),
+        rationale: textField(record, ["rationale", "body", "summary"]),
+        conditions: stringList(record, ["conditions", "condition"]),
+        decidedAt: textField(record, ["decidedAt", "decided_at", "occurredAt", "occurred_at"]),
+        decidedByRefs: authorityRefs
+      })
+    : undefined;
+
+  return optionalEvent({
+    ...event,
+    relatedRefs,
+    authorityRefs,
+    payload: {
+      ...event.payload,
+      title: titleForRecord(record),
+      summary: summaryForRecord(record),
+      status: textField(record, ["status", "state"]),
+      assigneeRefId: assigneeRef?.id,
+      holderRefId: assigneeRef?.id,
+      issueRefId: issueRef?.id,
+      proposalRefId: proposalRef?.id,
+      mandateRefId: mandateRef?.id,
+      policyRefId: policyRef?.id,
+      decisionRefId: decisionRef?.id,
+      effect: textField(record, ["effect"]),
+      outcome: textField(record, ["outcome"]),
+      decision: decisionPayload
+    }
+  });
+}
+
+function enrichAllocationAccountingEvent(
+  event: CanopyEvent,
+  mappings: readonly CanonicalMappingCandidate[]
+): CanopyEvent {
+  const record = legacyRecord(event);
+  const ownerRef = refFromRecord(mappings, record, ["owner", "accountOwner", "account_owner"], undefined);
+  const fromAccountRef = refFromRecord(mappings, record, ["from", "fromAccount", "from_account"], "ledger-account");
+  const toAccountRef = refFromRecord(mappings, record, ["to", "toAccount", "to_account"], "ledger-account");
+  const agreementRef = refFromRecord(mappings, record, ["agreement", "agreementRef", "agreement_ref"], "agreement");
+  const authorityRefs = refsDefined([
+    event.objectRef.type === "agreement" ? event.objectRef : undefined,
+    agreementRef
+  ]);
+  const amount = numberField(record, ["amount"]);
+  const unit = textField(record, ["unit", "currency"]) ?? "credits";
+  const lines =
+    event.objectRef.type === "ledger-entry" && fromAccountRef !== undefined && toAccountRef !== undefined && amount !== undefined
+      ? [
+          { accountRef: fromAccountRef, side: "debit", amount, unit, memo: textField(record, ["memo"]) },
+          { accountRef: toAccountRef, side: "credit", amount, unit, memo: textField(record, ["memo"]) }
+        ]
+      : [];
+
+  return optionalEvent({
+    ...event,
+    relatedRefs: refsDefined([ownerRef, fromAccountRef, toAccountRef, agreementRef]).filter(
+      (ref) => !sameRef(ref, event.objectRef)
+    ),
+    authorityRefs,
+    payload: {
+      ...event.payload,
+      title: titleForRecord(record),
+      summary: summaryForRecord(record),
+      ownerRefId: ownerRef?.id,
+      accountKind: textField(record, ["accountKind", "account_kind", "kind", "type"]),
+      agreementRefId: agreementRef?.id,
+      memo: textField(record, ["memo", "summary", "description"]),
+      effectiveAt: textField(record, ["postedAt", "posted_at", "effectiveAt", "effective_at"]),
+      lines,
+      totals: lines.length === 0 ? undefined : { [unit]: { debit: amount, credit: amount } }
+    }
+  });
+}
+
 function reviewAuthorityRef(kind: LegacyCapabilityWrapperKind): ObjectRef {
   return {
     id: `authority.phase-6.${kind}`,
@@ -553,7 +834,7 @@ function titleForRecord(record: LegacySourceRecord): string | undefined {
 }
 
 function summaryForRecord(record: LegacySourceRecord): string | undefined {
-  return textField(record, ["summary", "description", "statement", "note", "outcome", "reviewNote"]);
+  return textField(record, ["summary", "description", "statement", "note", "memo", "outcome", "reviewNote", "termsSummary"]);
 }
 
 function textField(record: LegacySourceRecord, names: readonly string[]): string | undefined {
@@ -564,6 +845,23 @@ function textField(record: LegacySourceRecord, names: readonly string[]): string
     }
     if (typeof value === "number" || typeof value === "bigint") {
       return String(value);
+    }
+  }
+
+  return undefined;
+}
+
+function numberField(record: LegacySourceRecord, names: readonly string[]): number | undefined {
+  for (const name of names) {
+    const value = record[name];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
     }
   }
 
@@ -654,5 +952,59 @@ const claimsEvidenceKnownSourceObjects = new Set([
   "ai extraction",
   "model"
 ]);
+
+const governanceAuthorityKnownSourceObjects = new Set([
+  "actor",
+  "role assignment",
+  "mandate",
+  "governance item",
+  "issue",
+  "proposal",
+  "decision",
+  "policy",
+  "appeal",
+  "objection",
+  "amendment"
+]);
+
+const allocationAccountingKnownSourceObjects = new Set([
+  "member",
+  "account",
+  "allocation agreement",
+  "transaction",
+  "ledger entry"
+]);
+
+function knownSourceObjectsFor(kind: LegacyCapabilityWrapperKind): ReadonlySet<string> {
+  if (kind === "resource-care") {
+    return resourceCareKnownSourceObjects;
+  }
+
+  if (kind === "claims-evidence") {
+    return claimsEvidenceKnownSourceObjects;
+  }
+
+  if (kind === "governance-authority") {
+    return governanceAuthorityKnownSourceObjects;
+  }
+
+  return allocationAccountingKnownSourceObjects;
+}
+
+function objectPageTypesFor(kind: LegacyCapabilityWrapperKind): readonly CanopyObjectType[] {
+  if (kind === "resource-care") {
+    return ["resource", "use-right", "policy", "decision", "flow"];
+  }
+
+  if (kind === "claims-evidence") {
+    return ["issue", "claim", "evidence", "source"];
+  }
+
+  if (kind === "governance-authority") {
+    return ["issue", "proposal", "decision", "policy", "mandate", "role", "person", "organization"];
+  }
+
+  return ["person", "organization", "ledger-account", "ledger-entry", "agreement"];
+}
 
 void (undefined as unknown as CanopyEventType | CanopyId);

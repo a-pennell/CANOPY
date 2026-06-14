@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  allocationAccountingWrapperFixture,
   claimsEvidenceWrapperFixture,
   executeLegacyCapabilityWrapper,
   findUnknownLocalSubtypes,
+  governanceAuthorityWrapperFixture,
   mappingForLocalRow,
   readWrapperProjection,
   resourceCareWrapperFixture
@@ -130,6 +132,114 @@ describe("legacy capability source wrappers", () => {
     expect(civicMemory?.projection.replayCheckpoint.projectedEventCount).toBe(
       result.execution.eventRecords.length
     );
+  });
+
+  it("runs ICOS governance and authority rows through native authority and decision projections", () => {
+    const result = executeLegacyCapabilityWrapper(governanceAuthorityWrapperFixture);
+    const issueMapping = mappingForLocalRow(result, "governance item", "issue.water-window");
+    const proposalMapping = mappingForLocalRow(result, "governance item", "proposal.water-window");
+    const mandateMapping = mappingForLocalRow(result, "mandate", "mandate.water-steward");
+    const decisionMapping = mappingForLocalRow(result, "governance item", "decision.water-window");
+
+    expect(result.validation.unresolvedRisks).toEqual([]);
+    expect(result.validation.status).toBe("pass");
+    expect(result.validation.shellLeakage.findings).toEqual([]);
+    expect(result.unknownLocalSubtypes).toEqual([]);
+    expect(decisionMapping?.canonicalRef.type).toBe("decision");
+
+    const authority = readWrapperProjection(result, "authority", {
+      id: "projection.authority",
+      type: "source",
+      namespace: "canopy.projection-rebuild",
+      lifecycleStatus: "active"
+    });
+    const decisionPacket = readWrapperProjection(result, "decision-packet", decisionMapping!.canonicalRef);
+    const decisionPage = readWrapperProjection(result, "object-page", decisionMapping!.canonicalRef);
+
+    expect(authority?.projection.indicators).toMatchObject({
+      status: "ok",
+      missingAuthorityEventIds: [],
+      uncoveredBindingEventIds: []
+    });
+    expect(authority?.projection.authorityEvents.map((event) => event.kind)).toEqual(
+      expect.arrayContaining(["role", "mandate", "policy", "decision"])
+    );
+    expect(decisionPacket?.projection).toMatchObject({
+      decisionRef: decisionMapping?.canonicalRef,
+      outcome: "passed",
+      decision: {
+        ref: decisionMapping?.canonicalRef,
+        outcome: "passed",
+        effect: "binding"
+      }
+    });
+    expect(decisionPacket?.projection.issueRefs).toEqual([issueMapping?.canonicalRef]);
+    expect(decisionPacket?.projection.proposalRefs).toEqual([proposalMapping?.canonicalRef]);
+    expect(decisionPacket?.projection.authorityRefs.map((ref) => ref.id)).toContain(
+      mandateMapping?.canonicalRef.id
+    );
+    expect(decisionPage?.projection.timelineEvents.map((event) => event.type)).toContain(
+      "governance.decision.recorded"
+    );
+  });
+
+  it("runs CommonCredit accounting rows through native ledger events and projections", () => {
+    const result = executeLegacyCapabilityWrapper(allocationAccountingWrapperFixture);
+    const agreementMapping = mappingForLocalRow(
+      result,
+      "allocation agreement",
+      "agreement.food-distribution"
+    );
+    const fromAccountMapping = mappingForLocalRow(result, "account", "account.food-hub");
+    const toAccountMapping = mappingForLocalRow(result, "account", "account.kai");
+    const ledgerEntryMapping = mappingForLocalRow(
+      result,
+      "transaction",
+      "transaction.food-distribution-001"
+    );
+
+    expect(result.validation.unresolvedRisks).toEqual([]);
+    expect(result.validation.status).toBe("pass");
+    expect(result.validation.shellLeakage.findings).toEqual([]);
+    expect(result.unknownLocalSubtypes).toEqual([]);
+    expect(ledgerEntryMapping?.canonicalRef.type).toBe("ledger-entry");
+
+    const authority = readWrapperProjection(result, "authority", {
+      id: "projection.authority",
+      type: "source",
+      namespace: "canopy.projection-rebuild",
+      lifecycleStatus: "active"
+    });
+    const civicMemory = readWrapperProjection(result, "civic-memory", {
+      id: "projection.civic-memory",
+      type: "source",
+      namespace: "canopy.projection-rebuild",
+      lifecycleStatus: "active"
+    });
+    const ledgerPage = readWrapperProjection(result, "object-page", ledgerEntryMapping!.canonicalRef);
+
+    expect(authority?.projection.indicators).toMatchObject({
+      status: "ok",
+      missingAuthorityEventIds: [],
+      uncoveredBindingEventIds: []
+    });
+    expect(civicMemory?.projection.replayCheckpoint.projectedEventCount).toBe(
+      result.execution.eventRecords.length
+    );
+    expect(ledgerPage?.projection).toMatchObject({
+      objectRef: ledgerEntryMapping?.canonicalRef,
+      sourceCapabilities: ["allocation-accounting"]
+    });
+    expect(ledgerPage?.projection.authorityRefs).toEqual([agreementMapping?.canonicalRef]);
+    expect(ledgerPage?.projection.timelineEvents[0]?.type).toBe("accounting.ledger_entry.posted");
+    expect(ledgerPage?.projection.timelineEvents[0]?.relatedRefs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([
+        fromAccountMapping?.canonicalRef.id,
+        toAccountMapping?.canonicalRef.id,
+        agreementMapping?.canonicalRef.id
+      ])
+    );
+    expect(ledgerPage?.projection.timelineEvents[0]?.summary).toBe("Food hub distribution credit");
   });
 
   it("reports unknown local subtypes for review before execution", () => {
