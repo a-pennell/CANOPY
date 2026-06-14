@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/contracts/*"
+  - "packages/kernel/*"
+  - "packages/capabilities/*"
+  - "packages/projections/*"
+  - "packages/adapters/*/*"
+  - "packages/database/*"
+  - "packages/workflows/*"
+  - "packages/ui/*"
+  - "packages/evaluation/*"

@@ -1,0 +1,74 @@
+// Canopy Prisma-shaped migration placeholders.
+// Provider selection is intentionally deferred.
+// Do not run this schema until datasource, generator, and provider details exist.
+
+model CanopyObjectRef {
+  objectRef String @id
+  objectKind String
+  namespace String
+  createdAt String
+  createdBy String?
+  metadataText String?
+}
+
+model CanopyCanonicalMapping {
+  mappingRef String @id
+  sourceSystem String
+  sourceRef String
+  objectRef String
+  mappingKind String
+  validFrom String
+  validTo String?
+  metadataText String?
+
+  @@unique([sourceSystem, sourceRef, mappingKind])
+}
+
+model CanopyEvent {
+  eventRef String @id
+  objectRef String
+  eventType String
+  eventVersion Int
+  occurredAt String
+  recordedAt String
+  causationRef String?
+  correlationRef String?
+  actorRef String?
+  payloadText String
+  metadataText String?
+}
+
+model CanopyOutbox {
+  outboxRef String @id
+  eventRef String
+  destination String
+  messageType String
+  messageText String
+  status String
+  availableAt String
+  claimedAt String?
+  completedAt String?
+  failureText String?
+}
+
+model CanopyProjectionState {
+  projectorRef String @id
+  projectionName String
+  lastEventRef String?
+  lastEventRecordedAt String?
+  rebuildRef String?
+  checkpointText String?
+  updatedAt String
+}
+
+model CanopyAdapterAudit {
+  auditRef String @id
+  adapterRef String
+  operationKind String
+  objectRef String?
+  externalRef String?
+  eventRef String?
+  occurredAt String
+  evidenceText String
+  metadataText String?
+}

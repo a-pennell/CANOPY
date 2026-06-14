@@ -1,0 +1,21 @@
+{
+  "name": "@canopy/app-shell",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@canopy/contracts-kernel": "0.0.0",
+    "@canopy/contracts-ui": "0.0.0",
+    "@canopy/database-import-plans": "0.0.0",
+    "@canopy/database-runtime": "0.0.0",
+    "@canopy/projections-authority": "0.0.0",
+    "@canopy/projections-claim-evidence": "0.0.0",
+    "@canopy/projections-civic-memory": "0.0.0",
+    "@canopy/projections-decision-packet": "0.0.0",
+    "@canopy/projections-federation-export": "0.0.0",
+    "@canopy/projections-object-page": "0.0.0",
+    "@canopy/projections-resource-stewardship": "0.0.0",
+    "@canopy/workflows-projection-rebuild": "0.0.0"
+  }
+}

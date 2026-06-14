@@ -1,0 +1,19 @@
+{
+  "name": "@canopy/capabilities-governance",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@canopy/contracts-governance": "0.0.0",
+    "@canopy/contracts-kernel": "0.0.0",
+    "@canopy/kernel-civic-memory": "0.0.0",
+    "@canopy/kernel-object-registry": "0.0.0"
+  },
+  "devDependencies": {
+    "@canopy/contracts-testing": "0.0.0"
+  }
+}

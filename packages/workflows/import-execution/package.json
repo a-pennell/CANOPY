@@ -1,0 +1,20 @@
+{
+  "name": "@canopy/workflows-import-execution",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@canopy/contracts-database": "0.0.0",
+    "@canopy/contracts-kernel": "0.0.0",
+    "@canopy/database-import-plans": "0.0.0",
+    "@canopy/database-runtime": "0.0.0",
+    "@canopy/workflows-outbox": "0.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

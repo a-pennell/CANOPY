@@ -1,0 +1,15 @@
+{
+  "name": "@canopy/capabilities-data-stewardship",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@canopy/contracts-kernel": "0.0.0",
+    "@canopy/kernel-civic-memory": "0.0.0",
+    "@canopy/kernel-object-registry": "0.0.0"
+  }
+}
