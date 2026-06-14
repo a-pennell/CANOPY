@@ -1,7 +1,19 @@
-import type { ReactNode } from "react";
 import Link from "next/link";
 import type { CanopyWebModel, CanopyWebWorkspace } from "../lib/canopy-data";
+import { CommandPreview } from "./command-preview";
 import { ObjectSearch } from "./object-search";
+import {
+  EmptyLine,
+  KeyValue,
+  Metric,
+  ObjectRefLink,
+  Panel,
+  StatusPill,
+  Timeline,
+  displayRef,
+  formatRef,
+  formatTime
+} from "./primitives";
 import { ScopeSwitcher } from "./scope-switcher";
 
 const readinessTone = {
@@ -9,8 +21,6 @@ const readinessTone = {
   attention: "toneWarn",
   blocked: "toneBad"
 } as const;
-
-type Tone = "toneGood" | "toneWarn" | "toneBad" | "toneInfo";
 
 export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
   const snapshot = model.persistedShell.snapshot;
@@ -97,18 +107,22 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
 
         <section className="mainGrid" aria-label="Phase 5 shell">
           <Panel title="Attention Inbox" kicker="review queue">
-            {snapshot.attention.length === 0 ? (
+            {model.attentionQueues.length === 0 ? (
               <EmptyLine>Attention is clear for the current seed.</EmptyLine>
             ) : (
-              <div className="list">
-                {snapshot.attention.map((item) => (
-                  <div className="listRow" key={item.id}>
+              <div className="attentionQueues">
+                {model.attentionQueues.map((item) => (
+                  <Link
+                    href={routeHref(item.route, model.scopePreset)}
+                    className="attentionQueue"
+                    key={item.id}
+                  >
                     <div>
-                      <strong>{item.title}</strong>
-                      <span>{item.kind}</span>
+                      <strong>{item.label}</strong>
+                      <span>{item.nextAction}</span>
                     </div>
-                    <StatusPill label="events" tone="toneWarn">{item.eventIds.length}</StatusPill>
-                  </div>
+                    <StatusPill label="events" tone={item.tone}>{item.count}</StatusPill>
+                  </Link>
                 ))}
               </div>
             )}
@@ -156,13 +170,14 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
               </div>
               <div className="objectListPane" aria-label="Object list preview">
                 {model.objectRefs.slice(0, 10).map((record) => (
-                  <Link
-                    href={routeHref(`/objects/${record.objectType}/${encodeURIComponent(record.objectId)}`, model.scopePreset)}
+                  <ObjectRefLink
+                    refValue={record.ref}
+                    scopePreset={model.scopePreset}
                     key={`${record.objectType}-${record.objectId}`}
                   >
                     <span>{record.objectType}</span>
                     <strong>{displayRef(record.ref)}</strong>
-                  </Link>
+                  </ObjectRefLink>
                 ))}
               </div>
             </div>
@@ -185,18 +200,7 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
           </Panel>
 
           <Panel title="Data Stewardship" kicker="visibility, retention, redaction">
-            <div className="stack">
-              <KeyValue label="Visibility states" value={formatCounts(visibilityCounts)} />
-              <KeyValue label="Data states" value={formatCounts(dataStateCounts)} />
-              <KeyValue
-                label="Redactions"
-                value={String(snapshot.surfaces.federationExportState?.redactionSummary?.redactionCount ?? 0)}
-              />
-              <KeyValue
-                label="Agreements"
-                value={String(snapshot.surfaces.federationExportState?.dataStewardshipAgreementRefs.length ?? 0)}
-              />
-            </div>
+            <DataStewardshipReview model={model} />
           </Panel>
 
           {model.workspaces.map((workspace) => (
@@ -204,16 +208,19 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
           ))}
 
           <Panel title="Command Detail" kicker="mutation preview contract" className="spanTwo">
-            <div className="commandDetailGrid">
-              {model.commandPreviews.slice(0, 4).map((preview) => (
-                <div className="commandDetail" key={preview.command}>
-                  <span>{preview.command}</span>
-                  <KeyValue label="Route" value={preview.screen.route.path} />
-                  <KeyValue label="Authority check" value={preview.status === "handled" ? "route available" : "review required"} />
-                  <KeyValue label="Event effect" value={preview.screen.route.surfaceKind} />
-                  <KeyValue label="Export impact" value={preview.screen.route.path === "/federation" ? "preview envelope" : "memory trace"} />
-                </div>
-              ))}
+            <CommandPreview preview={model.mutationPreview} />
+          </Panel>
+
+          <Panel title="Permission Explanation" kicker="authority, appeal, memory result" className="spanTwo">
+            <div className="permissionGrid">
+              <KeyValue label="Command" value={model.permissionExplanation.commandLabel} />
+              <KeyValue label="Authority source" value={model.permissionExplanation.authoritySource} />
+              <KeyValue label="Denial reason" value={model.permissionExplanation.denialReason ?? "none"} />
+              <KeyValue label="Appeal path" value={model.permissionExplanation.appealPath} />
+              <KeyValue label="Visibility effect" value={model.permissionExplanation.visibilityEffect} />
+              <KeyValue label="Civic memory event" value={model.permissionExplanation.civicMemoryEvent} />
+              <KeyValue label="Claims/evidence touched" value={String(model.permissionExplanation.claimsEvidenceTouched)} />
+              <KeyValue label="Federation impact" value={model.permissionExplanation.federationImpact} />
             </div>
           </Panel>
 
@@ -291,6 +298,19 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <KeyValue label="Authority refs" value={String(objectPage.authorityRefs.length)} />
           <KeyValue label="Capabilities" value={objectPage.sourceCapabilities.map(formatCapability).join(", ")} />
         </div>
+        <div className="sectionGrid" aria-label="Universal object page sections">
+          {model.objectPageSections.map((section) => (
+            <Link
+              href={routeHref(section.route, model.scopePreset)}
+              className={`sectionCard ${section.status}`}
+              key={section.id}
+            >
+              <span>{section.status}</span>
+              <strong>{section.title}</strong>
+              <small>{section.summary}</small>
+            </Link>
+          ))}
+        </div>
         <Timeline entries={objectPage.timeline.slice(0, 6)} />
       </div>
     );
@@ -330,18 +350,18 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <KeyValue label="Claims" value={String(packet.claimRefs.length)} />
           <KeyValue label="Evidence" value={String(packet.evidenceRefs.length)} />
           <KeyValue label="Authority refs" value={String(packet.authorityRefs.length)} />
-          <KeyValue label="Stewardship outcomes" value={String(packet.stewardshipOutcomes.length)} />
+          <KeyValue label="Care outcomes" value={String(packet.stewardshipOutcomes.length)} />
         </div>
         <Timeline entries={packet.timeline.slice(0, 6)} />
       </div>
     );
   }
 
-  if (workspace.id === "stewardship") {
+  if (workspace.id === "resource-care") {
     const stewardship = surfaces.resourceStewardship;
 
     return stewardship === undefined ? (
-      <EmptyLine>Select a resource object to hydrate stewardship state.</EmptyLine>
+      <EmptyLine>Select a resource object to hydrate resource care state.</EmptyLine>
     ) : (
       <div className="stack">
         <div className="objectHeader">
@@ -437,8 +457,9 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
 
   if (workspace.id === "federation") {
     const state = surfaces.federationExportState;
+    const review = model.federationReview;
 
-    return state === undefined ? (
+    return state === undefined || review === undefined ? (
       <EmptyLine>No federation export state is visible.</EmptyLine>
     ) : (
       <div className="stack">
@@ -458,98 +479,35 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <KeyValue label="Mappings" value={String(state.localMappingIds.length)} />
           <KeyValue label="Warnings" value={String(state.readinessWarnings.length)} />
         </div>
+        <div className="reviewGrid">
+          <KeyValue label="Content hash" value={review.contentHash} />
+          <KeyValue label="Local mappings" value={String(review.localMappingCount)} />
+          <KeyValue label="Data agreements" value={String(review.dataStewardshipAgreementCount)} />
+          <KeyValue label="Redaction posture" value={review.redactionSummary} />
+        </div>
+        <div className="list">
+          {(review.readinessWarnings.length === 0 ? ["ready: no export warnings"] : review.readinessWarnings).map((warning) => (
+            <div className="listRow" key={warning}>
+              <div>
+                <strong>Readiness</strong>
+                <span>{warning}</span>
+              </div>
+              <StatusPill label="warning" tone={review.readinessWarnings.length === 0 ? "toneGood" : "toneWarn"}>
+                {review.readinessWarnings.length === 0 ? "ready" : "review"}
+              </StatusPill>
+            </div>
+          ))}
+        </div>
+        <div className="eventTrail">
+          {review.eventTrail.map((eventId) => (
+            <span key={eventId}>{eventId}</span>
+          ))}
+        </div>
       </div>
     );
   }
 
   return <pre className="screenText">{displayText(workspace.session.screen.text)}</pre>;
-}
-
-function Timeline({ entries }: { readonly entries: readonly { readonly id: string; readonly type: string; readonly occurredAt: string; readonly objectRef: { readonly namespace: string; readonly type: string; readonly id: string } }[] }) {
-  return (
-    <div className="timeline">
-      {entries.map((entry) => (
-        <div className="timelineRow" key={entry.id}>
-          <span>{formatTime(entry.occurredAt)}</span>
-          <strong>{entry.type}</strong>
-          <small>{formatRef(entry.objectRef)}</small>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Panel({
-  children,
-  className,
-  id,
-  kicker,
-  title
-}: Readonly<{
-  children: ReactNode;
-  className?: string | undefined;
-  id?: string | undefined;
-  kicker: string;
-  title: string;
-}>) {
-  return (
-    <article className={className === undefined ? "panel" : `panel ${className}`} id={id}>
-      <header className="panelHeader">
-        <p className="eyebrow">{kicker}</p>
-        <h3>{title}</h3>
-      </header>
-      {children}
-    </article>
-  );
-}
-
-function Metric({
-  compact = false,
-  detail,
-  label,
-  value
-}: Readonly<{
-  compact?: boolean;
-  detail: string;
-  label: string;
-  value: number;
-}>) {
-  return (
-    <div className={compact ? "metric compact" : "metric"}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
-function KeyValue({ label, value }: { readonly label: string; readonly value: string }) {
-  return (
-    <div className="keyValue">
-      <span>{label}</span>
-      <strong>{value || "none"}</strong>
-    </div>
-  );
-}
-
-function StatusPill({
-  children,
-  label,
-  tone
-}: Readonly<{
-  children: ReactNode;
-  label: string;
-  tone: Tone;
-}>) {
-  return (
-    <span className={`pill ${tone}`} aria-label={`${label}: ${children}`}>
-      {children}
-    </span>
-  );
-}
-
-function EmptyLine({ children }: { readonly children: ReactNode }) {
-  return <p className="muted">{children}</p>;
 }
 
 function countsBy(values: readonly string[]): Readonly<Record<string, number>> {
@@ -565,12 +523,28 @@ function formatCounts(counts: Readonly<Record<string, number>>): string {
     .join(", ");
 }
 
-function formatRef(ref: { readonly namespace: string; readonly type: string; readonly id: string }) {
-  return displayRef(ref);
+function DataStewardshipReview({ model }: { readonly model: CanopyWebModel }) {
+  const review = model.dataStewardshipReview;
+
+  return (
+    <div className="stack">
+      <div className="reviewGrid">
+        <KeyValue label="Visibility states" value={formatRows(review.visibilityStates)} />
+        <KeyValue label="Data states" value={formatRows(review.dataStates)} />
+        <KeyValue label="Redactions" value={review.redactionSummary} />
+        <KeyValue label="Consent posture" value={review.consentPosture} />
+      </div>
+      <div className="reviewGrid">
+        <KeyValue label="Retention" value={review.retentionPosture} />
+        <KeyValue label="Restricted evidence" value={review.restrictedEvidence} />
+        <KeyValue label="Export restriction" value={review.exportRestriction} />
+      </div>
+    </div>
+  );
 }
 
-function displayRef(ref: { readonly type: string; readonly id: string }) {
-  return `${ref.type}:${ref.id.split(".").at(-1) ?? ref.id}`;
+function formatRows(rows: readonly { readonly label: string; readonly value: number }[]): string {
+  return rows.map((row) => `${row.label}: ${row.value}`).join(", ");
 }
 
 function displayText(value: string): string {
@@ -604,10 +578,6 @@ function formatScopeRef(value: unknown): string {
   }
 
   return String(value);
-}
-
-function formatTime(value: string): string {
-  return value.replace("T", " ").replace(".000Z", "Z");
 }
 
 function routeHref(href: string, scopePreset: string): string {

@@ -545,14 +545,14 @@ function buildShellRoutes(
         : undefined
     }),
     shellRoute({
-      id: "route.stewardship",
-      path: "/stewardship",
-      label: "Stewardship",
+      id: "route.resource-care",
+      path: "/resource-care",
+      label: "Resource Care",
       surfaceKind: "resource-stewardship",
       status: snapshot.surfaces.resourceStewardship === undefined ? "unavailable" : "available",
       summary: snapshot.surfaces.resourceStewardship?.resourceRef.id,
       disabledReason: snapshot.surfaces.resourceStewardship === undefined
-        ? "Select a resource object to hydrate stewardship state."
+        ? "Select a resource object to hydrate resource care state."
         : undefined
     }),
     shellRoute({
@@ -695,7 +695,7 @@ function renderScopeOverview(snapshot: CanopyShellSnapshot): readonly string[] {
     `Modes: ${snapshot.availableModes.join(", ") || "none"}`,
     `Capabilities: ${snapshot.sourceCapabilities.join(", ") || "none"}`,
     `Attention: ${snapshot.attention.length === 0 ? "clear" : snapshot.attention.map((item) => item.kind).join(", ")}`,
-    "Routes: /objects, /claims-evidence, /decisions, /stewardship, /imports, /federation, /memory"
+    "Routes: /objects, /claims-evidence, /decisions, /resource-care, /imports, /federation, /memory"
   ]);
 }
 
@@ -766,7 +766,7 @@ function renderDecisionPacket(snapshot: CanopyShellSnapshot): readonly string[] 
     `Authority refs: ${packet.authorityRefs.map(formatRef).join(", ") || "none"}`,
     `Claims: ${packet.claimRefs.map(formatRef).join(", ") || "none"}`,
     `Evidence: ${packet.evidenceRefs.map(formatRef).join(", ") || "none"}`,
-    `Stewardship outcomes: ${packet.stewardshipOutcomes.length}`,
+    `Care outcomes: ${packet.stewardshipOutcomes.length}`,
     ...packet.timeline.slice(0, 8).map((entry) => `- ${entry.type} ${formatRef(entry.objectRef)}`)
   ]);
 }
@@ -777,18 +777,18 @@ function renderResourceStewardship(snapshot: CanopyShellSnapshot): readonly stri
   if (stewardship === undefined) {
     return renderUnavailableRoute(
       shellRoute({
-        id: "route.stewardship",
-        path: "/stewardship",
-        label: "Stewardship",
+        id: "route.resource-care",
+        path: "/resource-care",
+        label: "Resource Care",
         surfaceKind: "resource-stewardship",
         status: "unavailable",
-        disabledReason: "Select a resource object to hydrate stewardship state."
+        disabledReason: "Select a resource object to hydrate resource care state."
       })
     );
   }
 
   return compactLines([
-    `Resource Stewardship: ${stewardship.title ?? stewardship.resourceRef.id}`,
+    `Resource Care: ${stewardship.title ?? stewardship.resourceRef.id}`,
     `Resource: ${formatRef(stewardship.resourceRef)}`,
     stewardship.resourceKind === undefined ? undefined : `Kind: ${stewardship.resourceKind}`,
     `Use rights: ${stewardship.useRights.length}`,
@@ -965,8 +965,10 @@ function commandRouteAlias(
     "claims-evidence": "/claims-evidence",
     decisions: "/decisions",
     decision: "/decisions",
-    stewardship: "/stewardship",
-    steward: "/stewardship",
+    care: "/resource-care",
+    "resource-care": "/resource-care",
+    stewardship: "/resource-care",
+    steward: "/resource-care",
     imports: "/imports",
     import: "/imports",
     federation: "/federation",
@@ -993,7 +995,7 @@ function defaultRouteForSnapshot(snapshot: CanopyShellSnapshot): string {
   }
 
   if (snapshot.activeMode === "stewardship") {
-    return "/stewardship";
+    return "/resource-care";
   }
 
   if (snapshot.activeMode === "federation") {
@@ -1022,6 +1024,7 @@ function activeModeForRoute(
   }
 
   if (
+    normalized === "/resource-care" ||
     normalized === "/stewardship" ||
     selectedObjectRef?.type === "resource" ||
     selectedObjectRef?.type === "use-right"

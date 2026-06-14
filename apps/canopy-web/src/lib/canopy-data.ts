@@ -10,7 +10,7 @@ import {
   executePersistedCanopyShellCommand
 } from "@canopy/app-shell";
 import type { CanopyShellScope } from "@canopy/app-shell";
-import type { ObjectRef } from "@canopy/contracts-kernel";
+import type { CanopyEvent, ObjectRef } from "@canopy/contracts-kernel";
 import {
   firstReplayableGoldenFixtureEvents,
   goldenFixtureRefs
@@ -45,10 +45,12 @@ export interface CanopyWebModel {
   readonly runtime: CanonicalPersistenceRuntime;
   readonly imports: readonly SampleExportBundleImportExecutionResult[];
   readonly objectRefs: readonly CanopyWebObjectRefRecord[];
+  readonly selectedObjectRef: ObjectRef | undefined;
   readonly persistedShell: PersistedCanopyShellSnapshotResult;
   readonly session: CanopyShellSession;
   readonly workspaces: readonly CanopyWebWorkspace[];
   readonly commandPreviews: readonly PersistedCanopyShellCommandExecution[];
+  readonly mutationPreview: CanopyWebMutationPreview;
   readonly operations: CanopyOperationsReport;
   readonly materializedDocuments: readonly MaterializedProjectionDocument[];
   readonly bundles: readonly SampleExportBundle[];
@@ -56,6 +58,11 @@ export interface CanopyWebModel {
   readonly scopeOptions: readonly CanopyWebScopeOption[];
   readonly relationshipGraph: CanopyWebRelationshipGraph;
   readonly pathway: readonly CanopyWebPathwayStep[];
+  readonly attentionQueues: readonly CanopyWebAttentionQueue[];
+  readonly objectPageSections: readonly CanopyWebObjectPageSection[];
+  readonly permissionExplanation: CanopyWebPermissionExplanation;
+  readonly dataStewardshipReview: CanopyWebDataStewardshipReview;
+  readonly federationReview: CanopyWebFederationReview | undefined;
 }
 
 export interface CanopyWebWorkspace {
@@ -105,6 +112,85 @@ export interface CanopyWebPathwayStep {
   readonly ref: ObjectRef;
   readonly href: string;
   readonly detail: string;
+}
+
+export interface CanopyWebMutationPreview {
+  readonly commandLabel: string;
+  readonly title: string;
+  readonly summary: string;
+  readonly proposedEvent: CanopyEvent;
+  readonly authorityCheck: {
+    readonly status: "pass" | "review";
+    readonly summary: string;
+    readonly authorityRefs: readonly ObjectRef[];
+  };
+  readonly outboxEffect: {
+    readonly destination: string;
+    readonly summary: string;
+    readonly dedupeKey: string;
+  };
+  readonly projectionImpact: {
+    readonly projectionNames: readonly string[];
+    readonly summary: string;
+  };
+  readonly persistenceBoundary: string;
+}
+
+export interface CanopyWebAttentionQueue {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: string;
+  readonly count: number;
+  readonly eventIds: readonly string[];
+  readonly nextAction: string;
+  readonly route: string;
+  readonly tone: "toneGood" | "toneWarn" | "toneBad" | "toneInfo";
+}
+
+export interface CanopyWebObjectPageSection {
+  readonly id: string;
+  readonly title: string;
+  readonly status: "available" | "empty" | "review";
+  readonly summary: string;
+  readonly primaryRef?: ObjectRef | undefined;
+  readonly route: string;
+}
+
+export interface CanopyWebPermissionExplanation {
+  readonly commandLabel: string;
+  readonly authoritySource: string;
+  readonly denialReason: string | undefined;
+  readonly appealPath: string;
+  readonly visibilityEffect: string;
+  readonly civicMemoryEvent: string;
+  readonly claimsEvidenceTouched: number;
+  readonly federationImpact: string;
+}
+
+export interface CanopyWebDataStewardshipReview {
+  readonly visibilityStates: readonly CanopyWebReviewRow[];
+  readonly dataStates: readonly CanopyWebReviewRow[];
+  readonly redactionSummary: string;
+  readonly retentionPosture: string;
+  readonly consentPosture: string;
+  readonly restrictedEvidence: string;
+  readonly exportRestriction: string;
+}
+
+export interface CanopyWebFederationReview {
+  readonly envelopeId: string;
+  readonly status: string;
+  readonly contentHash: string;
+  readonly localMappingCount: number;
+  readonly dataStewardshipAgreementCount: number;
+  readonly redactionSummary: string;
+  readonly readinessWarnings: readonly string[];
+  readonly eventTrail: readonly string[];
+}
+
+export interface CanopyWebReviewRow {
+  readonly label: string;
+  readonly value: number;
 }
 
 export interface GetCanopyWebModelOptions {
@@ -189,13 +275,13 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     workspace({
       id: "objects",
       title: "Universal Object Page",
-      intent: "A selected Riverbend resource hydrates through object-page projection rather than a legacy page.",
+      intent: "The route-selected object hydrates through object-page projection rather than shared shell fallback state.",
       session: buildWorkspaceSession({
         runtime,
         scope,
-        route: objectRoute(resourceRef ?? selectedObjectRef),
+        route: objectRoute(selectedObjectRef),
         activeMode: "objects",
-        selectedObjectRef: resourceRef ?? selectedObjectRef,
+        selectedObjectRef,
         materializedDocuments,
         importDryRun: imports[0]?.dryRun
       })
@@ -228,13 +314,13 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
       })
     }),
     workspace({
-      id: "stewardship",
-      title: "Stewardship Surface",
+      id: "resource-care",
+      title: "Resource Care",
       intent: "Resources, use rights, ecological context, and authority are one object-centered surface.",
       session: buildWorkspaceSession({
         runtime,
         scope,
-        route: "/stewardship",
+        route: "/resource-care",
         activeMode: "stewardship",
         selectedObjectRef: resourceRef,
         materializedDocuments,
@@ -282,7 +368,7 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
       })
     })
   ];
-  const commandPreviews = ["scope", "objects", "memory", "decisions", "stewardship", "federation"].map(
+  const commandPreviews = ["scope", "objects", "memory", "decisions", "care", "federation"].map(
     (command) =>
       executePersistedCanopyShellCommand({
         runtime,
@@ -300,6 +386,11 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     generatedAt,
     shell: persistedShell
   });
+  const mutationPreview = buildMutationPreview({
+    selectedObjectRef,
+    fallbackAuthorityRef: decisionRef,
+    existingEventCount: operations.counts.events
+  });
   const routeMap = buildRouteMap(routePath, selectedObjectRef);
   const scopeOptions = buildScopeOptions(routePath, scopePreset);
   const relationshipGraph = buildRelationshipGraph(session.snapshot.surfaces.civicMemoryStream.timeline);
@@ -309,6 +400,15 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     resourceRef,
     useRightRef
   });
+  const attentionQueues = buildAttentionQueues(persistedShell.snapshot.attention);
+  const objectPageSections = buildObjectPageSections(session);
+  const permissionExplanation = buildPermissionExplanation({
+    mutationPreview,
+    claimRef,
+    federationState: session.snapshot.surfaces.federationExportState
+  });
+  const dataStewardshipReview = buildDataStewardshipReview(session);
+  const federationReview = buildFederationReview(session);
 
   return {
     generatedAt,
@@ -317,17 +417,24 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     runtime,
     imports,
     objectRefs,
+    selectedObjectRef,
     persistedShell,
     session,
     workspaces,
     commandPreviews,
+    mutationPreview,
     operations,
     materializedDocuments,
     bundles: foldedSourceSampleExportBundles,
     routeMap,
     scopeOptions,
     relationshipGraph,
-    pathway
+    pathway,
+    attentionQueues,
+    objectPageSections,
+    permissionExplanation,
+    dataStewardshipReview,
+    federationReview
   };
 }
 
@@ -387,7 +494,7 @@ function normalizeRoutePath(routePath: string | undefined): string {
 function activeModeForRoutePath(routePath: string): CanopyShellMode {
   if (routePath.startsWith("/memory")) return "memory";
   if (routePath.startsWith("/decisions")) return "decisions";
-  if (routePath.startsWith("/stewardship")) return "stewardship";
+  if (routePath.startsWith("/resource-care") || routePath.startsWith("/stewardship")) return "stewardship";
   if (routePath.startsWith("/federation")) return "federation";
   if (routePath.startsWith("/objects")) return "objects";
   return "scope";
@@ -447,7 +554,7 @@ function buildRouteMap(
     { id: "objects", label: "Object Page", href: objectRoute(selectedObjectRef) },
     { id: "memory", label: "Civic Memory", href: "/memory" },
     { id: "decisions", label: "Decision Packet", href: "/decisions" },
-    { id: "stewardship", label: "Stewardship", href: "/stewardship" },
+    { id: "resource-care", label: "Resource Care", href: "/resource-care" },
     { id: "claims", label: "Claims & Evidence", href: "/claims-evidence" },
     { id: "imports", label: "Fold-In Review", href: "/imports" },
     { id: "federation", label: "Federation & Export", href: "/federation" }
@@ -521,9 +628,362 @@ function buildRiverbendPathway(input: {
     pathwayStep("Claim", input.claimRef, "/claims-evidence", "Flow or food need is framed as a contestable claim."),
     pathwayStep("Resource", input.resourceRef, objectRoute(input.resourceRef), "A commons resource becomes the object page anchor."),
     pathwayStep("Decide", input.decisionRef, "/decisions", "Authority, evidence, and outcome gather into a decision packet."),
-    pathwayStep("Steward", input.useRightRef, "/stewardship", "Use right links resource, holder, conditions, and review path."),
+    pathwayStep("Care", input.useRightRef, "/resource-care", "Use right links resource, holder, conditions, and review path."),
     pathwayStep("Federate", goldenFixtureRefs.exportEnvelope, "/federation", "Export preview carries mappings, data rules, and redaction posture.")
   ].filter((step): step is CanopyWebPathwayStep => step !== undefined);
+}
+
+function buildMutationPreview(input: {
+  readonly selectedObjectRef: ObjectRef | undefined;
+  readonly fallbackAuthorityRef: ObjectRef | undefined;
+  readonly existingEventCount: number;
+}): CanopyWebMutationPreview {
+  const objectRef = input.selectedObjectRef ?? goldenFixtureRefs.resourceNorthPasture;
+  const authorityRefs = [input.fallbackAuthorityRef].filter(
+    (ref): ref is ObjectRef => ref !== undefined
+  );
+  const event: CanopyEvent = {
+    id: `event.preview.${objectRef.type}.${objectRef.id}`,
+    type: "object.relationship.created",
+    occurredAt: generatedAt,
+    systemActor: "ai_assistant",
+    objectRef,
+    relatedRefs: authorityRefs,
+    authorityRefs,
+    sourceCapability: "civic-memory",
+    payload: {
+      command: "preview-link-object-context",
+      targetObjectId: objectRef.id,
+      relation: "operator_review_context",
+      previewOnly: true
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "unverified",
+    provenance: {
+      kind: "system_generated",
+      generatedAt,
+      notes: "Generated by the web command preview; not persisted until confirm."
+    }
+  };
+  const authorityStatus = authorityRefs.length > 0 ? "pass" : "review";
+
+  return {
+    commandLabel: "preview-link-object-context",
+    title: `Preview mutation for ${displayRef(objectRef)}`,
+    summary: "Creates no durable event until the operator confirms the boundary.",
+    proposedEvent: event,
+    authorityCheck: {
+      status: authorityStatus,
+      summary:
+        authorityStatus === "pass"
+          ? `${authorityRefs.length} authority ref available`
+          : "authority review required",
+      authorityRefs
+    },
+    outboxEffect: {
+      destination: "workflow:projection-rebuild",
+      summary: "Would enqueue one projection rebuild record after confirm.",
+      dedupeKey: `event:${event.id}:projection-rebuild`
+    },
+    projectionImpact: {
+      projectionNames: ["object-page", "civic-memory", "authority"],
+      summary: `Would append event ${input.existingEventCount + 1} and refresh object, memory, and authority reads.`
+    },
+    persistenceBoundary: "cancel keeps runtime unchanged; confirm is the explicit mutation boundary"
+  };
+}
+
+function buildAttentionQueues(
+  attention: CanopyShellSession["snapshot"]["attention"]
+): readonly CanopyWebAttentionQueue[] {
+  return attention.map((item) => {
+    const metadata = attentionQueueMetadata(item.kind);
+
+    return {
+      id: item.id,
+      label: metadata.label,
+      kind: item.kind,
+      count: item.eventIds.length,
+      eventIds: item.eventIds,
+      nextAction: metadata.nextAction,
+      route: metadata.route,
+      tone: metadata.tone
+    };
+  });
+}
+
+function attentionQueueMetadata(kind: string): Omit<CanopyWebAttentionQueue, "id" | "kind" | "count" | "eventIds"> {
+  if (kind === "missing-authority") {
+    return {
+      label: "Authority review",
+      nextAction: "Trace mandate, guardian, or policy source before action.",
+      route: "/decisions",
+      tone: "toneWarn"
+    };
+  }
+
+  if (kind === "redaction") {
+    return {
+      label: "Data stewardship",
+      nextAction: "Inspect redaction continuity and retained event stubs.",
+      route: "/memory",
+      tone: "toneBad"
+    };
+  }
+
+  if (kind === "supersession") {
+    return {
+      label: "Learning continuity",
+      nextAction: "Confirm replacement record and policy review trace.",
+      route: "/memory",
+      tone: "toneInfo"
+    };
+  }
+
+  if (kind === "contested") {
+    return {
+      label: "Claims review",
+      nextAction: "Open counterclaim, evidence, and reviewer path.",
+      route: "/claims-evidence",
+      tone: "toneWarn"
+    };
+  }
+
+  if (kind === "machine-output") {
+    return {
+      label: "Human review",
+      nextAction: "Keep model output non-authoritative until accepted.",
+      route: "/claims-evidence",
+      tone: "toneWarn"
+    };
+  }
+
+  if (kind === "federation-readiness") {
+    return {
+      label: "Federation readiness",
+      nextAction: "Review envelope, mappings, export rule, and redaction posture.",
+      route: "/federation",
+      tone: "toneInfo"
+    };
+  }
+
+  return {
+    label: "Operator review",
+    nextAction: "Open the relevant workspace and resolve the queued event.",
+    route: "/scope",
+    tone: "toneInfo"
+  };
+}
+
+function buildObjectPageSections(session: CanopyShellSession): readonly CanopyWebObjectPageSection[] {
+  const surfaces = session.snapshot.surfaces;
+  const objectPage = surfaces.objectPage;
+  const packet = surfaces.decisionPacket;
+  const stewardship = surfaces.resourceStewardship;
+  const claimEvidence = surfaces.claimEvidence;
+  const federation = surfaces.federationExportState;
+
+  return [
+    objectSection({
+      id: "current-state",
+      title: "Current State",
+      status: objectPage === undefined ? "empty" : "available",
+      summary:
+        objectPage === undefined
+          ? "No selected object is hydrated for this route."
+          : `${objectPage.projectionRead.projectionName} is ${objectPage.projectionRead.freshness}.`,
+      primaryRef: objectPage?.objectRef,
+      route: objectRoute(objectPage?.objectRef)
+    }),
+    objectSection({
+      id: "relationships",
+      title: "Relationships",
+      status: objectPage !== undefined && objectPage.relatedRefs.length > 0 ? "available" : "review",
+      summary:
+        objectPage === undefined
+          ? "No relationship graph is available."
+          : `${objectPage.relatedRefs.length} related refs and ${objectPage.authorityRefs.length} authority refs.`,
+      primaryRef: objectPage?.relatedRefs[0],
+      route: objectRoute(objectPage?.relatedRefs[0] ?? objectPage?.objectRef)
+    }),
+    objectSection({
+      id: "claims-evidence",
+      title: "Claims & Evidence",
+      status: claimEvidence.counts.claims > 0 ? "available" : "empty",
+      summary: `${claimEvidence.counts.claims} claims, ${claimEvidence.counts.evidence} evidence records, ${claimEvidence.counts.aiNonAuthorityIndicators} model outputs.`,
+      primaryRef: claimEvidence.claims[0]?.claimRef,
+      route: "/claims-evidence"
+    }),
+    objectSection({
+      id: "governance-authority",
+      title: "Governance & Authority",
+      status: (packet?.authorityRefs.length ?? objectPage?.authorityRefs.length ?? 0) > 0 ? "available" : "review",
+      summary:
+        packet === undefined
+          ? `${objectPage?.authorityRefs.length ?? 0} authority refs attached to the object.`
+          : `${packet.authorityRefs.length} authority refs, outcome ${packet.outcome ?? "pending"}.`,
+      primaryRef: packet?.authorityRefs[0] ?? objectPage?.authorityRefs[0],
+      route: "/decisions"
+    }),
+    objectSection({
+      id: "commitments-obligations",
+      title: "Commitments & Obligations",
+      status: stewardship !== undefined && stewardship.useRights.length > 0 ? "available" : "empty",
+      summary:
+        stewardship === undefined
+          ? "No resource use-right surface is applicable to this object."
+          : `${stewardship.useRights.length} use rights and ${stewardship.authorityRefs.length} authority refs.`,
+      primaryRef: stewardship?.useRights[0]?.useRightRef,
+      route: "/resource-care"
+    }),
+    objectSection({
+      id: "ecological-context",
+      title: "Ecological Context",
+      status: stewardship !== undefined && stewardship.ecologicalContextIds.length > 0 ? "available" : "empty",
+      summary:
+        stewardship === undefined || stewardship.ecologicalContextIds.length === 0
+          ? "No material living-system impact declared for this object."
+          : `${stewardship.ecologicalContextIds.length} ecological context hooks.`,
+      primaryRef: stewardship?.resourceRef,
+      route: "/resource-care"
+    }),
+    objectSection({
+      id: "activity-memory",
+      title: "Activity & Civic Memory",
+      status: objectPage !== undefined && objectPage.timeline.length > 0 ? "available" : "empty",
+      summary: `${objectPage?.timeline.length ?? 0} object events and ${surfaces.civicMemoryStream.timeline.length} scoped memory events.`,
+      primaryRef: objectPage?.objectRef,
+      route: "/memory"
+    }),
+    objectSection({
+      id: "outcomes-learning",
+      title: "Outcomes & Learning",
+      status: (packet?.stewardshipOutcomes.length ?? 0) > 0 ? "available" : "review",
+      summary:
+        packet === undefined
+          ? "No decision packet is selected for learning outcomes."
+          : `${packet.stewardshipOutcomes.length} stewardship outcomes and ${packet.unresolvedObjectionRefs.length} unresolved objections.`,
+      primaryRef: packet?.decisionRef,
+      route: "/decisions"
+    }),
+    objectSection({
+      id: "data-stewardship",
+      title: "Data Stewardship & Permissions",
+      status: federation?.dataStewardshipAgreementRefs.length === 0 ? "review" : "available",
+      summary: `${federation?.dataStewardshipAgreementRefs.length ?? 0} agreements and ${federation?.redactionSummary?.redactionCount ?? 0} redactions.`,
+      primaryRef: federation?.dataStewardshipAgreementRefs[0],
+      route: "/federation"
+    }),
+    objectSection({
+      id: "federation-export",
+      title: "Federation & Export",
+      status: federation?.status === "ready" ? "available" : "review",
+      summary:
+        federation === undefined
+          ? "No federation export state is available."
+          : `${federation.status} envelope with ${federation.includedEventIds.length} events and ${federation.readinessWarnings.length} warnings.`,
+      primaryRef: federation?.includedObjectRefs[0],
+      route: "/federation"
+    })
+  ];
+}
+
+function objectSection(section: CanopyWebObjectPageSection): CanopyWebObjectPageSection {
+  return section;
+}
+
+function buildPermissionExplanation(input: {
+  readonly mutationPreview: CanopyWebMutationPreview;
+  readonly claimRef: ObjectRef | undefined;
+  readonly federationState: CanopyShellSession["snapshot"]["surfaces"]["federationExportState"];
+}): CanopyWebPermissionExplanation {
+  const event = input.mutationPreview.proposedEvent;
+  const authorityCount = input.mutationPreview.authorityCheck.authorityRefs.length;
+  const readinessWarnings = input.federationState?.readinessWarnings.length ?? 0;
+
+  return {
+    commandLabel: input.mutationPreview.commandLabel,
+    authoritySource:
+      authorityCount === 0
+        ? "No authority ref is attached yet."
+        : `${authorityCount} authority ref traces the command boundary.`,
+    denialReason:
+      input.mutationPreview.authorityCheck.status === "review"
+        ? "Command requires mandate, guardian, policy, or role review before confirm."
+        : undefined,
+    appealPath: "Open governance review if authority is denied or contested.",
+    visibilityEffect: `${event.visibility ?? "unspecified"} visibility, ${event.dataState ?? "unspecified"} data state`,
+    civicMemoryEvent: event.type,
+    claimsEvidenceTouched: input.claimRef === undefined ? 0 : 1,
+    federationImpact:
+      readinessWarnings === 0
+        ? "No export warning is introduced by the preview."
+        : `${readinessWarnings} export readiness warnings remain visible.`
+  };
+}
+
+function buildDataStewardshipReview(session: CanopyShellSession): CanopyWebDataStewardshipReview {
+  const civicMemory = session.snapshot.surfaces.civicMemoryStream;
+  const federation = session.snapshot.surfaces.federationExportState;
+
+  return {
+    visibilityStates: reviewRows(civicMemory.timeline.map((entry) => entry.visibility ?? "unspecified")),
+    dataStates: reviewRows(civicMemory.timeline.map((entry) => entry.dataState ?? "unspecified")),
+    redactionSummary: `${federation?.redactionSummary?.redactionCount ?? redactionEventCount(civicMemory.timeline)} redaction records, ${redactedEventCount(civicMemory.timeline)} redacted originals`,
+    retentionPosture: "Retention follows event envelope policy; destructive deletion is not a Phase 5 path.",
+    consentPosture: `${federation?.dataStewardshipAgreementRefs.length ?? 0} data stewardship agreement refs govern export posture.`,
+    restrictedEvidence:
+      civicMemory.timeline.some((entry) => entry.visibility === "restricted" || entry.visibility === "private")
+        ? "Restricted evidence is present and must stay behind visibility checks."
+        : "No restricted evidence is visible in the current scope.",
+    exportRestriction:
+      federation === undefined
+        ? "No export envelope is visible."
+        : `${federation.status} export, ${federation.readinessWarnings.length} readiness warnings.`
+  };
+}
+
+function buildFederationReview(
+  session: CanopyShellSession
+): CanopyWebFederationReview | undefined {
+  const state = session.snapshot.surfaces.federationExportState;
+
+  if (state === undefined) {
+    return undefined;
+  }
+
+  return {
+    envelopeId: state.envelopeId,
+    status: state.status,
+    contentHash: state.contentHash,
+    localMappingCount: state.localMappingIds.length,
+    dataStewardshipAgreementCount: state.dataStewardshipAgreementRefs.length,
+    redactionSummary: `${state.redactionSummary?.redactionCount ?? 0} redactions, ${state.redactionSummary?.removedFields.length ?? 0} removed fields`,
+    readinessWarnings: state.readinessWarnings.map((warning) => `${warning.code}: ${warning.message}`),
+    eventTrail: state.includedEventIds.slice(0, 8)
+  };
+}
+
+function reviewRows(values: readonly string[]): readonly CanopyWebReviewRow[] {
+  return Object.entries(
+    values.reduce<Record<string, number>>((counts, value) => {
+      counts[value] = (counts[value] ?? 0) + 1;
+      return counts;
+    }, {})
+  ).map(([label, value]) => ({ label, value }));
+}
+
+function redactionEventCount(
+  timeline: CanopyShellSession["snapshot"]["surfaces"]["civicMemoryStream"]["timeline"]
+): number {
+  return timeline.filter((entry) => entry.isRedacted || entry.type === "system.redaction.applied").length;
+}
+
+function redactedEventCount(
+  timeline: CanopyShellSession["snapshot"]["surfaces"]["civicMemoryStream"]["timeline"]
+): number {
+  return timeline.filter((entry) => entry.isRedacted).length;
 }
 
 function pathwayStep(

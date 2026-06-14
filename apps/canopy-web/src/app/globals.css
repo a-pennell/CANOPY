@@ -384,7 +384,14 @@ a {
 .opsGrid,
 .list,
 .timeline,
-.commandGrid {
+.attentionQueues,
+.commandGrid,
+.mutationPreview,
+.mutationGrid,
+.permissionGrid,
+.reviewGrid,
+.sectionGrid,
+.eventTrail {
   display: grid;
   gap: calc(var(--canopy-grid) * 3);
 }
@@ -392,6 +399,8 @@ a {
 .ledgerRow,
 .bundle,
 .listRow,
+.attentionQueue,
+.sectionCard,
 .commandTile,
 .timelineRow,
 .keyValue {
@@ -452,10 +461,61 @@ a {
 }
 
 .listRow span,
+.attentionQueue span,
+.sectionCard span,
 .commandTile span,
 .timelineRow span {
   color: var(--canopy-text-muted);
   font-size: 12px;
+}
+
+.attentionQueue,
+.sectionCard {
+  color: inherit;
+}
+
+.attentionQueue:hover,
+.sectionCard:hover {
+  border-color: var(--canopy-line-strong);
+  background: var(--canopy-panel-raised);
+}
+
+.attentionQueue div,
+.sectionCard {
+  display: grid;
+  min-width: 0;
+  gap: var(--canopy-grid);
+}
+
+.sectionCard {
+  align-content: start;
+  justify-content: stretch;
+  min-height: 124px;
+}
+
+.sectionCard.available {
+  border-color: rgba(143, 216, 172, 0.18);
+}
+
+.sectionCard.review {
+  border-color: rgba(215, 184, 106, 0.2);
+}
+
+.sectionCard.empty {
+  opacity: 0.76;
+}
+
+.sectionCard span {
+  color: var(--canopy-lake);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.sectionCard small {
+  color: var(--canopy-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .commandGrid {
@@ -498,32 +558,53 @@ a {
   background: var(--canopy-inset);
 }
 
-.objectHeader div {
+.mutationHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: calc(var(--canopy-grid) * 4);
+  padding: calc(var(--canopy-grid) * 4);
+  border: 1px solid rgba(215, 184, 106, 0.2);
+  border-radius: var(--canopy-radius);
+  background:
+    linear-gradient(180deg, rgba(215, 184, 106, 0.07), transparent),
+    var(--canopy-inset);
+}
+
+.objectHeader div,
+.mutationHeader div {
   display: grid;
   min-width: 0;
   gap: calc(var(--canopy-grid) * 1.5);
 }
 
-.objectHeader span {
+.objectHeader span,
+.mutationHeader span {
   color: var(--canopy-lake);
   font-size: 11px;
   font-weight: 650;
   text-transform: uppercase;
 }
 
-.objectHeader strong {
+.objectHeader strong,
+.mutationHeader strong {
   overflow-wrap: anywhere;
   color: var(--canopy-text);
   font-size: 18px;
 }
 
-.objectHeader small {
+.objectHeader small,
+.mutationHeader small {
   color: var(--canopy-text-soft);
   font-size: 12px;
   line-height: 1.45;
 }
 
-.refGrid {
+.refGrid,
+.mutationGrid,
+.permissionGrid,
+.reviewGrid,
+.sectionGrid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -667,6 +748,62 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.permissionGrid,
+.reviewGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.eventTrail {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.eventTrail span {
+  overflow-wrap: anywhere;
+  min-height: 32px;
+  padding: calc(var(--canopy-grid) * 2);
+  border: 1px solid var(--canopy-line);
+  border-radius: calc(var(--canopy-radius) - 2px);
+  background: var(--canopy-inset);
+  color: var(--canopy-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.mutationActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: calc(var(--canopy-grid) * 2);
+}
+
+.primaryAction,
+.secondaryAction {
+  min-height: 36px;
+  padding: 0 calc(var(--canopy-grid) * 4);
+  border: 1px solid var(--canopy-line-strong);
+  border-radius: var(--canopy-radius);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.primaryAction {
+  background: rgba(143, 216, 172, 0.12);
+  color: var(--canopy-mint);
+}
+
+.secondaryAction {
+  background: var(--canopy-inset);
+  color: var(--canopy-text-soft);
+}
+
+.primaryAction:disabled,
+.secondaryAction:disabled {
+  cursor: default;
+  opacity: 0.54;
+}
+
 .screenText {
   overflow: auto;
   max-height: 360px;
@@ -706,6 +843,11 @@ a {
   .opsGrid,
   .commandGrid,
   .refGrid,
+  .mutationGrid,
+  .permissionGrid,
+  .reviewGrid,
+  .sectionGrid,
+  .eventTrail,
   .pathway,
   .commandDetailGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -743,6 +885,11 @@ a {
   .opsGrid,
   .commandGrid,
   .refGrid,
+  .mutationGrid,
+  .permissionGrid,
+  .reviewGrid,
+  .sectionGrid,
+  .eventTrail,
   .pathway,
   .commandDetailGrid,
   .navList {
@@ -755,5 +902,20 @@ a {
 
   .spanTwo {
     grid-column: auto;
+  }
+
+  .objectHeader,
+  .mutationHeader,
+  .ledgerRow,
+  .bundle,
+  .listRow,
+  .keyValue {
+    display: grid;
+    justify-content: stretch;
+  }
+
+  .mutationActions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 }

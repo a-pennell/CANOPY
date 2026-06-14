@@ -1,3 +1,4 @@
+import React from "react";
 import { CanopyDashboard } from "../components/canopy-dashboard";
 import {
   getCanopyWebModel,

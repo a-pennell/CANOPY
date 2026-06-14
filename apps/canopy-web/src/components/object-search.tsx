@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import type {
   CanopyWebObjectRefRecord,
   CanopyWebScopePreset
 } from "../lib/canopy-data";
+import { ObjectRefLink, displayRef } from "./primitives";
 
 export function ObjectSearch({
   objectRefs,
@@ -39,24 +39,17 @@ export function ObjectSearch({
       />
       <div className="searchResults" aria-live="polite">
         {filtered.map((record) => (
-          <Link
-            href={withScope(`/objects/${record.objectType}/${encodeURIComponent(record.objectId)}`, scopePreset)}
+          <ObjectRefLink
+            refValue={record.ref}
+            scopePreset={scopePreset}
             key={`${record.ref.namespace}:${record.objectType}:${record.objectId}`}
             className="searchResult"
           >
             <span>{record.objectType}</span>
-            <strong>{displayRef(record.objectId, record.objectType)}</strong>
-          </Link>
+            <strong>{displayRef(record.ref)}</strong>
+          </ObjectRefLink>
         ))}
       </div>
     </div>
   );
-}
-
-function withScope(href: string, scopePreset: CanopyWebScopePreset): string {
-  return `${href}?scope=${scopePreset}`;
-}
-
-function displayRef(id: string, type: string): string {
-  return `${type}:${id.split(".").at(-1) ?? id}`;
 }

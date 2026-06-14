@@ -329,7 +329,7 @@ describe("canopy shell snapshot", () => {
         "/objects",
         "/claims-evidence",
         "/decisions",
-        "/stewardship",
+        "/resource-care",
         "/imports",
         "/federation",
         `/objects/decision/${decisionRef.id}`,
@@ -435,8 +435,11 @@ describe("canopy shell snapshot", () => {
     expect(executeCanopyShellCommand(snapshot, "open /imports").screen.text).toContain(
       "Import Review: common-credit-fold-in"
     );
+    expect(executeCanopyShellCommand(snapshot, "care").screen.text).toContain(
+      "Resource Care: Cooling center"
+    );
     expect(executeCanopyShellCommand(snapshot, "stewardship").screen.text).toContain(
-      "Resource Stewardship: Cooling center"
+      "Resource Care: Cooling center"
     );
     expect(executeCanopyShellCommand(snapshot, "open /objects/resource/resource.cooling-center").screen.text).toContain(
       "Object Page: Cooling center"
@@ -453,19 +456,19 @@ describe("canopy shell snapshot", () => {
       selectedObjectRef: claimRef
     });
 
-    const navigation = buildCanopyShellNavigation(snapshot, "/stewardship");
-    const stewardshipRoute = navigation.routes.find((route) => route.path === "/stewardship");
-    const command = executeCanopyShellCommand(snapshot, "stewardship");
+    const navigation = buildCanopyShellNavigation(snapshot, "/resource-care");
+    const resourceCareRoute = navigation.routes.find((route) => route.path === "/resource-care");
+    const command = executeCanopyShellCommand(snapshot, "care");
 
-    expect(stewardshipRoute).toMatchObject({
+    expect(resourceCareRoute).toMatchObject({
       status: "unavailable",
-      disabledReason: "Select a resource object to hydrate stewardship state."
+      disabledReason: "Select a resource object to hydrate resource care state."
     });
     expect(command).toMatchObject({
       status: "unavailable",
-      message: "Stewardship is not available in this shell state."
+      message: "Resource Care is not available in this shell state."
     });
-    expect(command.screen.text).toContain("Stewardship: unavailable");
+    expect(command.screen.text).toContain("Resource Care: unavailable");
   });
 });
 
