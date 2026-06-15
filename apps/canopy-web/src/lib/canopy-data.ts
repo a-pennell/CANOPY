@@ -62,6 +62,7 @@ export interface CanopyWebModel {
   readonly permissionExplanation: CanopyWebPermissionExplanation;
   readonly dataStewardshipReview: CanopyWebDataStewardshipReview;
   readonly federationReview: CanopyWebFederationReview | undefined;
+  readonly adaptiveBranchReview: CanopyWebAdaptiveBranchReview;
 }
 
 export interface CanopyWebWorkspace {
@@ -185,6 +186,14 @@ export interface CanopyWebFederationReview {
   readonly redactionSummary: string;
   readonly readinessWarnings: readonly string[];
   readonly eventTrail: readonly string[];
+}
+
+export interface CanopyWebAdaptiveBranchReview {
+  readonly decisionRef: ObjectRef;
+  readonly preservedObjectionRefs: readonly ObjectRef[];
+  readonly redactionSummary: string;
+  readonly adaptivePolicyVersion: string;
+  readonly adaptivePolicyVersionRef: ObjectRef;
 }
 
 export interface CanopyWebReviewRow {
@@ -414,6 +423,10 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   });
   const dataStewardshipReview = buildDataStewardshipReview(session);
   const federationReview = buildFederationReview(session);
+  const adaptiveBranchReview = buildAdaptiveBranchReview({
+    events: phase7Slice.events,
+    refs: phase7Slice.refs
+  });
 
   return {
     generatedAt,
@@ -439,7 +452,8 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     objectPageSections,
     permissionExplanation,
     dataStewardshipReview,
-    federationReview
+    federationReview,
+    adaptiveBranchReview
   };
 }
 
@@ -974,6 +988,38 @@ function buildFederationReview(
   };
 }
 
+function buildAdaptiveBranchReview(input: {
+  readonly events: readonly CanopyEvent[];
+  readonly refs: {
+    readonly adaptiveDecisionRef: ObjectRef;
+    readonly adaptiveObjectionRef: ObjectRef;
+    readonly policyVersionRef: ObjectRef;
+  };
+}): CanopyWebAdaptiveBranchReview {
+  const decisionPacket = input.events.find((event) =>
+    event.type.startsWith("governance.decision_packet") &&
+    payloadRefs(event.payload, "unresolvedObjectionRefs").some((ref) =>
+      ref.id === input.refs.adaptiveObjectionRef.id
+    )
+  );
+  const policyVersion = input.events.find(
+    (event) => event.type === "governance.policy.versioned" &&
+      payloadString(payloadRecord(event.payload, "policyVersion"), "id") === input.refs.policyVersionRef.id
+  );
+  const redactionSummary = payloadRecord(decisionPacket?.payload, "redactionSummary");
+  const redactedRefs = payloadRefs(redactionSummary, "redactedRefs");
+  const sealedRefs = payloadRefs(redactionSummary, "sealedRefs");
+  const continuityRefs = payloadRefs(redactionSummary, "continuityEventRefs");
+
+  return {
+    decisionRef: input.refs.adaptiveDecisionRef,
+    preservedObjectionRefs: [input.refs.adaptiveObjectionRef],
+    redactionSummary: `${redactedRefs.length} redacted refs, ${sealedRefs.length} sealed refs, ${continuityRefs.length} continuity events`,
+    adaptivePolicyVersion: payloadString(payloadRecord(policyVersion?.payload, "policyVersion"), "version") ?? "unknown",
+    adaptivePolicyVersionRef: input.refs.policyVersionRef
+  };
+}
+
 function reviewRows(values: readonly string[]): readonly CanopyWebReviewRow[] {
   return Object.entries(
     values.reduce<Record<string, number>>((counts, value) => {
@@ -993,6 +1039,47 @@ function redactedEventCount(
   timeline: CanopyShellSession["snapshot"]["surfaces"]["civicMemoryStream"]["timeline"]
 ): number {
   return timeline.filter((entry) => entry.isRedacted).length;
+}
+
+function payloadRecord(
+  payload: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): Readonly<Record<string, unknown>> | undefined {
+  const value = payload?.[key];
+
+  return isRecord(value) ? value : undefined;
+}
+
+function payloadRefs(
+  payload: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): readonly ObjectRef[] {
+  const value = payload?.[key];
+
+  return Array.isArray(value) ? value.filter(isObjectRef) : [];
+}
+
+function payloadString(
+  payload: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): string | undefined {
+  const value = payload?.[key];
+
+  return typeof value === "string" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isObjectRef(value: unknown): value is ObjectRef {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.type === "string" &&
+    typeof value.namespace === "string" &&
+    typeof value.lifecycleStatus === "string"
+  );
 }
 
 function pathwayStep(

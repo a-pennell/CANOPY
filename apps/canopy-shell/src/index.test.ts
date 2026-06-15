@@ -23,6 +23,9 @@ const mandateRef = ref("mandate.food-commons", "mandate");
 const policyRef = ref("policy.export-foodshed", "policy");
 const resourceRef = ref("resource.cooling-center", "resource");
 const useRightRef = ref("use-right.cooling-center-shelter", "use-right");
+const objectionRef = ref("objection.school-data-stewardship", "objection");
+const decisionPacketRef = ref("decision-packet.adaptive-school-need", "decision-packet");
+const evidenceRef = ref("evidence.school-contact", "evidence");
 const agreementRef = ref(
   "agreement.data-stewardship.foodshed",
   "agreement",
@@ -343,6 +346,30 @@ describe("canopy shell snapshot", () => {
     );
   });
 
+  it("surfaces preserved objections, redaction summary, and adaptive policy versions", () => {
+    const session = buildCanopyShellSession({
+      events: adaptiveGovernanceEvents,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      selectedObjectRef: decisionRef,
+      activeMode: "decisions",
+      route: "/decisions"
+    });
+
+    expect(session.screen.text).toContain(
+      "Unresolved objections: objection:objection.school-data-stewardship"
+    );
+    expect(session.screen.text).toContain("Redactions: present");
+    expect(session.screen.text).toContain(
+      "Adaptive policy versions: policy:policy.export-foodshed"
+    );
+    expect(renderCanopyShell(session.snapshot, "/federation")).toContain(
+      "Redaction summary: 1 redactions, removed fields=payload.pickupNotes, payload.schoolContact"
+    );
+  });
+
   it("builds persisted sessions that hydrate object routes from canonical runtime events", () => {
     const runtime = createInMemoryCanonicalPersistence({
       now: () => "2026-06-13T18:00:00.000Z"
@@ -607,6 +634,118 @@ const stewardshipEvents = [
     schemaVersion: 1,
     visibility: "commons",
     dataState: "institutionally_certified"
+  }
+] as const satisfies readonly CanopyEvent[];
+
+const adaptiveGovernanceEvents = [
+  ...shellEvents,
+  {
+    id: "event.governance.objection.raised.school-data-stewardship",
+    type: "governance.objection.raised",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: objectionRef,
+    relatedRefs: [claimRef, evidenceRef, agreementRef],
+    authorityRefs: [mandateRef],
+    orgId,
+    sourceCapability: "governance",
+    payload: {
+      objection: {
+        id: objectionRef.id,
+        proposalRef: ref("proposal.school-need", "proposal"),
+        claimRefs: [claimRef],
+        evidenceRefs: [evidenceRef],
+        disposition: "preserved"
+      }
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "contested"
+  },
+  {
+    id: "event.governance.decision_packet.recorded.school-need",
+    type: "governance.decision_packet.recorded",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: decisionPacketRef,
+    relatedRefs: [decisionRef, claimRef, evidenceRef, objectionRef, agreementRef],
+    authorityRefs: [decisionRef, mandateRef],
+    orgId,
+    sourceCapability: "governance",
+    payload: {
+      decisionPacket: {
+        id: decisionPacketRef.id,
+        decisionRef,
+        claimRefs: [claimRef],
+        evidenceRefs: [evidenceRef],
+        authorityRefs: [decisionRef, mandateRef],
+        unresolvedObjectionRefs: [objectionRef],
+        unresolvedObjectionsSummary: "A data-stewardship objection is preserved as a minority report.",
+        conditions: [
+          "Preserve the objection in the packet.",
+          "Apply redaction before federation export."
+        ],
+        redactionSummary: {
+          hasRedactions: true,
+          redactedRefs: [evidenceRef],
+          sealedRefs: [],
+          continuityEventRefs: [ref("redaction.school-contact", "source")]
+        }
+      }
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "institutionally_certified"
+  },
+  {
+    id: "event.governance.policy.versioned.school-need",
+    type: "governance.policy.versioned",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: policyRef,
+    relatedRefs: [decisionRef, agreementRef],
+    authorityRefs: [decisionRef, mandateRef],
+    orgId,
+    sourceCapability: "governance",
+    payload: {
+      policyVersion: {
+        id: "policy-version.school-need.v2",
+        policyRef,
+        version: "2",
+        decisionRef
+      }
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "institutionally_certified"
+  },
+  {
+    id: "event.evidence.redacted.school-contact",
+    type: "evidence.redacted",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: evidenceRef,
+    relatedRefs: [claimRef, objectionRef],
+    authorityRefs: [decisionRef, agreementRef],
+    orgId,
+    sourceCapability: "data-stewardship",
+    payload: {
+      reason: "vulnerable_group_protection",
+      removedPayloadKeys: ["payload.pickupNotes", "payload.schoolContact"]
+    },
+    schemaVersion: 1,
+    visibility: "federation",
+    dataState: "sensitive",
+    redaction: {
+      isRedactedStub: true,
+      originalEventId: "event.evidence.created.school-contact",
+      redactionEventId: "event.evidence.redacted.school-contact",
+      redactedAt: occurredAt,
+      reason: "vulnerable_group_protection",
+      preservedFields: ["id", "type", "occurredAt", "objectRef"],
+      removedPayloadKeys: ["payload.pickupNotes", "payload.schoolContact"],
+      dataStewardshipAgreementRef: agreementRef
+    }
   }
 ] as const satisfies readonly CanopyEvent[];
 

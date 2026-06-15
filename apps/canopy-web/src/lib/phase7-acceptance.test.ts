@@ -96,4 +96,41 @@ describe("phase 7 Riverbend/Mill Creek acceptance", () => {
     );
     expect(model.federationReview?.contentHash).toMatch(/^sha256:/);
   });
+
+  it("surfaces the adaptive objection, redaction summary, and policy version", () => {
+    const model = getCanopyWebModel({
+      routePath: "/objects/decision/decision.pause-and-revise-food-flow-policy"
+    });
+    const packet = model.session.snapshot.surfaces.decisionPacket;
+    const federationWorkspace = model.workspaces.find((workspace) => workspace.id === "federation");
+    const federationState = federationWorkspace?.session.snapshot.surfaces.federationExportState;
+
+    expect(packet?.decisionRef).toMatchObject({
+      type: "decision",
+      id: "decision.pause-and-revise-food-flow-policy"
+    });
+    expect(packet?.unresolvedObjectionRefs.map((ref) => ref.id)).toEqual([
+      "objection.downstream-school-data-stewardship"
+    ]);
+    expect(packet?.hasRedactions).toBe(true);
+    expect(packet?.timeline.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "governance.objection.raised",
+        "system.redaction.applied",
+        "governance.decision_packet.recorded",
+        "governance.policy.versioned"
+      ])
+    );
+    expect(
+      packet?.timeline
+        .filter((event) => event.type === "governance.policy.versioned")
+        .map((event) => event.objectRef.id)
+    ).toEqual(["policy.breach-window-food-flow"]);
+    expect(federationState?.redactionSummary?.redactionCount).toBeGreaterThan(0);
+    expect(federationState?.redactionSummary?.removedFields).toEqual(
+      expect.arrayContaining(["payload.schoolContact", "payload.pickupNotes"])
+    );
+    expect(model.dataStewardshipReview.redactionSummary).toContain("redaction");
+    expect(model.federationReview?.redactionSummary).toContain("removed fields");
+  });
 });

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createActivityPubTransportAdapter } from "@canopy/adapters-provider-activitypub-transport";
+import { createPostgresEventStoreAdapter } from "@canopy/adapters-provider-postgres-event-store";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import {
   buildRiverbendPersistedRuntimeScenario,
@@ -285,6 +287,124 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
     expect(scenario.shellSessions.federation.snapshot.surfaces.federationExportState?.includedEventIds).toHaveLength(
       scenario.slice.events.length
     );
+  });
+
+  it("replays Phase 7 through the Postgres event-store provider prototype", async () => {
+    const slice = executeRiverbendCyberneticSlice();
+    const adapter = createPostgresEventStoreAdapter({
+      now: () => "2026-06-15T13:00:00.000Z"
+    });
+
+    for (const event of slice.events) {
+      const appended = await adapter.appendEvent({
+        event,
+        idempotencyKey: `phase-7:${event.id}`
+      });
+
+      expect(appended.ok).toBe(true);
+    }
+
+    const replayed = [];
+    for await (const result of adapter.replay({ cursor: "0" })) {
+      expect(result.ok).toBe(true);
+      if (result.value !== undefined) {
+        replayed.push(result.value);
+      }
+    }
+
+    const thresholdPage = await adapter.queryEvents({
+      objectRef: slice.refs.thresholdRef,
+      page: { limit: 4 }
+    });
+    const thresholdRelatedPage = await adapter.queryEvents({
+      relatedRef: slice.refs.thresholdRef,
+      page: { limit: 20 }
+    });
+    const redactionPage = await adapter.queryEvents({
+      eventTypes: ["system.redaction.applied"],
+      page: { limit: 2 }
+    });
+    const tables = adapter.snapshotTables();
+
+    expect(replayed.map((event) => event.id)).toEqual(
+      slice.events.map((event) => event.id)
+    );
+    expect(thresholdPage.value?.items.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["ecology.threshold.created", "ecology.threshold.breached"])
+    );
+    expect(thresholdRelatedPage.value?.items.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["governance.policy.versioned"])
+    );
+    expect(redactionPage.value?.items).toHaveLength(1);
+    expect(tables.eventRecords).toHaveLength(slice.events.length);
+    expect(tables.outbox).toHaveLength(slice.events.length);
+    expect(tables.adapterAudits).toHaveLength(slice.events.length);
+    expect(tables.canonicalSqlPlan.statements.length).toBeGreaterThan(slice.events.length);
+    expect(tables.canonicalSqlPlan.appendOnlyTables).toEqual(
+      expect.arrayContaining(["canopy_events", "canopy_outbox", "canopy_adapter_audit"])
+    );
+  });
+
+  it("sends the Phase 7 export through redaction-aware ActivityPub transport", async () => {
+    const slice = executeRiverbendCyberneticSlice();
+    const redactedEvidenceRef = {
+      ...slice.refs.evidenceRef,
+      lifecycleStatus: "redacted" as const
+    };
+    const adapter = createActivityPubTransportAdapter({
+      now: () => "2026-06-15T13:10:00.000Z",
+      rules: [
+        {
+          federationRuleRef: slice.refs.dataStewardshipAgreementRef,
+          peerRef: slice.refs.federationPeerRef,
+          allowedObjectTypes: slice.federationExport.preview.includedObjectTypes,
+          allowedEventTypes: [],
+          exportAllowed: true,
+          importAllowed: true,
+          redactionRequired: true,
+          blockedPayloadFields: ["operatorOnlyNote"]
+        }
+      ]
+    });
+    const message = {
+      id: "federation.message.riverbend-phase-7",
+      federationRuleRef: slice.refs.dataStewardshipAgreementRef,
+      eventIds: [...slice.federationExport.preview.eventIds],
+      objectRefs: [
+        ...slice.federationExport.preview.includedObjects
+          .map((object) => object.ref)
+          .filter((ref) => ref.id !== slice.refs.evidenceRef.id),
+        redactedEvidenceRef
+      ],
+      payload: {
+        envelope: slice.federationExport.envelope,
+        redactionSummary: {
+          ...slice.federationExport.preview.redactionSummary,
+          removedFields: [
+            ...slice.federationExport.preview.redactionSummary.removedFields,
+            "schoolContact",
+            "pickupNotes"
+          ]
+        },
+        publicSummary: "Riverbend Phase 7 export with redaction continuity.",
+        schoolContact: "must not leave Riverbend",
+        pickupNotes: "must not leave Riverbend",
+        operatorOnlyNote: "blocked by federation rule"
+      },
+      contentHash: slice.federationExport.preview.contentHash,
+      schemaVersion: 1
+    };
+
+    const sent = await adapter.send(message);
+    const received = await adapter.receive();
+
+    expect(sent.ok).toBe(true);
+    expect(sent.value?.payload).not.toHaveProperty("schoolContact");
+    expect(sent.value?.payload).not.toHaveProperty("pickupNotes");
+    expect(sent.value?.payload).not.toHaveProperty("operatorOnlyNote");
+    expect(sent.value?.payload).toHaveProperty("redactionSummary");
+    expect(sent.value?.objectRefs).toContainEqual(redactedEvidenceRef);
+    expect(received.value?.items[0]?.id).toBe(message.id);
   });
 
   it("replays the Phase 7 event stream across civic-memory cursors", () => {

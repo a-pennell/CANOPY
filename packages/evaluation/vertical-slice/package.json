@@ -9,7 +9,9 @@
   },
   "dependencies": {
     "@canopy/app-shell": "0.0.0",
+    "@canopy/adapters-provider-activitypub-transport": "0.0.0",
     "@canopy/adapters-provider-oidc-auth": "0.0.0",
+    "@canopy/adapters-provider-postgres-event-store": "0.0.0",
     "@canopy/capabilities-allocation-accounting": "0.0.0",
     "@canopy/capabilities-claims-evidence": "0.0.0",
     "@canopy/capabilities-data-stewardship": "0.0.0",

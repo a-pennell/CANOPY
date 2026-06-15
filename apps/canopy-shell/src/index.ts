@@ -766,6 +766,9 @@ function renderDecisionPacket(snapshot: CanopyShellSnapshot): readonly string[] 
     `Authority refs: ${packet.authorityRefs.map(formatRef).join(", ") || "none"}`,
     `Claims: ${packet.claimRefs.map(formatRef).join(", ") || "none"}`,
     `Evidence: ${packet.evidenceRefs.map(formatRef).join(", ") || "none"}`,
+    `Unresolved objections: ${packet.unresolvedObjectionRefs.map(formatRef).join(", ") || "none"}`,
+    `Redactions: ${packet.hasRedactions ? "present" : "clear"}`,
+    `Adaptive policy versions: ${policyVersionRefs(packet.timeline).map(formatRef).join(", ") || "none"}`,
     `Care outcomes: ${packet.stewardshipOutcomes.length}`,
     ...packet.timeline.slice(0, 8).map((entry) => `- ${entry.type} ${formatRef(entry.objectRef)}`)
   ]);
@@ -851,8 +854,21 @@ function renderFederationExportState(snapshot: CanopyShellSnapshot): readonly st
     `Events: ${state.includedEventIds.length}; objects: ${state.includedObjectRefs.length}`,
     `Data stewardship agreements: ${state.dataStewardshipAgreementRefs.map(formatRef).join(", ") || "none"}`,
     `Local mappings: ${state.localMappingIds.join(", ") || "none"}`,
+    state.redactionSummary === undefined
+      ? "Redaction summary: none"
+      : `Redaction summary: ${state.redactionSummary.redactionCount} redactions, removed fields=${state.redactionSummary.removedFields.join(", ") || "none"}`,
     ...state.readinessWarnings.map((warning) => `- readiness ${warning.code}: ${warning.message}`)
   ]);
+}
+
+function policyVersionRefs(
+  timeline: readonly CanopyUiTimelineEntry[]
+): readonly ObjectRef[] {
+  return dedupeRefs(
+    timeline
+      .filter((entry) => entry.type === "governance.policy.versioned")
+      .map((entry) => entry.objectRef)
+  );
 }
 
 function renderAuthorityTrace(snapshot: CanopyShellSnapshot): readonly string[] {
