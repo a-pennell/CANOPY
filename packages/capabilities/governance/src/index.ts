@@ -10,6 +10,7 @@ import type {
 } from "@canopy/contracts-kernel";
 import type {
   Appeal,
+  Amendment,
   ConsentSignal,
   Decision,
   DecisionMethodConfig,
@@ -18,6 +19,7 @@ import type {
   GovernanceControlEvaluation,
   GovernanceControlIssue,
   Issue,
+  PolicyVersion,
   Proposal,
   QuorumState
 } from "@canopy/contracts-governance";
@@ -95,6 +97,16 @@ export interface RecordDecisionCommand extends GovernanceCommandContext {
 
 export interface RecordDecisionPacketCommand extends GovernanceCommandContext {
   readonly decisionPacket: DecisionPacket;
+}
+
+export interface SubmitAmendmentCommand extends GovernanceCommandContext {
+  readonly amendment: Amendment;
+}
+
+export interface VersionPolicyCommand extends GovernanceCommandContext {
+  readonly policyVersion: PolicyVersion;
+  readonly policyRef?: ObjectRef;
+  readonly relatedRefs?: readonly ObjectRef[];
 }
 
 export interface OpenProposalCommand extends GovernanceCommandContext {
@@ -276,6 +288,73 @@ export function recordDecision(
         : { governanceControls: evaluateGovernanceHardening(command.decision, command.controls) })
     },
     record: command.decision
+  });
+}
+
+export function submitAmendment(
+  services: GovernanceCommandServices,
+  command: SubmitAmendmentCommand
+): GovernanceCommandResult<Amendment> {
+  assertValidAuthority(validateAmendmentAuthority(command.amendment));
+  const ref = refFor(command.amendment, "amendment");
+  registerRefs(services.registry, [
+    ref,
+    ...refsForAmendment(command.amendment),
+    command.actorRef
+  ]);
+
+  return appendGovernanceEvent(services, command, {
+    type: "governance.amendment.submitted",
+    objectRef: ref,
+    relatedRefs: refsForAmendment(command.amendment),
+    authorityRefs: command.amendment.authorityRefs,
+    orgId: command.amendment.orgId,
+    visibility: command.amendment.visibility,
+    dataState: command.amendment.dataState,
+    payload: {
+      command: "submitAmendment",
+      amendment: command.amendment
+    },
+    record: command.amendment
+  });
+}
+
+export function versionPolicy(
+  services: GovernanceCommandServices,
+  command: VersionPolicyCommand
+): GovernanceCommandResult<PolicyVersion> {
+  assertValidAuthority(validatePolicyVersionAuthority(command.policyVersion));
+  const policyRef = command.policyRef ?? command.policyVersion.policyRef;
+  registerRefs(services.registry, [
+    policyRef,
+    command.policyVersion.decisionRef,
+    command.policyVersion.createdByRef,
+    command.policyVersion.supersedesPolicyVersionRef,
+    ...command.policyVersion.authorityRefs,
+    ...command.policyVersion.dataStewardshipAgreementRefs,
+    ...(command.relatedRefs ?? []),
+    command.actorRef
+  ]);
+
+  return appendGovernanceEvent(services, command, {
+    type: "governance.policy.versioned",
+    objectRef: policyRef,
+    relatedRefs: compactRefs([
+      command.policyVersion.decisionRef,
+      command.policyVersion.createdByRef,
+      command.policyVersion.supersedesPolicyVersionRef,
+      ...command.policyVersion.dataStewardshipAgreementRefs,
+      ...(command.relatedRefs ?? [])
+    ]),
+    authorityRefs: command.policyVersion.authorityRefs,
+    orgId: command.policyVersion.orgId,
+    visibility: command.policyVersion.visibility,
+    dataState: command.policyVersion.dataState,
+    payload: {
+      command: "versionPolicy",
+      policyVersion: command.policyVersion
+    },
+    record: command.policyVersion
   });
 }
 
@@ -581,6 +660,25 @@ export function validateAppealAuthority(
         ]
       : [])
   ]);
+}
+
+export function validateAmendmentAuthority(
+  amendment: Amendment
+): GovernanceAuthorityValidationResult {
+  return result(validateNonMembershipAuthority(amendment.authorityRefs));
+}
+
+export function validatePolicyVersionAuthority(
+  policyVersion: PolicyVersion
+): GovernanceAuthorityValidationResult {
+  return result(
+    validateNonMembershipAuthority(policyVersion.authorityRefs, {
+      missingCode: "binding-decision-missing-authority",
+      missingMessage: "Policy versions require explicit authorityRefs.",
+      membershipOnlyCode: "binding-decision-membership-only-authority",
+      membershipOnlyMessage: "Policy versions cannot rely only on membership authority."
+    })
+  );
 }
 
 export function evaluateGovernanceHardening(
@@ -1029,6 +1127,19 @@ function refsForDecision(decision: Decision): readonly ObjectRef[] {
     ...decision.policyRefs,
     decision.appealPathRef,
     ...decision.supersedesDecisionRefs
+  ]);
+}
+
+function refsForAmendment(amendment: Amendment): readonly ObjectRef[] {
+  return compactRefs([
+    amendment.createdByRef,
+    ...amendment.authorityRefs,
+    ...amendment.dataStewardshipAgreementRefs,
+    amendment.parentProposalRef,
+    amendment.proposedByRef,
+    ...amendment.affectedRefs,
+    ...amendment.claimRefs,
+    ...amendment.evidenceRefs
   ]);
 }
 

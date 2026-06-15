@@ -12,6 +12,7 @@ import type {
   CreateTaskCommand,
   GrantUseRightCommand,
   RecordFoodFlowCommand,
+  RevokeUseRightCommand,
   UseRightScope
 } from "@canopy/capabilities-stewardship";
 import type {
@@ -32,7 +33,8 @@ import type {
   CreateCommitmentCommand,
   CreateNeedCommand,
   CreateOfferCommand,
-  PostLedgerEntryCommand
+  PostLedgerEntryCommand,
+  ReverseLedgerEntryCommand
 } from "@canopy/capabilities-allocation-accounting";
 import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
@@ -60,7 +62,9 @@ import {
   executeRecordFoodFlowCommand,
   executeRecordLearningOutcomeCommand,
   executeRecordThresholdBreachCommand,
-  executeRequestGuardianReviewCommand
+  executeRequestGuardianReviewCommand,
+  executeReverseLedgerEntryCommand,
+  executeRevokeUseRightCommand
 } from "./index.js";
 
 const occurredAt = "2026-06-13T19:00:00.000Z";
@@ -79,6 +83,10 @@ const useRightRef = ref("use-right.north-pasture-grazing", "use-right");
 const reviewPathRef = ref("policy.seasonal-review", "policy");
 const revocationPathRef = ref("appeal.use-right-revocation", "appeal");
 const ledgerEntryRef = ref("ledger-entry.allocation-1", "ledger-entry");
+const reversalLedgerEntryRef = ref(
+  "ledger-entry.allocation-1-reversal",
+  "ledger-entry"
+);
 const commonsAccountRef = ref("ledger-account.commons", "ledger-account");
 const stewardshipAccountRef = ref(
   "ledger-account.stewardship",
@@ -198,6 +206,21 @@ describe("command runtime", () => {
       runtime,
       rebuildProjections: false
     });
+    const revokedUseRight = await executeRevokeUseRightCommand({
+      command: revokeUseRightCommand("event.helper.use-right.revoked"),
+      services,
+      runtime,
+      rebuildProjections: false
+    });
+    const reversedLedgerEntry = await executeReverseLedgerEntryCommand({
+      command: reverseLedgerEntryCommand(
+        "event.helper.ledger-entry.reversed",
+        ledgerEntry.event.id
+      ),
+      services,
+      runtime,
+      rebuildProjections: false
+    });
 
     expect([
       claim.event.type,
@@ -206,7 +229,9 @@ describe("command runtime", () => {
       decision.event.type,
       resource.event.type,
       useRight.event.type,
-      ledgerEntry.event.type
+      ledgerEntry.event.type,
+      revokedUseRight.event.type,
+      reversedLedgerEntry.event.type
     ]).toEqual([
       "claim.created",
       "evidence.linked_to_claim",
@@ -214,10 +239,12 @@ describe("command runtime", () => {
       "governance.decision.recorded",
       "stewardship.resource.created",
       "stewardship.use_right.granted",
-      "accounting.ledger_entry.posted"
+      "accounting.ledger_entry.posted",
+      "stewardship.use_right.revoked",
+      "accounting.ledger_entry.reversed"
     ]);
-    expect(runtime.counts().events).toBe(7);
-    expect(runtime.listOutbox()).toHaveLength(7);
+    expect(runtime.counts().events).toBe(9);
+    expect(runtime.listOutbox()).toHaveLength(9);
     expect(runtime.getEvent("event.helper.ledger-entry.posted")?.event).toEqual(
       ledgerEntry.event
     );
@@ -228,12 +255,70 @@ describe("command runtime", () => {
       "event.helper.decision.recorded",
       "event.helper.resource.created",
       "event.helper.use-right.granted",
-      "event.helper.ledger-entry.posted"
+      "event.helper.ledger-entry.posted",
+      "event.helper.use-right.revoked",
+      "event.helper.ledger-entry.reversed"
     ]);
     expect(useRight.event.authorityRefs).toEqual([roleAuthorityRef]);
+    expect(revokedUseRight.event.payload["state"]).toBe("revoked");
     expect(ledgerEntry.event.payload["totals"]).toEqual({
       credits: { debit: 10, credit: 10 }
     });
+    expect(reversedLedgerEntry.event.supersedesEventId).toBe(ledgerEntry.event.id);
+  });
+
+  it("persists use-right revocations and ledger reversals through outbox and projection rebuilds", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+    const services = servicesForTest();
+    services.registry.register(commonsAccountRef);
+    services.registry.register(stewardshipAccountRef);
+    await executeGrantUseRightCommand({
+      command: grantUseRightCommand("event.persistence.use-right.granted"),
+      services,
+      runtime,
+      rebuildProjections: false
+    });
+    const postedLedgerEntry = await executePostLedgerEntryCommand({
+      command: postLedgerEntryCommand("event.persistence.ledger-entry.posted"),
+      services,
+      runtime,
+      rebuildProjections: false
+    });
+
+    const revokedUseRight = await executeRevokeUseRightCommand({
+      command: revokeUseRightCommand("event.persistence.use-right.revoked"),
+      services,
+      runtime
+    });
+    const reversedLedgerEntry = await executeReverseLedgerEntryCommand({
+      command: reverseLedgerEntryCommand(
+        "event.persistence.ledger-entry.reversed",
+        postedLedgerEntry.event.id
+      ),
+      services,
+      runtime
+    });
+
+    expect(runtime.getEvent(revokedUseRight.event.id)?.event).toEqual(
+      revokedUseRight.event
+    );
+    expect(runtime.getEvent(reversedLedgerEntry.event.id)?.event).toEqual(
+      reversedLedgerEntry.event
+    );
+    expect(
+      runtime
+        .listOutbox()
+        .filter((record) =>
+          [revokedUseRight.event.id, reversedLedgerEntry.event.id].includes(
+            record.eventId
+          )
+        )
+    ).toHaveLength(2);
+    expect(revokedUseRight.projectionRebuild?.persistedStates).not.toEqual([]);
+    expect(reversedLedgerEntry.projectionRebuild?.persistedStates).not.toEqual([]);
+    expect(reversedLedgerEntry.event.payload["originalEventId"]).toBe(
+      postedLedgerEntry.event.id
+    );
   });
 
   it("keeps open proposal as the create proposal runtime alias", () => {
@@ -514,6 +599,23 @@ function grantUseRightCommand(eventId: string): GrantUseRightCommand {
   };
 }
 
+function revokeUseRightCommand(eventId: string): RevokeUseRightCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    authorityRefs: [roleAuthorityRef],
+    useRightRef,
+    holderRef,
+    resourceRef,
+    decisionRef,
+    revocationPathRef,
+    appealPathRef: revocationPathRef,
+    reason: "Watershed stress threshold exceeded.",
+    effectiveAt: "2026-06-14T19:00:00.000Z"
+  };
+}
+
 function useRightScope(): UseRightScope {
   return {
     holderRef,
@@ -533,6 +635,21 @@ function useRightScope(): UseRightScope {
       revocationPathRef,
       revocationConditions: ["watershed stress threshold exceeded"]
     }
+  };
+}
+
+function reverseLedgerEntryCommand(
+  eventId: string,
+  originalEventId: string
+): ReverseLedgerEntryCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    authorityRefs: [roleAuthorityRef],
+    reversalLedgerEntryRef,
+    originalEventId,
+    memo: "Reverse duplicate pasture stewardship allocation."
   };
 }
 

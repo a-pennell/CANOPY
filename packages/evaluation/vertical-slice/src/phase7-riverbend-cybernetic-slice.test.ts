@@ -41,6 +41,10 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
         "flow.food.recorded",
         "learning.outcome.recorded",
         "learning.retrospective.completed",
+        "governance.amendment.submitted",
+        "stewardship.use_right.revoked",
+        "accounting.ledger_entry.reversed",
+        "governance.policy.versioned",
         "federation.export.approved"
       ])
     );
@@ -72,7 +76,9 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
         "ecology.guardian.review_completed",
         "governance.decision.recorded",
         "flow.food.recorded",
-        "learning.outcome.recorded"
+        "learning.outcome.recorded",
+        "learning.retrospective.completed",
+        "governance.policy.versioned"
       ])
     );
     expect(slice.objectPages.threshold.relatedRefs.map((ref) => ref.id)).toEqual(
@@ -91,6 +97,7 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
         "stewardship.use_right.granted",
         "coordination.commitment.created",
         "accounting.ledger_entry.posted",
+        "accounting.ledger_entry.reversed",
         "flow.food.recorded",
         "learning.outcome.recorded"
       ])
@@ -101,6 +108,48 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
         slice.refs.mandateRef.id,
         slice.refs.watershedGuardianRef.id
       ])
+    );
+    expect(slice.objectPages.useRight.timelineEvents.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "stewardship.use_right.granted",
+        "stewardship.use_right.revoked",
+        "accounting.ledger_entry.reversed",
+        "governance.policy.versioned"
+      ])
+    );
+  });
+
+  it("adapts when learning reveals the first policy is insufficient", () => {
+    const slice = executeRiverbendCyberneticSlice();
+    const eventTypes = slice.events.map((event) => event.type);
+    const policyVersioned = slice.events.find(
+      (event) => event.type === "governance.policy.versioned"
+    );
+    const reversal = slice.events.find(
+      (event) => event.type === "accounting.ledger_entry.reversed"
+    );
+    const revocation = slice.events.find(
+      (event) => event.type === "stewardship.use_right.revoked"
+    );
+
+    expect(
+      eventTypes.filter((eventType) => eventType === "ecology.threshold.breached")
+    ).toHaveLength(2);
+    expect(eventTypes.indexOf("learning.retrospective.completed")).toBeLessThan(
+      eventTypes.indexOf("governance.amendment.submitted")
+    );
+    expect(eventTypes.indexOf("governance.decision.recorded")).toBeLessThan(
+      eventTypes.indexOf("stewardship.use_right.revoked")
+    );
+    expect(revocation?.authorityRefs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([slice.refs.adaptiveDecisionRef.id])
+    );
+    expect(reversal?.supersedesEventId).toBe(
+      "event.accounting.ledger_entry.posted.ledger-entry.food-flow-allocation"
+    );
+    expect(policyVersioned?.objectRef).toEqual(slice.refs.policyRef);
+    expect(policyVersioned?.authorityRefs.map((ref) => ref.id)).toEqual(
+      expect.arrayContaining([slice.refs.adaptiveDecisionRef.id])
     );
   });
 
@@ -121,7 +170,9 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
         "decision",
         "use-right",
         "flow",
-        "task"
+        "task",
+        "amendment",
+        "policy"
       ])
     );
     expect(preview.authorityRefs.map((ref) => ref.id)).toEqual(

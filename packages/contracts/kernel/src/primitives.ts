@@ -21,6 +21,7 @@ export type CanopyObjectType =
   | "account"
   | "agreement"
   | "appeal"
+  | "amendment"
   | "budget"
   | "claim"
   | "commitment"

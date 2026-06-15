@@ -30,11 +30,13 @@ import {
   createTask,
   grantUseRight,
   recordFoodFlow,
+  revokeUseRight,
   type CompleteTaskCommand,
   type CreateResourceCommand,
   type CreateTaskCommand,
   type GrantUseRightCommand,
-  type RecordFoodFlowCommand
+  type RecordFoodFlowCommand,
+  type RevokeUseRightCommand
 } from "@canopy/capabilities-stewardship";
 import {
   createLivingSystem,
@@ -57,10 +59,12 @@ import {
   createNeed,
   createOffer,
   postLedgerEntry,
+  reverseLedgerEntry,
   type CreateCommitmentCommand,
   type CreateNeedCommand,
   type CreateOfferCommand,
-  type PostLedgerEntryCommand
+  type PostLedgerEntryCommand,
+  type ReverseLedgerEntryCommand
 } from "@canopy/capabilities-allocation-accounting";
 import {
   buildPersistedCanopyShellSnapshot,
@@ -256,6 +260,12 @@ export function grantUseRightCommandHandler(
   return (command) => grantUseRight(services, command).append.event;
 }
 
+export function revokeUseRightCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RevokeUseRightCommand> {
+  return (command) => revokeUseRight(services, command).append.event;
+}
+
 export function recordLearningOutcomeCommandHandler(
   services: CanopyCommandServices
 ): CanopyCommandHandler<RecordLearningOutcomeCommand> {
@@ -273,6 +283,19 @@ export function postLedgerEntryCommandHandler(
 ): CanopyCommandHandler<PostLedgerEntryCommand> {
   return (command) =>
     postLedgerEntry(
+      {
+        objectRegistry: services.registry,
+        civicMemory: services.memory
+      },
+      command
+    ).event;
+}
+
+export function reverseLedgerEntryCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<ReverseLedgerEntryCommand> {
+  return (command) =>
+    reverseLedgerEntry(
       {
         objectRegistry: services.registry,
         civicMemory: services.memory
@@ -457,6 +480,15 @@ export function executeGrantUseRightCommand(
   });
 }
 
+export function executeRevokeUseRightCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RevokeUseRightCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: revokeUseRightCommandHandler(input.services)
+  });
+}
+
 export function executeRecordLearningOutcomeCommand(
   input: ExecuteCanonicalCanopyCommandInput<RecordLearningOutcomeCommand>
 ): Promise<ExecuteCanopyCommandResult> {
@@ -481,6 +513,15 @@ export function executePostLedgerEntryCommand(
   return executeCanopyCommand({
     ...input,
     handle: postLedgerEntryCommandHandler(input.services)
+  });
+}
+
+export function executeReverseLedgerEntryCommand(
+  input: ExecuteCanonicalCanopyCommandInput<ReverseLedgerEntryCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: reverseLedgerEntryCommandHandler(input.services)
   });
 }
 

@@ -7,9 +7,11 @@ import type {
 } from "@canopy/contracts-kernel";
 import type {
   Appeal,
+  Amendment,
   Decision,
   DecisionPacket,
   Issue,
+  PolicyVersion,
   Proposal
 } from "@canopy/contracts-governance";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
@@ -24,6 +26,8 @@ import {
   requestGuardianReview,
   recordDecision,
   recordDecisionPacket,
+  submitAmendment,
+  versionPolicy,
   evaluateGovernanceHardening,
   validateDelegationAuthority,
   validateGovernanceRuntimeControls,
@@ -44,12 +48,15 @@ const membershipAuthorityRef = {
 } as unknown as ObjectRef;
 const issueRef = ref("canopy:issue:water", "issue", "governance");
 const proposalRef = ref("canopy:proposal:water-plan", "proposal", "governance");
+const amendmentRef = ref("canopy:amendment:water-plan-route", "amendment", "governance");
 const decisionRef = ref("canopy:decision:water-plan", "decision", "governance");
 const packetRef = ref(
   "canopy:decision-packet:water-plan",
   "decision-packet",
   "governance"
 );
+const policyRef = ref("canopy:policy:dry-season-water", "policy", "governance");
+const policyVersionRef = ref("canopy:policy-version:dry-season-water-v2", "policy", "governance");
 const appealRef = ref("canopy:appeal:water-plan", "appeal", "governance");
 const mandateRef = ref("canopy:mandate:watershed", "mandate", "authority");
 const guardianReviewRef = ref("canopy:guardian-review:water-plan", "guardian-review", "governance");
@@ -189,6 +196,49 @@ describe("governance capability commands", () => {
         conditions: ["pause if threshold worsens"]
       }
     });
+  });
+
+  it("submits amendments and versions policies as native governance events", () => {
+    const services = servicesForTest();
+    const amendment = makeAmendment();
+    const policyVersion = makePolicyVersion();
+    const submitted = submitAmendment(services, {
+      amendment,
+      occurredAt,
+      actorRef
+    });
+    const versioned = versionPolicy(services, {
+      eventId: "event.governance.policy.versioned.dry-season-water",
+      policyVersion,
+      occurredAt,
+      actorRef,
+      relatedRefs: [proposalRef, amendmentRef]
+    });
+
+    expect(submitted.ref).toEqual(amendmentRef);
+    expect(submitted.appendResult.event).toMatchObject({
+      type: "governance.amendment.submitted",
+      objectRef: amendmentRef,
+      authorityRefs: [roleAuthorityRef],
+      payload: {
+        command: "submitAmendment",
+        amendment
+      }
+    });
+    expect(versioned.ref).toEqual(policyRef);
+    expect(versioned.appendResult.event).toMatchObject({
+      id: "event.governance.policy.versioned.dry-season-water",
+      type: "governance.policy.versioned",
+      objectRef: policyRef,
+      authorityRefs: [roleAuthorityRef],
+      payload: {
+        command: "versionPolicy",
+        policyVersion
+      }
+    });
+    expect(versioned.appendResult.event.relatedRefs).toEqual(
+      expect.arrayContaining([decisionRef, proposalRef, amendmentRef])
+    );
   });
 
   it("opens a proposal with executable authority validation", () => {
@@ -573,6 +623,55 @@ function makeProposal(): Proposal {
     decisionMethod: decisionMethod(),
     deliberationWindow: {},
     conditions: []
+  };
+}
+
+function makeAmendment(): Amendment {
+  return {
+    schemaVersion: "0.0.0",
+    id: amendmentRef.id,
+    type: "amendment",
+    orgId: "canopy:org:watershed",
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    authorityRefs: [roleAuthorityRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    parentProposalRef: proposalRef,
+    amendmentType: "condition_added",
+    title: "Add runoff pause condition",
+    summary: "Pause the route if water quality worsens before delivery completes.",
+    rationale: "Adaptive governance needs a path when monitoring invalidates the original route.",
+    proposedByRef: actorRef,
+    proposedText: "Breach-window routes pause when nitrate readings worsen materially.",
+    affectedRefs: [thresholdRef, policyRef],
+    claimRefs: [claimRef],
+    evidenceRefs: [evidenceRef]
+  };
+}
+
+function makePolicyVersion(): PolicyVersion {
+  return {
+    schemaVersion: "0.0.0",
+    id: policyVersionRef.id,
+    type: "policy-version",
+    orgId: "canopy:org:watershed",
+    policyRef,
+    version: "2",
+    status: "active",
+    title: "Dry season water route policy v2",
+    body: "Breach-window routes must pause and re-enter guardian review when indicators worsen.",
+    summaryOfChanges: "Adds adaptive pause and accounting correction rules.",
+    decisionRef,
+    authorityRefs: [roleAuthorityRef],
+    effectiveAt: occurredAt,
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    dataState: "institutionally_certified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: []
   };
 }
 

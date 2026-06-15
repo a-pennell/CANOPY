@@ -2011,6 +2011,7 @@ const canopyObjectTypes = [
   "account",
   "agreement",
   "appeal",
+  "amendment",
   "budget",
   "claim",
   "commitment",

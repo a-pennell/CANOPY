@@ -1,4 +1,4 @@
-import type { Decision, Issue, Proposal } from "@canopy/contracts-governance";
+import type { Amendment, Decision, Issue, PolicyVersion, Proposal } from "@canopy/contracts-governance";
 import type {
   CanopyShellSession,
   CanopyShellScope,
@@ -18,7 +18,8 @@ import {
   createLedgerAccount,
   createNeed,
   createOffer,
-  postLedgerEntry
+  postLedgerEntry,
+  reverseLedgerEntry
 } from "@canopy/capabilities-allocation-accounting";
 import {
   createClaim,
@@ -41,7 +42,9 @@ import {
   createProposal,
   completeGuardianReview,
   requestGuardianReview,
-  recordDecision
+  recordDecision,
+  submitAmendment,
+  versionPolicy
 } from "@canopy/capabilities-governance";
 import {
   completeLearningRetrospective,
@@ -55,6 +58,7 @@ import {
   proposeUseRight,
   recordFoodFlow,
   recordResourceContext,
+  revokeUseRight,
   type UseRightScope
 } from "@canopy/capabilities-stewardship";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
@@ -133,10 +137,19 @@ export interface RiverbendCyberneticSliceRefs {
   readonly flowRef: ObjectRef;
   readonly outcomeRef: ObjectRef;
   readonly retrospectiveRef: ObjectRef;
+  readonly adaptiveIssueRef: ObjectRef;
+  readonly adaptiveProposalRef: ObjectRef;
+  readonly adaptiveAmendmentRef: ObjectRef;
+  readonly adaptiveDecisionRef: ObjectRef;
+  readonly adaptiveGuardianReviewRef: ObjectRef;
+  readonly policyRef: ObjectRef;
+  readonly policyVersionRef: ObjectRef;
+  readonly adaptiveTaskRef: ObjectRef;
   readonly exportRef: ObjectRef;
   readonly cashLedgerRef: ObjectRef;
   readonly stewardshipLedgerRef: ObjectRef;
   readonly ledgerEntryRef: ObjectRef;
+  readonly reversalLedgerEntryRef: ObjectRef;
 }
 
 export interface RiverbendCyberneticSliceResult {
@@ -607,6 +620,154 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     nextPolicyQuestion: "Should breach-window food flows default to low-runoff route checks?"
   });
 
+  recordThresholdBreach(services, {
+    eventId: "event.ecology.threshold.breached.mill-creek-nitrate-worsened",
+    occurredAt,
+    actorRef: refs.actorRef,
+    thresholdRef: refs.thresholdRef,
+    indicatorRef: refs.indicatorRef,
+    relatedRefs: [refs.livingSystemRef, refs.retrospectiveRef, refs.adaptiveIssueRef],
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Mill Creek nitrate threshold worsened",
+    observedValue: 18.7,
+    unit: "mg/L",
+    observedAt: occurredAt,
+    requiresGuardianReview: true
+  });
+  createIssue(services, {
+    occurredAt,
+    actorRef: refs.actorRef,
+    issue: makeAdaptiveIssue(refs)
+  });
+  createProposal(services, {
+    occurredAt,
+    actorRef: refs.actorRef,
+    proposal: makeAdaptiveProposal(refs)
+  });
+  submitAmendment(services, {
+    occurredAt,
+    actorRef: refs.actorRef,
+    amendment: makeAdaptiveAmendment(refs)
+  });
+  requestGuardianReview(services, {
+    eventId: "event.ecology.guardian.review_requested.mill-creek-policy-adaptation",
+    occurredAt,
+    actorRef: refs.actorRef,
+    guardianReviewRef: refs.adaptiveGuardianReviewRef,
+    proposalRef: refs.adaptiveProposalRef,
+    thresholdRef: refs.thresholdRef,
+    subjectRefs: [
+      refs.thresholdRef,
+      refs.useRightRef,
+      refs.policyRef,
+      refs.adaptiveProposalRef,
+      refs.retrospectiveRef
+    ],
+    guardianRefs: [refs.watershedGuardianRef],
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    orgId,
+    title: "Guardian review for worsened Mill Creek threshold",
+    reason: "Learning retrospective and worsened nitrate reading require adaptive policy review."
+  });
+  completeGuardianReview(services, {
+    eventId: "event.ecology.guardian.review_completed.mill-creek-policy-adaptation",
+    occurredAt,
+    actorRef: refs.actorRef,
+    guardianReviewRef: refs.adaptiveGuardianReviewRef,
+    subjectRefs: [refs.thresholdRef, refs.useRightRef, refs.policyRef, refs.adaptiveProposalRef],
+    guardianRefs: [refs.watershedGuardianRef],
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    orgId,
+    title: "Adaptive guardian review completed",
+    outcome: "pause_and_revise",
+    conditions: [
+      "Revoke the active food-flow use right until a fresh route is approved.",
+      "Reverse the coordination allocation if the route cannot proceed.",
+      "Version the breach-window policy with a worsening-threshold pause rule."
+    ],
+    evidenceRefs: [refs.retrospectiveRef, refs.outcomeRef]
+  });
+  recordDecision(services, {
+    occurredAt,
+    actorRef: refs.actorRef,
+    decision: makeAdaptiveDecision(refs),
+    controls: {
+      evaluatedAt: occurredAt,
+      delegatedAuthorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+      appealPathRef: refs.appealPathRef
+    }
+  });
+  revokeUseRight(services, {
+    eventId: "event.stewardship.use_right.revoked.school-crop-share",
+    occurredAt,
+    actorRef: refs.actorRef,
+    useRightRef: refs.useRightRef,
+    holderRef: refs.actorRef,
+    resourceRef: refs.resourceRef,
+    decisionRef: refs.adaptiveDecisionRef,
+    revocationPathRef: refs.adaptiveGuardianReviewRef,
+    appealPathRef: refs.appealPathRef,
+    relatedRefs: [refs.thresholdRef, refs.retrospectiveRef],
+    authorityRefs: [
+      refs.adaptiveDecisionRef,
+      refs.mandateRef,
+      refs.watershedGuardianRef
+    ],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    reason: "Mill Creek nitrate threshold worsened after the delivery route was approved."
+  });
+  reverseLedgerEntry(servicesForAccounting(services), {
+    eventId: "event.accounting.ledger_entry.reversed.food-flow-allocation",
+    occurredAt,
+    actorRef: refs.actorRef,
+    authorityRefs: [refs.adaptiveDecisionRef],
+    reversalLedgerEntryRef: refs.reversalLedgerEntryRef,
+    originalEventId: "event.accounting.ledger_entry.posted.ledger-entry.food-flow-allocation",
+    orgId,
+    commonsId,
+    memo: "Reverse food-flow allocation after guardian review paused the route."
+  });
+  createTask(services, {
+    eventId: "event.stewardship.task.created.review-food-flow-policy",
+    occurredAt,
+    actorRef: refs.actorRef,
+    taskRef: refs.adaptiveTaskRef,
+    title: "Review breach-window food-flow policy",
+    assignedToRefs: [refs.actorRef, refs.watershedGuardianRef],
+    resourceRefs: [refs.resourceRef],
+    useRightRef: refs.useRightRef,
+    authorityRefs: [refs.adaptiveDecisionRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    dueAt: "2026-06-18T16:00:00.000Z",
+    priority: "urgent"
+  });
+  versionPolicy(services, {
+    eventId: "event.governance.policy.versioned.breach-window-food-flow",
+    occurredAt,
+    actorRef: refs.actorRef,
+    policyVersion: makeAdaptivePolicyVersion(refs),
+    relatedRefs: [
+      refs.adaptiveIssueRef,
+      refs.adaptiveProposalRef,
+      refs.adaptiveAmendmentRef,
+      refs.adaptiveGuardianReviewRef,
+      refs.retrospectiveRef,
+      refs.thresholdRef,
+      refs.useRightRef,
+      refs.reversalLedgerEntryRef
+    ]
+  });
+
   setVisibilityRule(services, {
     eventId: "event.stewardship.data_visibility_rule.set.phase-7-export",
     occurredAt,
@@ -640,7 +801,11 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
       refs.useRightRef,
       refs.flowRef,
       refs.outcomeRef,
-      refs.retrospectiveRef
+      refs.retrospectiveRef,
+      refs.adaptiveProposalRef,
+      refs.adaptiveAmendmentRef,
+      refs.adaptiveDecisionRef,
+      refs.policyRef
     ],
     format: "json",
     includeRedactionStubs: true,
@@ -657,11 +822,13 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
         "threshold",
         "claim",
         "proposal",
+        "amendment",
         "guardian-review",
         "decision",
         "use-right",
         "flow",
-        "task"
+        "task",
+        "policy"
       ],
       allowedRecipientRefs: [refs.federationPeerRef],
       prohibitedRecipientRefs: [],
@@ -819,10 +986,38 @@ function riverbendRefs(): RiverbendCyberneticSliceRefs {
     flowRef: ref("flow.green-acre-to-northside", "flow"),
     outcomeRef: ref("outcome.school-meal-produce-gap-closed", "evidence"),
     retrospectiveRef: ref("retrospective.food-flow-threshold-breach", "evidence"),
+    adaptiveIssueRef: ref("issue.food-flow-policy-gap", "issue", "governance"),
+    adaptiveProposalRef: ref(
+      "proposal.pause-and-revise-breach-window-food-flow",
+      "proposal",
+      "governance"
+    ),
+    adaptiveAmendmentRef: ref(
+      "amendment.breach-window-pause-rule",
+      "amendment",
+      "governance"
+    ),
+    adaptiveDecisionRef: ref(
+      "decision.pause-and-revise-food-flow-policy",
+      "decision",
+      "governance"
+    ),
+    adaptiveGuardianReviewRef: ref(
+      "guardian-review.mill-creek-policy-adaptation",
+      "guardian-review"
+    ),
+    policyRef: ref("policy.breach-window-food-flow", "policy", "governance"),
+    policyVersionRef: ref(
+      "policy-version.breach-window-food-flow.v2",
+      "policy",
+      "governance"
+    ),
+    adaptiveTaskRef: ref("task.review-breach-window-food-flow-policy", "task"),
     exportRef: ref("agreement.export.riverbend-phase-7", "agreement"),
     cashLedgerRef: ref("ledger-account.food-commons-reserve", "ledger-account"),
     stewardshipLedgerRef: ref("ledger-account.stewardship-allocation", "ledger-account"),
-    ledgerEntryRef: ref("ledger-entry.food-flow-allocation", "ledger-entry")
+    ledgerEntryRef: ref("ledger-entry.food-flow-allocation", "ledger-entry"),
+    reversalLedgerEntryRef: ref("ledger-entry.food-flow-allocation-reversal", "ledger-entry")
   };
 }
 
@@ -1015,6 +1210,156 @@ function makeDecision(refs: RiverbendCyberneticSliceRefs): Decision {
   };
 }
 
+function makeAdaptiveIssue(refs: RiverbendCyberneticSliceRefs): Issue {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveIssueRef.id,
+    type: "issue",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    issueType: "policy_gap",
+    title: "Adapt food-flow policy after worsened threshold",
+    description: "The first route satisfied its conditions, but later monitoring shows the policy needs an explicit pause-and-revise rule.",
+    priority: "urgent",
+    scope: {
+      orgId,
+      affectedRefs: [refs.thresholdRef, refs.useRightRef, refs.policyRef]
+    },
+    claimRefs: [],
+    evidenceRefs: [refs.retrospectiveRef, refs.outcomeRef],
+    perspectiveRefs: [],
+    proposalRefs: [refs.adaptiveProposalRef],
+    decisionRefs: []
+  };
+}
+
+function makeAdaptiveProposal(refs: RiverbendCyberneticSliceRefs): Proposal {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveProposalRef.id,
+    type: "proposal",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    issueRef: refs.adaptiveIssueRef,
+    proposalType: "policy_change",
+    title: "Pause and revise breach-window food flows",
+    summary: "Add an adaptive pause rule, revoke the current use right, and reverse the allocation if watershed conditions worsen.",
+    proposedByRefs: [refs.actorRef, refs.watershedGuardianRef],
+    affectedRefs: [refs.thresholdRef, refs.useRightRef, refs.policyRef],
+    claimRefs: [],
+    evidenceRefs: [refs.retrospectiveRef, refs.outcomeRef],
+    perspectiveRefs: [],
+    scenarioRefs: [refs.scenarioRef],
+    amendmentRefs: [refs.adaptiveAmendmentRef],
+    objectionRefs: [],
+    decisionMethod: adaptiveDecisionMethod(refs),
+    deliberationWindow: {
+      closesAt: "2026-06-18T16:00:00.000Z"
+    },
+    conditions: ["guardian review must confirm the threshold worsening before revocation"]
+  };
+}
+
+function makeAdaptiveAmendment(refs: RiverbendCyberneticSliceRefs): Amendment {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveAmendmentRef.id,
+    type: "amendment",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    parentProposalRef: refs.adaptiveProposalRef,
+    amendmentType: "condition_added",
+    title: "Add worsening-threshold pause rule",
+    summary: "Food-flow permissions pause when the same ecological threshold worsens before completion.",
+    rationale: "The learning loop showed the first policy lacked a clear response to worsening indicators.",
+    proposedByRef: refs.actorRef,
+    proposedText: "If a breach-window threshold worsens before completion, pause the active use right, reverse pending allocation entries, and re-enter guardian review.",
+    affectedRefs: [refs.thresholdRef, refs.useRightRef, refs.policyRef],
+    claimRefs: [],
+    evidenceRefs: [refs.retrospectiveRef, refs.outcomeRef]
+  };
+}
+
+function makeAdaptiveDecision(refs: RiverbendCyberneticSliceRefs): Decision {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveDecisionRef.id,
+    type: "decision",
+    orgId,
+    status: "resolved",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    issueRefs: [refs.adaptiveIssueRef],
+    proposalRefs: [refs.adaptiveProposalRef],
+    outcome: "passed",
+    effect: "binding",
+    method: adaptiveDecisionMethod(refs),
+    decidedAt: occurredAt,
+    decidedByRefs: [refs.actorRef, refs.watershedGuardianRef],
+    affectedRefs: [refs.thresholdRef, refs.useRightRef, refs.policyRef],
+    claimRefs: [],
+    evidenceRefs: [refs.retrospectiveRef, refs.outcomeRef],
+    perspectiveRefs: [],
+    unresolvedObjectionRefs: [],
+    rationale: "The worsened threshold activates the policy gap identified by the retrospective.",
+    conditions: [
+      "Pause the active use right.",
+      "Reverse pending allocation.",
+      "Version the food-flow policy before the route is re-approved."
+    ],
+    obligationRefs: [refs.adaptiveTaskRef],
+    agreementRefs: [refs.dataStewardshipAgreementRef],
+    policyRefs: [refs.policyRef],
+    appealPathRef: refs.appealPathRef,
+    supersedesDecisionRefs: [refs.decisionRef]
+  };
+}
+
+function makeAdaptivePolicyVersion(refs: RiverbendCyberneticSliceRefs): PolicyVersion {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.policyVersionRef.id,
+    type: "policy-version",
+    orgId,
+    policyRef: refs.policyRef,
+    version: "2",
+    status: "active",
+    title: "Breach-window food-flow policy v2",
+    body: "When a threshold worsens during an approved breach-window food flow, the active use right pauses, pending allocations are reversed, and the route re-enters guardian review.",
+    summaryOfChanges: "Adds a worsening-threshold pause, accounting correction, and guardian review loop.",
+    decisionRef: refs.adaptiveDecisionRef,
+    authorityRefs: [refs.adaptiveDecisionRef, refs.mandateRef, refs.watershedGuardianRef],
+    effectiveAt: occurredAt,
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    dataState: "institutionally_certified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [refs.dataStewardshipAgreementRef]
+  };
+}
+
 function decisionMethod(refs: RiverbendCyberneticSliceRefs) {
   return {
     kind: "guardian_review",
@@ -1024,6 +1369,19 @@ function decisionMethod(refs: RiverbendCyberneticSliceRefs) {
     guardianRefs: [refs.watershedGuardianRef],
     thresholdRefs: [refs.thresholdRef],
     reviewRefs: [refs.guardianReviewRef],
+    appealPathRef: refs.appealPathRef
+  } as const;
+}
+
+function adaptiveDecisionMethod(refs: RiverbendCyberneticSliceRefs) {
+  return {
+    kind: "guardian_review",
+    eligibleVoterRefs: [refs.actorRef, refs.watershedGuardianRef],
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    guardianReviewRequired: true,
+    guardianRefs: [refs.watershedGuardianRef],
+    thresholdRefs: [refs.thresholdRef],
+    reviewRefs: [refs.adaptiveGuardianReviewRef],
     appealPathRef: refs.appealPathRef
   } as const;
 }
