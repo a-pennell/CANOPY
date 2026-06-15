@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import {
   buildRiverbendPersistedRuntimeScenario,
   executeRiverbendCyberneticSlice
@@ -175,5 +176,24 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
     expect(scenario.shellSessions.federation.snapshot.surfaces.federationExportState?.includedEventIds).toHaveLength(
       scenario.slice.events.length
     );
+  });
+
+  it("replays the Phase 7 event stream across civic-memory cursors", () => {
+    const slice = executeRiverbendCyberneticSlice();
+    const memory = createInMemoryCivicMemory(slice.events);
+    const replayed = [];
+    let cursor = memory.replay({ limit: 5 });
+
+    replayed.push(...cursor.events);
+
+    while (cursor.nextCursor !== undefined) {
+      cursor = memory.replay(cursor.nextCursor);
+      replayed.push(...cursor.events);
+    }
+
+    expect(replayed.map((event) => event.id)).toEqual(
+      slice.events.map((event) => event.id)
+    );
+    expect(cursor.nextCursor).toBeUndefined();
   });
 });

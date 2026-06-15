@@ -16,13 +16,13 @@ Executable source:
 
 | Area | Status | Evidence | Gaps | Next Gate |
 | --- | --- | --- | --- | --- |
-| Event coverage | Pass | Phase 7 asserts observe, understand, simulate, deliberate, coordinate, act, learn, and federate phases. | Living-system, need, offer, and commitment events still use direct canonical appends. | Replace remaining direct appends with native capability commands. |
-| Authority coverage | Pass | Guardian review, binding decision, use right, ledger entry, export approval, and appeal path refs are present. | Runtime command handlers are not yet mirrored for every new native command. | Add command-runtime executors for Phase 7 commands. |
+| Event coverage | Pass | Phase 7 asserts observe, understand, simulate, deliberate, coordinate, act, learn, and federate phases. | Happy-path coverage is complete; adaptive/contested branch is still pending. | Add threshold-worsens branch with revised use right and learning update. |
+| Authority coverage | Pass | Guardian review, binding decision, use right, ledger entry, export approval, and appeal path refs are present. | Provider-backed enforcement is not yet exercised by this slice. | Run authority trace through provider-backed replay/export. |
 | Data stewardship | Pass | Visibility rule and export approval are part of the slice, and federation export cites the stewardship agreement. | Redaction stress path is not included in the happy path. | Add contested/redacted Phase 7 branch. |
-| Replay continuity | Pass | Civic memory projected event count equals the Phase 7 event count. | Replay paging is covered by golden replay tests, not this report-specific path. | Add explicit paged replay assertion for Phase 7. |
+| Replay continuity | Pass | Civic memory projected event count equals the Phase 7 event count. | Provider-backed replay is not yet part of this path. | Add provider-backed replay assertion for Phase 7. |
 | Export readiness | Pass | Federation export includes event trail, object refs, authority refs, data stewardship agreement, format, and content hash. | Provider-level federation transport remains separate from this slice. | Run Phase 7 export through provider conformance target. |
 | Shell traceability | Pass | Web acceptance starts from the Mill Creek threshold breach and reaches decision, use right, outcome, retrospective, and federation export. | Browser-level visual verification is not part of this checkpoint. | Add Playwright/browser verification once UI layout changes. |
-| Native-service gaps | Partial | Native commands now cover threshold, breach, scenario, guardian review, task, food flow, outcome, and retrospective. | Need, offer, commitment, living-system, and command-runtime mirrors remain. Production providers remain prototype/planned in adapter conformance. | Native command-runtime pass plus provider-backed replay/export pass. |
+| Native-service gaps | Partial | Native commands now cover living system, threshold, breach, need, offer, scenario, guardian review, decision, use right, commitment, task, food flow, outcome, and retrospective. | Production providers remain prototype/planned in adapter conformance. | Provider-backed replay/export pass. |
 
 ## Evidence
 
@@ -33,7 +33,7 @@ Executable source:
 
 ## Known Gaps
 
-- Remaining direct canonical appends: living-system creation, coordination need, coordination offer, and coordination commitment.
-- New native commands are package-level capability functions; command-runtime executors are still needed for persisted command workflows.
+- No direct canonical appends remain in the Phase 7 harness.
+- New native commands have package-level capability functions and command-runtime executors.
 - Phase 7 currently proves the happy path. The next slice should worsen the threshold, revise or pause the use right, post an accounting correction, and feed a policy amendment.
 - Adapter/provider conformance still distinguishes prototype and planned providers from production-ready implementations.

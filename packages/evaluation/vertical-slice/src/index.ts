@@ -14,7 +14,10 @@ import type {
   ObjectRef
 } from "@canopy/contracts-kernel";
 import {
+  createCommitment,
   createLedgerAccount,
+  createNeed,
+  createOffer,
   postLedgerEntry
 } from "@canopy/capabilities-allocation-accounting";
 import {
@@ -28,6 +31,7 @@ import {
   setVisibilityRule
 } from "@canopy/capabilities-data-stewardship";
 import {
+  createLivingSystem,
   createModelScenario,
   createThreshold,
   recordThresholdBreach
@@ -180,19 +184,20 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
   const services = { registry, memory };
   const refs = riverbendRefs();
   const steps: RiverbendCyberneticSliceStep[] = [];
-  const append = createSliceAppender(registry, memory, steps);
 
-  append("observe", {
-    id: "event.ecology.living-system.created.mill-creek",
-    type: "ecology.living_system.created",
-    objectRef: refs.livingSystemRef,
+  createLivingSystem(services, {
+    eventId: "event.ecology.living-system.created.mill-creek",
+    occurredAt,
+    actorRef: refs.actorRef,
+    livingSystemRef: refs.livingSystemRef,
     relatedRefs: [refs.commonsRef],
     authorityRefs: [refs.mandateRef],
-    sourceCapability: "stewardship",
-    payload: {
-      title: "Mill Creek Watershed",
-      summary: "Living system connected to the Riverbend food route."
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Mill Creek Watershed",
+    summary: "Living system connected to the Riverbend food route."
   });
   createThreshold(services, {
     eventId: "event.ecology.threshold.created.mill-creek-nitrate",
@@ -230,31 +235,35 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     observedAt: occurredAt,
     requiresGuardianReview: true
   });
-  append("observe", {
-    id: "event.coordination.need.created.school-meals",
-    type: "coordination.need.created",
-    objectRef: refs.needRef,
+  createNeed(servicesForAccounting(services), {
+    eventId: "event.coordination.need.created.school-meals",
+    occurredAt,
+    actorRef: refs.actorRef,
+    needRef: refs.needRef,
     relatedRefs: [refs.commonsRef, refs.claimRef],
     authorityRefs: [refs.mandateRef],
-    sourceCapability: "allocation-accounting",
-    payload: {
-      title: "Summer meal produce shortage",
-      neededBy: "2026-06-17",
-      quantity: "20 produce boxes"
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Summer meal produce shortage",
+    neededBy: "2026-06-17",
+    quantity: "20 produce boxes"
   });
-  append("observe", {
-    id: "event.coordination.offer.created.green-acre",
-    type: "coordination.offer.created",
-    objectRef: refs.offerRef,
+  createOffer(servicesForAccounting(services), {
+    eventId: "event.coordination.offer.created.green-acre",
+    occurredAt,
+    actorRef: refs.actorRef,
+    offerRef: refs.offerRef,
     relatedRefs: [refs.resourceRef, refs.needRef],
     authorityRefs: [refs.mandateRef],
-    sourceCapability: "allocation-accounting",
-    payload: {
-      title: "Green Acre surplus produce",
-      quantity: "20 produce boxes",
-      pickupWindow: "2026-06-15"
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Green Acre surplus produce",
+    quantity: "20 produce boxes",
+    pickupWindow: "2026-06-15"
   });
 
   createClaim(services, {
@@ -448,18 +457,20 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     livingSystemId,
     grantNote: "Temporary crop-share use right under guardian conditions."
   });
-  append("coordinate", {
-    id: "event.coordination.commitment.created.delivery",
-    type: "coordination.commitment.created",
-    objectRef: refs.commitmentRef,
+  createCommitment(servicesForAccounting(services), {
+    eventId: "event.coordination.commitment.created.delivery",
+    occurredAt,
+    actorRef: refs.actorRef,
+    commitmentRef: refs.commitmentRef,
     relatedRefs: [refs.needRef, refs.offerRef, refs.useRightRef, refs.decisionRef],
+    committedByRef: refs.actorRef,
     authorityRefs: [refs.decisionRef],
-    sourceCapability: "allocation-accounting",
-    payload: {
-      title: "Deliver produce boxes to Northside School Kitchen",
-      committedByRefId: refs.actorRef.id,
-      dueAt: "2026-06-15T16:00:00.000Z"
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Deliver produce boxes to Northside School Kitchen",
+    dueAt: "2026-06-15T16:00:00.000Z"
   });
 
   createLedgerAccount(servicesForAccounting(services), {
@@ -835,54 +846,6 @@ function buildScenarioSession(input: {
 
 function objectRoute(ref: ObjectRef): string {
   return `/objects/${ref.type}/${encodeURIComponent(ref.id)}`;
-}
-
-function createSliceAppender(
-  registry: ReturnType<typeof createObjectRegistry>,
-  memory: ReturnType<typeof createInMemoryCivicMemory>,
-  steps: RiverbendCyberneticSliceStep[]
-): (
-  phase: CyberneticPhase,
-  input: Omit<
-    CanopyEvent,
-    "occurredAt" | "actorRef" | "schemaVersion" | "visibility" | "orgId" | "placeId" | "commonsId" | "livingSystemId"
-  > & {
-    readonly actorRef?: ObjectRef;
-    readonly visibility?: CanopyEvent["visibility"];
-    readonly orgId?: CanopyId;
-    readonly placeId?: CanopyId;
-    readonly commonsId?: CanopyId;
-    readonly livingSystemId?: CanopyId;
-  }
-) => void {
-  return (phase, input) => {
-    registerRefs(registry, [
-      input.objectRef,
-      input.actorRef,
-      ...input.relatedRefs,
-      ...input.authorityRefs
-    ]);
-
-    const event: CanopyEvent = {
-      occurredAt,
-      actorRef: input.actorRef ?? riverbendRefs().actorRef,
-      schemaVersion: 1,
-      visibility: input.visibility ?? "commons",
-      orgId: input.orgId ?? orgId,
-      placeId: input.placeId ?? placeId,
-      commonsId: input.commonsId ?? commonsId,
-      livingSystemId: input.livingSystemId ?? livingSystemId,
-      ...input
-    };
-
-    memory.appendEvent(event);
-    steps.push({
-      phase,
-      eventId: event.id,
-      eventType: event.type,
-      objectRef: event.objectRef
-    });
-  };
 }
 
 function reconcileStepsWithEvents(

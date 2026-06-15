@@ -8,23 +8,59 @@ import {
 import type { LinkEvidenceToClaimCommand } from "@canopy/capabilities-claims-evidence";
 import type {
   CreateResourceCommand,
+  CompleteTaskCommand,
+  CreateTaskCommand,
   GrantUseRightCommand,
+  RecordFoodFlowCommand,
   UseRightScope
 } from "@canopy/capabilities-stewardship";
-import type { PostLedgerEntryCommand } from "@canopy/capabilities-allocation-accounting";
+import type {
+  CreateLivingSystemCommand,
+  CreateModelScenarioCommand,
+  CreateThresholdCommand,
+  RecordThresholdBreachCommand
+} from "@canopy/capabilities-ecological-modeling";
+import type {
+  CompleteGuardianReviewCommand,
+  RequestGuardianReviewCommand
+} from "@canopy/capabilities-governance";
+import type {
+  CompleteLearningRetrospectiveCommand,
+  RecordLearningOutcomeCommand
+} from "@canopy/capabilities-learning-accountability";
+import type {
+  CreateCommitmentCommand,
+  CreateNeedCommand,
+  CreateOfferCommand,
+  PostLedgerEntryCommand
+} from "@canopy/capabilities-allocation-accounting";
 import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import { createObjectRegistry } from "@canopy/kernel-object-registry";
 import {
   executeCanopyCommand,
+  executeCompleteGuardianReviewCommand,
+  executeCompleteLearningRetrospectiveCommand,
+  executeCompleteTaskCommand,
   executeCreateClaimCommand,
+  executeCreateCommitmentCommand,
+  executeCreateLivingSystemCommand,
+  executeCreateModelScenarioCommand,
+  executeCreateNeedCommand,
+  executeCreateOfferCommand,
   executeCreateProposalCommand,
   executeCreateResourceCommand,
+  executeCreateTaskCommand,
+  executeCreateThresholdCommand,
   executeGrantUseRightCommand,
   executeLinkEvidenceToClaimCommand,
   executeOpenProposalCommand,
   executePostLedgerEntryCommand,
-  executeRecordDecisionCommand
+  executeRecordDecisionCommand,
+  executeRecordFoodFlowCommand,
+  executeRecordLearningOutcomeCommand,
+  executeRecordThresholdBreachCommand,
+  executeRequestGuardianReviewCommand
 } from "./index.js";
 
 const occurredAt = "2026-06-13T19:00:00.000Z";
@@ -48,6 +84,18 @@ const stewardshipAccountRef = ref(
   "ledger-account.stewardship",
   "ledger-account"
 );
+const thresholdRef = ref("threshold.mill-creek-nitrate", "threshold");
+const indicatorRef = ref("indicator.mill-creek-nitrate", "indicator");
+const livingSystemRef = ref("living-system.mill-creek", "living-system");
+const guardianReviewRef = refIn("guardian-review.mill-creek-food-flow", "guardian-review", "governance");
+const scenarioRef = ref("model.low-runoff-route", "model");
+const taskRef = ref("task.deliver-produce", "task");
+const flowRef = ref("flow.food-delivery", "flow");
+const outcomeRef = ref("outcome.food-delivery", "evidence");
+const retrospectiveRef = ref("retrospective.food-delivery", "evidence");
+const needRef = ref("need.school-produce", "need");
+const offerRef = ref("offer.green-acre-produce", "offer");
+const commitmentRef = ref("commitment.food-delivery", "commitment");
 
 describe("command runtime", () => {
   it("executes a command through event append, outbox, and projection rebuild", async () => {
@@ -190,6 +238,121 @@ describe("command runtime", () => {
 
   it("keeps open proposal as the create proposal runtime alias", () => {
     expect(executeOpenProposalCommand).toBe(executeCreateProposalCommand);
+  });
+
+  it("executes Phase 7 native commands through persisted command helpers", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+    const services = servicesForTest();
+    const commands = [
+      executeCreateLivingSystemCommand({
+        command: createLivingSystemCommand("event.helper.living-system.created"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCreateThresholdCommand({
+        command: createThresholdCommand("event.helper.threshold.created"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeRecordThresholdBreachCommand({
+        command: recordThresholdBreachCommand("event.helper.threshold.breached"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCreateNeedCommand({
+        command: createNeedCommand("event.helper.need.created"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCreateOfferCommand({
+        command: createOfferCommand("event.helper.offer.created"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCreateModelScenarioCommand({
+        command: createModelScenarioCommand("event.helper.model.scenario.created"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeRequestGuardianReviewCommand({
+        command: requestGuardianReviewCommand("event.helper.guardian-review.requested"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCompleteGuardianReviewCommand({
+        command: completeGuardianReviewCommand("event.helper.guardian-review.completed"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCreateTaskCommand({
+        command: createTaskCommand("event.helper.task.created"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCreateCommitmentCommand({
+        command: createCommitmentCommand("event.helper.commitment.created"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeRecordFoodFlowCommand({
+        command: recordFoodFlowCommand("event.helper.food-flow.recorded"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCompleteTaskCommand({
+        command: completeTaskCommand("event.helper.task.completed"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeRecordLearningOutcomeCommand({
+        command: recordLearningOutcomeCommand("event.helper.learning.outcome"),
+        services,
+        runtime,
+        rebuildProjections: false
+      }),
+      executeCompleteLearningRetrospectiveCommand({
+        command: completeLearningRetrospectiveCommand("event.helper.learning.retrospective"),
+        services,
+        runtime,
+        rebuildProjections: false
+      })
+    ];
+
+    const results = await Promise.all(commands);
+
+    expect(results.map((result) => result.event.type)).toEqual([
+      "ecology.living_system.created",
+      "ecology.threshold.created",
+      "ecology.threshold.breached",
+      "coordination.need.created",
+      "coordination.offer.created",
+      "model.scenario.created",
+      "ecology.guardian.review_requested",
+      "ecology.guardian.review_completed",
+      "stewardship.task.created",
+      "coordination.commitment.created",
+      "flow.food.recorded",
+      "stewardship.task.completed",
+      "learning.outcome.recorded",
+      "learning.retrospective.completed"
+    ]);
+    expect(runtime.counts().events).toBe(14);
+    expect(runtime.listOutbox()).toHaveLength(14);
+    expect(services.memory.replay().events.map((event) => event.id)).toEqual(
+      results.map((result) => result.event.id)
+    );
   });
 });
 
@@ -395,5 +558,208 @@ function postLedgerEntryCommand(eventId: string): PostLedgerEntryCommand {
         unit: "credits"
       }
     ]
+  };
+}
+
+function createLivingSystemCommand(eventId: string): CreateLivingSystemCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    livingSystemRef,
+    authorityRefs: [roleAuthorityRef],
+    relatedRefs: [guardianReviewRef],
+    title: "Mill Creek Watershed"
+  };
+}
+
+function createNeedCommand(eventId: string): CreateNeedCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    needRef,
+    relatedRefs: [claimRef],
+    authorityRefs: [roleAuthorityRef],
+    title: "School produce need",
+    quantity: "20 boxes"
+  };
+}
+
+function createOfferCommand(eventId: string): CreateOfferCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    offerRef,
+    relatedRefs: [needRef, resourceRef],
+    authorityRefs: [roleAuthorityRef],
+    title: "Green Acre produce offer",
+    quantity: "20 boxes"
+  };
+}
+
+function createCommitmentCommand(eventId: string): CreateCommitmentCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    commitmentRef,
+    relatedRefs: [needRef, offerRef, useRightRef],
+    committedByRef: actorRef,
+    authorityRefs: [decisionRef],
+    title: "Deliver produce boxes"
+  };
+}
+
+function createThresholdCommand(eventId: string): CreateThresholdCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    thresholdRef,
+    indicatorRef,
+    livingSystemRef,
+    guardianRefs: [guardianReviewRef],
+    authorityRefs: [roleAuthorityRef, guardianReviewRef],
+    threshold: 10,
+    unit: "mg/L",
+    title: "Mill Creek nitrate threshold",
+    guardianReviewRequired: true
+  };
+}
+
+function recordThresholdBreachCommand(eventId: string): RecordThresholdBreachCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    thresholdRef,
+    indicatorRef,
+    relatedRefs: [livingSystemRef, issueRef],
+    authorityRefs: [roleAuthorityRef, guardianReviewRef],
+    observedValue: 14.2,
+    unit: "mg/L",
+    requiresGuardianReview: true
+  };
+}
+
+function createModelScenarioCommand(eventId: string): CreateModelScenarioCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    scenarioRef,
+    relatedRefs: [thresholdRef, proposalRef, claimRef],
+    authorityRefs: [roleAuthorityRef, guardianReviewRef],
+    title: "Low runoff route",
+    summary: "Route without additional irrigation.",
+    assumptions: ["existing cold-chain capacity"],
+    guardianReviewRequired: true
+  };
+}
+
+function requestGuardianReviewCommand(eventId: string): RequestGuardianReviewCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    guardianReviewRef,
+    proposalRef,
+    thresholdRef,
+    subjectRefs: [thresholdRef, proposalRef, scenarioRef],
+    guardianRefs: [guardianReviewRef],
+    authorityRefs: [roleAuthorityRef, guardianReviewRef],
+    title: "Review threshold-bound route",
+    reason: "Threshold breach affects the proposed route."
+  };
+}
+
+function completeGuardianReviewCommand(eventId: string): CompleteGuardianReviewCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    guardianReviewRef,
+    subjectRefs: [thresholdRef, proposalRef, scenarioRef],
+    guardianRefs: [guardianReviewRef],
+    authorityRefs: [roleAuthorityRef, guardianReviewRef],
+    outcome: "approved_with_conditions",
+    conditions: ["no additional irrigation"],
+    claimRefs: [claimRef],
+    evidenceRefs: [evidenceRef]
+  };
+}
+
+function createTaskCommand(eventId: string): CreateTaskCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    taskRef,
+    title: "Deliver produce boxes",
+    assignedToRefs: [actorRef],
+    resourceRefs: [resourceRef],
+    useRightRef,
+    authorityRefs: [decisionRef]
+  };
+}
+
+function recordFoodFlowCommand(eventId: string): RecordFoodFlowCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    flowRef,
+    resourceRef,
+    taskRef,
+    useRightRef,
+    outcomeRef,
+    thresholdRefs: [thresholdRef],
+    authorityRefs: [decisionRef, useRightRef],
+    from: "Green Acre Farm",
+    to: "Northside School Kitchen",
+    quantity: "20 boxes"
+  };
+}
+
+function completeTaskCommand(eventId: string): CompleteTaskCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    taskRef,
+    completedByRef: actorRef,
+    flowRefs: [flowRef],
+    outcomeRef,
+    authorityRefs: [decisionRef]
+  };
+}
+
+function recordLearningOutcomeCommand(eventId: string): RecordLearningOutcomeCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    outcomeRef,
+    relatedRefs: [flowRef, claimRef, decisionRef, thresholdRef],
+    authorityRefs: [decisionRef],
+    outcome: "twenty boxes delivered",
+    metric: "boxes",
+    value: 20
+  };
+}
+
+function completeLearningRetrospectiveCommand(
+  eventId: string
+): CompleteLearningRetrospectiveCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    retrospectiveRef,
+    relatedRefs: [outcomeRef, guardianReviewRef, thresholdRef],
+    authorityRefs: [decisionRef, guardianReviewRef],
+    summary: "Guardian conditions preserved the threshold guardrail."
   };
 }

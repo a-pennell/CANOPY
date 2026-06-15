@@ -48,6 +48,30 @@ export interface ReverseLedgerEntryCommand extends EventCommandMetadata {
   readonly effectiveAt?: IsoDateTime;
 }
 
+export interface CreateNeedCommand extends EventCommandMetadata {
+  readonly needRef: ObjectRef;
+  readonly relatedRefs?: readonly ObjectRef[];
+  readonly title?: string;
+  readonly neededBy?: IsoDateTime | string;
+  readonly quantity?: string;
+}
+
+export interface CreateOfferCommand extends EventCommandMetadata {
+  readonly offerRef: ObjectRef;
+  readonly relatedRefs?: readonly ObjectRef[];
+  readonly title?: string;
+  readonly quantity?: string;
+  readonly pickupWindow?: string;
+}
+
+export interface CreateCommitmentCommand extends EventCommandMetadata {
+  readonly commitmentRef: ObjectRef;
+  readonly relatedRefs?: readonly ObjectRef[];
+  readonly title?: string;
+  readonly committedByRef?: ObjectRef;
+  readonly dueAt?: IsoDateTime;
+}
+
 export interface EventCommandMetadata {
   readonly commandId?: CanopyId;
   readonly eventId?: CanopyId;
@@ -85,6 +109,9 @@ export interface AllocationAccountingHandlers {
   reverseLedgerEntry(
     command: ReverseLedgerEntryCommand
   ): AllocationAccountingResult;
+  createNeed(command: CreateNeedCommand): AllocationAccountingResult;
+  createOffer(command: CreateOfferCommand): AllocationAccountingResult;
+  createCommitment(command: CreateCommitmentCommand): AllocationAccountingResult;
 }
 
 export function createAllocationAccountingHandlers(
@@ -94,6 +121,93 @@ export function createAllocationAccountingHandlers(
     createLedgerAccount: (command) => createLedgerAccount(context, command),
     postLedgerEntry: (command) => postLedgerEntry(context, command),
     reverseLedgerEntry: (command) => reverseLedgerEntry(context, command),
+    createNeed: (command) => createNeed(context, command),
+    createOffer: (command) => createOffer(context, command),
+    createCommitment: (command) => createCommitment(context, command),
+  };
+}
+
+export function createNeed(
+  context: AllocationAccountingContext,
+  command: CreateNeedCommand
+): AllocationAccountingResult {
+  assertObjectRefType(command.needRef, "need", "needRef");
+
+  const ref = context.objectRegistry.register(command.needRef);
+  const relatedRefs = registerRelatedRefs(context.objectRegistry, command.relatedRefs ?? []);
+  const event = buildEvent(command, {
+    type: "coordination.need.created",
+    defaultEventId: `event.coordination.need.created.${ref.id}`,
+    objectRef: ref,
+    relatedRefs,
+    authorityRefs: command.authorityRefs ?? [],
+    payload: {
+      title: command.title,
+      neededBy: command.neededBy,
+      quantity: command.quantity,
+    },
+  });
+
+  return {
+    ref,
+    event: context.civicMemory.appendEvent(event).event,
+  };
+}
+
+export function createOffer(
+  context: AllocationAccountingContext,
+  command: CreateOfferCommand
+): AllocationAccountingResult {
+  assertObjectRefType(command.offerRef, "offer", "offerRef");
+
+  const ref = context.objectRegistry.register(command.offerRef);
+  const relatedRefs = registerRelatedRefs(context.objectRegistry, command.relatedRefs ?? []);
+  const event = buildEvent(command, {
+    type: "coordination.offer.created",
+    defaultEventId: `event.coordination.offer.created.${ref.id}`,
+    objectRef: ref,
+    relatedRefs,
+    authorityRefs: command.authorityRefs ?? [],
+    payload: {
+      title: command.title,
+      quantity: command.quantity,
+      pickupWindow: command.pickupWindow,
+    },
+  });
+
+  return {
+    ref,
+    event: context.civicMemory.appendEvent(event).event,
+  };
+}
+
+export function createCommitment(
+  context: AllocationAccountingContext,
+  command: CreateCommitmentCommand
+): AllocationAccountingResult {
+  assertObjectRefType(command.commitmentRef, "commitment", "commitmentRef");
+
+  const ref = context.objectRegistry.register(command.commitmentRef);
+  const relatedRefs = registerRelatedRefs(
+    context.objectRegistry,
+    compactRefs([command.committedByRef, ...(command.relatedRefs ?? [])])
+  );
+  const event = buildEvent(command, {
+    type: "coordination.commitment.created",
+    defaultEventId: `event.coordination.commitment.created.${ref.id}`,
+    objectRef: ref,
+    relatedRefs,
+    authorityRefs: command.authorityRefs ?? [],
+    payload: {
+      title: command.title,
+      committedByRefId: command.committedByRef?.id,
+      dueAt: command.dueAt,
+    },
+  });
+
+  return {
+    ref,
+    event: context.civicMemory.appendEvent(event).event,
   };
 }
 
@@ -353,6 +467,17 @@ function assertObjectRefType(
       `${label} must reference ObjectRef type ${type}; received ${ref.type}.`
     );
   }
+}
+
+function registerRelatedRefs(
+  objectRegistry: ObjectRegistry,
+  refs: readonly ObjectRef[]
+): readonly ObjectRef[] {
+  for (const ref of refs) {
+    objectRegistry.register(ref);
+  }
+
+  return dedupeRefs(refs);
 }
 
 function assertAuthorityRefs(

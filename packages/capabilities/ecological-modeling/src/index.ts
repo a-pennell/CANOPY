@@ -16,6 +16,7 @@ const MODEL_DATA_STATE = "model_derived" as const;
 const SENSOR_DATA_STATE = "sensor_derived" as const;
 
 export type EcologicalModelingCommandErrorCode =
+  | "invalid-living-system-ref"
   | "invalid-threshold-ref"
   | "invalid-indicator-ref"
   | "invalid-scenario-ref"
@@ -62,6 +63,13 @@ export interface CreateThresholdCommand extends EcologicalEventEnvelopeInput {
   readonly guardianReviewRequired?: boolean;
 }
 
+export interface CreateLivingSystemCommand extends EcologicalEventEnvelopeInput {
+  readonly livingSystemRef: ObjectRef;
+  readonly relatedRefs?: readonly ObjectRef[];
+  readonly title?: string;
+  readonly summary?: string;
+}
+
 export interface RecordThresholdBreachCommand extends EcologicalEventEnvelopeInput {
   readonly thresholdRef: ObjectRef;
   readonly indicatorRef: ObjectRef;
@@ -90,6 +98,35 @@ export interface EcologicalModelingCommandResult {
   readonly objectRef: ObjectRef;
   readonly relatedRefs: readonly ObjectRef[];
   readonly authorityRefs: readonly ObjectRef[];
+}
+
+export function createLivingSystem(
+  services: EcologicalModelingServices,
+  command: CreateLivingSystemCommand
+): EcologicalModelingCommandResult {
+  assertRefType(command.livingSystemRef, "living-system", "invalid-living-system-ref");
+
+  const objectRef = services.registry.register(command.livingSystemRef);
+  registerRefs(services.registry, [
+    command.actorRef,
+    ...(command.relatedRefs ?? []),
+    ...(command.authorityRefs ?? [])
+  ]);
+
+  const authorityRefs = canonicalRefs(services.registry, command.authorityRefs ?? []);
+  const relatedRefs = canonicalRefs(services.registry, command.relatedRefs ?? []);
+
+  return appendEcologicalEvent(services.memory, {
+    command,
+    type: "ecology.living_system.created",
+    objectRef,
+    relatedRefs,
+    authorityRefs,
+    payload: compactPayload({
+      title: command.title,
+      summary: command.summary
+    })
+  });
 }
 
 export function createThreshold(

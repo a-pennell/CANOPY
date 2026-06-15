@@ -3,6 +3,7 @@ import type { ObjectRef } from "@canopy/contracts-kernel";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import { createObjectRegistry } from "@canopy/kernel-object-registry";
 import {
+  createLivingSystem,
   createModelScenario,
   createThreshold,
   recordThresholdBreach
@@ -34,6 +35,28 @@ function services() {
 }
 
 describe("ecological modeling capability", () => {
+  it("creates living systems as ecological objects", () => {
+    const ctx = services();
+    const result = createLivingSystem(ctx, {
+      eventId: "event.living-system.created",
+      occurredAt,
+      actorRef,
+      livingSystemRef,
+      authorityRefs: [mandateRef],
+      relatedRefs: [guardianRef],
+      title: "Mill Creek Watershed"
+    });
+
+    expect(result.append.event).toMatchObject({
+      type: "ecology.living_system.created",
+      objectRef: livingSystemRef,
+      sourceCapability: "ecological-modeling",
+      payload: {
+        title: "Mill Creek Watershed"
+      }
+    });
+  });
+
   it("creates threshold and breach events with ecological refs", () => {
     const ctx = services();
 

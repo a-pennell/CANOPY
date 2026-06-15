@@ -16,18 +16,50 @@ import {
 } from "@canopy/capabilities-claims-evidence";
 import {
   createProposal,
+  completeGuardianReview,
   recordDecision,
+  requestGuardianReview,
+  type CompleteGuardianReviewCommand,
   type CreateProposalCommand,
-  type RecordDecisionCommand
+  type RecordDecisionCommand,
+  type RequestGuardianReviewCommand
 } from "@canopy/capabilities-governance";
 import {
+  completeTask,
   createResource,
+  createTask,
   grantUseRight,
+  recordFoodFlow,
+  type CompleteTaskCommand,
   type CreateResourceCommand,
-  type GrantUseRightCommand
+  type CreateTaskCommand,
+  type GrantUseRightCommand,
+  type RecordFoodFlowCommand
 } from "@canopy/capabilities-stewardship";
 import {
+  createLivingSystem,
+  createModelScenario,
+  createThreshold,
+  recordThresholdBreach,
+  type CreateLivingSystemCommand,
+  type CreateModelScenarioCommand,
+  type CreateThresholdCommand,
+  type RecordThresholdBreachCommand
+} from "@canopy/capabilities-ecological-modeling";
+import {
+  completeLearningRetrospective,
+  recordLearningOutcome,
+  type CompleteLearningRetrospectiveCommand,
+  type RecordLearningOutcomeCommand
+} from "@canopy/capabilities-learning-accountability";
+import {
+  createCommitment,
+  createNeed,
+  createOffer,
   postLedgerEntry,
+  type CreateCommitmentCommand,
+  type CreateNeedCommand,
+  type CreateOfferCommand,
   type PostLedgerEntryCommand
 } from "@canopy/capabilities-allocation-accounting";
 import {
@@ -158,10 +190,64 @@ export function recordDecisionCommandHandler(
   return (command) => recordDecision(services, command).appendResult.event;
 }
 
+export function requestGuardianReviewCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RequestGuardianReviewCommand> {
+  return (command) => requestGuardianReview(services, command).appendResult.event;
+}
+
+export function completeGuardianReviewCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CompleteGuardianReviewCommand> {
+  return (command) => completeGuardianReview(services, command).appendResult.event;
+}
+
+export function createThresholdCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CreateThresholdCommand> {
+  return (command) => createThreshold(services, command).append.event;
+}
+
+export function createLivingSystemCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CreateLivingSystemCommand> {
+  return (command) => createLivingSystem(services, command).append.event;
+}
+
+export function recordThresholdBreachCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RecordThresholdBreachCommand> {
+  return (command) => recordThresholdBreach(services, command).append.event;
+}
+
+export function createModelScenarioCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CreateModelScenarioCommand> {
+  return (command) => createModelScenario(services, command).append.event;
+}
+
 export function createResourceCommandHandler(
   services: CanopyCommandServices
 ): CanopyCommandHandler<CreateResourceCommand> {
   return (command) => createResource(services, command).append.event;
+}
+
+export function createTaskCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CreateTaskCommand> {
+  return (command) => createTask(services, command).append.event;
+}
+
+export function completeTaskCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CompleteTaskCommand> {
+  return (command) => completeTask(services, command).append.event;
+}
+
+export function recordFoodFlowCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RecordFoodFlowCommand> {
+  return (command) => recordFoodFlow(services, command).append.event;
 }
 
 export function grantUseRightCommandHandler(
@@ -170,11 +256,62 @@ export function grantUseRightCommandHandler(
   return (command) => grantUseRight(services, command).append.event;
 }
 
+export function recordLearningOutcomeCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RecordLearningOutcomeCommand> {
+  return (command) => recordLearningOutcome(services, command).append.event;
+}
+
+export function completeLearningRetrospectiveCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CompleteLearningRetrospectiveCommand> {
+  return (command) => completeLearningRetrospective(services, command).append.event;
+}
+
 export function postLedgerEntryCommandHandler(
   services: CanopyCommandServices
 ): CanopyCommandHandler<PostLedgerEntryCommand> {
   return (command) =>
     postLedgerEntry(
+      {
+        objectRegistry: services.registry,
+        civicMemory: services.memory
+      },
+      command
+    ).event;
+}
+
+export function createNeedCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CreateNeedCommand> {
+  return (command) =>
+    createNeed(
+      {
+        objectRegistry: services.registry,
+        civicMemory: services.memory
+      },
+      command
+    ).event;
+}
+
+export function createOfferCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CreateOfferCommand> {
+  return (command) =>
+    createOffer(
+      {
+        objectRegistry: services.registry,
+        civicMemory: services.memory
+      },
+      command
+    ).event;
+}
+
+export function createCommitmentCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CreateCommitmentCommand> {
+  return (command) =>
+    createCommitment(
       {
         objectRegistry: services.registry,
         civicMemory: services.memory
@@ -221,12 +358,93 @@ export function executeRecordDecisionCommand(
   });
 }
 
+export function executeRequestGuardianReviewCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RequestGuardianReviewCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: requestGuardianReviewCommandHandler(input.services)
+  });
+}
+
+export function executeCompleteGuardianReviewCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CompleteGuardianReviewCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: completeGuardianReviewCommandHandler(input.services)
+  });
+}
+
+export function executeCreateThresholdCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CreateThresholdCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: createThresholdCommandHandler(input.services)
+  });
+}
+
+export function executeCreateLivingSystemCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CreateLivingSystemCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: createLivingSystemCommandHandler(input.services)
+  });
+}
+
+export function executeRecordThresholdBreachCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RecordThresholdBreachCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: recordThresholdBreachCommandHandler(input.services)
+  });
+}
+
+export function executeCreateModelScenarioCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CreateModelScenarioCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: createModelScenarioCommandHandler(input.services)
+  });
+}
+
 export function executeCreateResourceCommand(
   input: ExecuteCanonicalCanopyCommandInput<CreateResourceCommand>
 ): Promise<ExecuteCanopyCommandResult> {
   return executeCanopyCommand({
     ...input,
     handle: createResourceCommandHandler(input.services)
+  });
+}
+
+export function executeCreateTaskCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CreateTaskCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: createTaskCommandHandler(input.services)
+  });
+}
+
+export function executeCompleteTaskCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CompleteTaskCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: completeTaskCommandHandler(input.services)
+  });
+}
+
+export function executeRecordFoodFlowCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RecordFoodFlowCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: recordFoodFlowCommandHandler(input.services)
   });
 }
 
@@ -239,12 +457,57 @@ export function executeGrantUseRightCommand(
   });
 }
 
+export function executeRecordLearningOutcomeCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RecordLearningOutcomeCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: recordLearningOutcomeCommandHandler(input.services)
+  });
+}
+
+export function executeCompleteLearningRetrospectiveCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CompleteLearningRetrospectiveCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: completeLearningRetrospectiveCommandHandler(input.services)
+  });
+}
+
 export function executePostLedgerEntryCommand(
   input: ExecuteCanonicalCanopyCommandInput<PostLedgerEntryCommand>
 ): Promise<ExecuteCanopyCommandResult> {
   return executeCanopyCommand({
     ...input,
     handle: postLedgerEntryCommandHandler(input.services)
+  });
+}
+
+export function executeCreateNeedCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CreateNeedCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: createNeedCommandHandler(input.services)
+  });
+}
+
+export function executeCreateOfferCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CreateOfferCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: createOfferCommandHandler(input.services)
+  });
+}
+
+export function executeCreateCommitmentCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CreateCommitmentCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: createCommitmentCommandHandler(input.services)
   });
 }
 
