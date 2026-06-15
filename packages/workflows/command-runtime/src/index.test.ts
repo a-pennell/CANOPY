@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ObjectRef } from "@canopy/contracts-kernel";
-import type { Decision, Proposal } from "@canopy/contracts-governance";
+import type {
+  Amendment,
+  Decision,
+  Objection,
+  PolicyVersion,
+  Proposal
+} from "@canopy/contracts-governance";
 import {
   createClaim,
   type CreateClaimCommand
@@ -23,8 +29,15 @@ import type {
 } from "@canopy/capabilities-ecological-modeling";
 import type {
   CompleteGuardianReviewCommand,
-  RequestGuardianReviewCommand
+  RaiseObjectionCommand,
+  RequestGuardianReviewCommand,
+  SubmitAmendmentCommand,
+  VersionPolicyCommand
 } from "@canopy/capabilities-governance";
+import type {
+  ApplyRedactionCommand,
+  RequestRedactionCommand
+} from "@canopy/capabilities-data-stewardship";
 import type {
   CompleteLearningRetrospectiveCommand,
   RecordLearningOutcomeCommand
@@ -54,17 +67,22 @@ import {
   executeCreateResourceCommand,
   executeCreateTaskCommand,
   executeCreateThresholdCommand,
+  executeApplyRedactionCommand,
   executeGrantUseRightCommand,
   executeLinkEvidenceToClaimCommand,
   executeOpenProposalCommand,
   executePostLedgerEntryCommand,
+  executeRaiseObjectionCommand,
   executeRecordDecisionCommand,
   executeRecordFoodFlowCommand,
   executeRecordLearningOutcomeCommand,
   executeRecordThresholdBreachCommand,
+  executeRequestRedactionCommand,
   executeRequestGuardianReviewCommand,
   executeReverseLedgerEntryCommand,
-  executeRevokeUseRightCommand
+  executeRevokeUseRightCommand,
+  executeSubmitAmendmentCommand,
+  executeVersionPolicyCommand
 } from "./index.js";
 
 const occurredAt = "2026-06-13T19:00:00.000Z";
@@ -73,9 +91,27 @@ const orgId = "org.riverbend";
 const actorRef = ref("person.mira", "person");
 const claimRef = ref("claim.school-food-need", "claim");
 const evidenceRef = ref("evidence.flow-gauge", "evidence");
+const redactionRequestRef = ref("redaction-request.flow-gauge", "evidence");
+const redactionRef = ref("redaction.flow-gauge", "evidence");
 const issueRef = refIn("issue.water", "issue", "governance");
 const proposalRef = refIn("proposal.water-rotation", "proposal", "governance");
+const amendmentRef = refIn(
+  "amendment.water-rotation-runoff-pause",
+  "amendment",
+  "governance"
+);
+const objectionRef = refIn(
+  "objection.water-rotation-data-stewardship",
+  "objection",
+  "governance"
+);
 const decisionRef = refIn("decision.water-rotation", "decision", "governance");
+const policyRef = refIn("policy.water-rotation", "policy", "governance");
+const policyVersionRef = refIn(
+  "policy-version.water-rotation-v2",
+  "policy",
+  "governance"
+);
 const roleAuthorityRef = ref("role.watershed-council", "role");
 const resourceRef = ref("resource.north-pasture", "resource");
 const holderRef = ref("person.eli", "person");
@@ -321,6 +357,98 @@ describe("command runtime", () => {
     );
   });
 
+  it("persists governance amendments and policy versions through outbox and projection rebuilds", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+    const services = servicesForTest();
+
+    const claim = await executeCreateClaimCommand({
+      command: createClaimCommand("event.helper.redaction-source.claim"),
+      services,
+      runtime
+    });
+    const submitted = await executeSubmitAmendmentCommand({
+      command: submitAmendmentCommand("event.helper.amendment.submitted"),
+      services,
+      runtime
+    });
+    const objection = await executeRaiseObjectionCommand({
+      command: raiseObjectionCommand("event.helper.objection.raised"),
+      services,
+      runtime
+    });
+    const versioned = await executeVersionPolicyCommand({
+      command: versionPolicyCommand("event.helper.policy.versioned"),
+      services,
+      runtime
+    });
+    const redactionRequest = await executeRequestRedactionCommand({
+      command: requestRedactionCommand("event.helper.redaction.requested", claim.event.id),
+      services,
+      runtime
+    });
+    const redaction = await executeApplyRedactionCommand({
+      command: applyRedactionCommand("event.helper.redaction.applied", claim.event.id),
+      services,
+      runtime
+    });
+
+    expect([
+      submitted.event.type,
+      objection.event.type,
+      versioned.event.type,
+      redactionRequest.event.type,
+      redaction.event.type
+    ]).toEqual([
+      "governance.amendment.submitted",
+      "governance.objection.raised",
+      "governance.policy.versioned",
+      "stewardship.redaction.requested",
+      "system.redaction.applied"
+    ]);
+    expect(runtime.getEvent(submitted.event.id)?.event).toEqual(submitted.event);
+    expect(runtime.getEvent(objection.event.id)?.event).toEqual(objection.event);
+    expect(runtime.getEvent(versioned.event.id)?.event).toEqual(versioned.event);
+    expect(runtime.getEvent(redaction.event.id)?.event).toEqual(redaction.event);
+    expect(
+      runtime
+        .listOutbox()
+        .filter((record) =>
+          [
+            submitted.event.id,
+            objection.event.id,
+            versioned.event.id,
+            redactionRequest.event.id,
+            redaction.event.id
+          ].includes(record.eventId)
+        )
+    ).toHaveLength(5);
+    expect(submitted.outboxRecord.destination).toEqual({
+      kind: "workflow",
+      name: "projection-rebuild"
+    });
+    expect(versioned.outboxRecord.payload).toMatchObject({
+      eventId: versioned.event.id,
+      eventType: "governance.policy.versioned",
+      objectRefId: policyRef.id
+    });
+    expect(submitted.projectionRebuild?.persistedStates).not.toEqual([]);
+    expect(versioned.projectionRebuild?.persistedStates.map((state) => state.id)).toContain(
+      "projection-state.authority"
+    );
+    expect(redaction.event.redaction).toMatchObject({
+      originalEventId: claim.event.id,
+      removedPayloadKeys: ["payload.summary"]
+    });
+    expect(services.memory.replay().events.map((event) => event.id)).toEqual([
+      claim.event.id,
+      submitted.event.id,
+      objection.event.id,
+      versioned.event.id,
+      redactionRequest.event.id,
+      redaction.event.id
+    ]);
+  });
+
   it("keeps open proposal as the create proposal runtime alias", () => {
     expect(executeOpenProposalCommand).toBe(executeCreateProposalCommand);
   });
@@ -557,6 +685,153 @@ function makeDecision(): Decision {
     agreementRefs: [],
     policyRefs: [],
     supersedesDecisionRefs: []
+  };
+}
+
+function makeAmendment(): Amendment {
+  return {
+    schemaVersion: "0.0.0",
+    id: amendmentRef.id,
+    type: "amendment",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    authorityRefs: [roleAuthorityRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    parentProposalRef: proposalRef,
+    amendmentType: "condition_added",
+    title: "Add runoff pause condition",
+    summary: "Pause the rotation if nitrate readings worsen.",
+    rationale: "The watershed council needs an adaptive route when indicators worsen.",
+    proposedByRef: actorRef,
+    proposedText: "Water rotation pauses when nitrate readings worsen materially.",
+    affectedRefs: [thresholdRef, policyRef],
+    claimRefs: [claimRef],
+    evidenceRefs: [evidenceRef]
+  };
+}
+
+function makePolicyVersion(): PolicyVersion {
+  return {
+    schemaVersion: "0.0.0",
+    id: policyVersionRef.id,
+    type: "policy-version",
+    orgId,
+    policyRef,
+    version: "2",
+    status: "active",
+    title: "Water rotation policy v2",
+    body: "Rotation pauses and re-enters review when nitrate readings worsen.",
+    summaryOfChanges: "Adds adaptive pause and guardian review language.",
+    decisionRef,
+    authorityRefs: [roleAuthorityRef],
+    effectiveAt: occurredAt,
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    dataState: "institutionally_certified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: []
+  };
+}
+
+function makeObjection(): Objection {
+  return {
+    schemaVersion: "0.0.0",
+    id: objectionRef.id,
+    type: "objection",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    authorityRefs: [roleAuthorityRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    proposalRef,
+    authorRef: actorRef,
+    objectionType: "data_stewardship",
+    text: "Export should preserve the governance trail without exposing sensitive detail.",
+    severity: "high",
+    disposition: "preserved",
+    response: "Proceed with redaction continuity.",
+    responseByRef: actorRef,
+    resolvedAt: occurredAt,
+    claimRefs: [claimRef],
+    evidenceRefs: [evidenceRef],
+    preservationRationale: "The objection constrains export handling."
+  };
+}
+
+function submitAmendmentCommand(eventId: string): SubmitAmendmentCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    amendment: makeAmendment()
+  };
+}
+
+function raiseObjectionCommand(eventId: string): RaiseObjectionCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    objection: makeObjection()
+  };
+}
+
+function versionPolicyCommand(eventId: string): VersionPolicyCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    policyVersion: makePolicyVersion(),
+    relatedRefs: [proposalRef, amendmentRef]
+  };
+}
+
+function requestRedactionCommand(
+  eventId: string,
+  originalEventId: string
+): RequestRedactionCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    authorityRefs: [roleAuthorityRef],
+    requestRef: redactionRequestRef,
+    targetRef: claimRef,
+    targetEventId: originalEventId,
+    reason: "data_minimization",
+    method: "field_generalized",
+    requestedFields: ["payload.summary"],
+    preservedFields: ["id", "type", "occurredAt", "objectRef"],
+    relatedRefs: [objectionRef]
+  };
+}
+
+function applyRedactionCommand(
+  eventId: string,
+  originalEventId: string
+): ApplyRedactionCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    authorityRefs: [roleAuthorityRef],
+    redactionRef,
+    originalEventId,
+    targetRef: claimRef,
+    reason: "data_minimization",
+    method: "field_generalized",
+    redactedFields: ["payload.summary"],
+    preservedFields: ["id", "type", "occurredAt", "objectRef"],
+    originalContentHash: "sha256:claim-before-redaction",
+    redactedContentHash: "sha256:claim-after-redaction",
+    note: "Preserve command-runtime replay while minimizing exported detail."
   };
 }
 

@@ -39,6 +39,7 @@ export type CanopyObjectType =
   | "mandate"
   | "model"
   | "need"
+  | "objection"
   | "offer"
   | "organization"
   | "person"

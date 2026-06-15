@@ -11,6 +11,7 @@ import type {
   Decision,
   DecisionPacket,
   Issue,
+  Objection,
   PolicyVersion,
   Proposal
 } from "@canopy/contracts-governance";
@@ -23,6 +24,7 @@ import {
   completeGuardianReview,
   openAppeal,
   openProposal,
+  raiseObjection,
   requestGuardianReview,
   recordDecision,
   recordDecisionPacket,
@@ -49,6 +51,7 @@ const membershipAuthorityRef = {
 const issueRef = ref("canopy:issue:water", "issue", "governance");
 const proposalRef = ref("canopy:proposal:water-plan", "proposal", "governance");
 const amendmentRef = ref("canopy:amendment:water-plan-route", "amendment", "governance");
+const objectionRef = ref("canopy:objection:water-plan-impact", "objection", "governance");
 const decisionRef = ref("canopy:decision:water-plan", "decision", "governance");
 const packetRef = ref(
   "canopy:decision-packet:water-plan",
@@ -198,12 +201,18 @@ describe("governance capability commands", () => {
     });
   });
 
-  it("submits amendments and versions policies as native governance events", () => {
+  it("submits amendments, raises objections, and versions policies as native governance events", () => {
     const services = servicesForTest();
     const amendment = makeAmendment();
+    const objection = makeObjection();
     const policyVersion = makePolicyVersion();
     const submitted = submitAmendment(services, {
       amendment,
+      occurredAt,
+      actorRef
+    });
+    const raised = raiseObjection(services, {
+      objection,
       occurredAt,
       actorRef
     });
@@ -212,7 +221,7 @@ describe("governance capability commands", () => {
       policyVersion,
       occurredAt,
       actorRef,
-      relatedRefs: [proposalRef, amendmentRef]
+      relatedRefs: [proposalRef, amendmentRef, objectionRef]
     });
 
     expect(submitted.ref).toEqual(amendmentRef);
@@ -223,6 +232,16 @@ describe("governance capability commands", () => {
       payload: {
         command: "submitAmendment",
         amendment
+      }
+    });
+    expect(raised.ref).toEqual(objectionRef);
+    expect(raised.appendResult.event).toMatchObject({
+      type: "governance.objection.raised",
+      objectRef: objectionRef,
+      authorityRefs: [roleAuthorityRef],
+      payload: {
+        command: "raiseObjection",
+        objection
       }
     });
     expect(versioned.ref).toEqual(policyRef);
@@ -237,7 +256,7 @@ describe("governance capability commands", () => {
       }
     });
     expect(versioned.appendResult.event.relatedRefs).toEqual(
-      expect.arrayContaining([decisionRef, proposalRef, amendmentRef])
+      expect.arrayContaining([decisionRef, proposalRef, amendmentRef, objectionRef])
     );
   });
 
@@ -649,6 +668,34 @@ function makeAmendment(): Amendment {
     affectedRefs: [thresholdRef, policyRef],
     claimRefs: [claimRef],
     evidenceRefs: [evidenceRef]
+  };
+}
+
+function makeObjection(): Objection {
+  return {
+    schemaVersion: "0.0.0",
+    id: objectionRef.id,
+    type: "objection",
+    orgId: "canopy:org:watershed",
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    authorityRefs: [roleAuthorityRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    proposalRef,
+    authorRef: actorRef,
+    objectionType: "harm",
+    text: "The route may hide downstream impacts if sensor detail is summarized too aggressively.",
+    severity: "high",
+    disposition: "preserved",
+    response: "Preserve the objection and require redaction-aware evidence handling.",
+    responseByRef: actorRef,
+    resolvedAt: occurredAt,
+    claimRefs: [claimRef],
+    evidenceRefs: [evidenceRef],
+    preservationRationale: "The concern remains relevant even though the decision can proceed."
   };
 }
 

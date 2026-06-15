@@ -17,13 +17,25 @@ import {
 import {
   createProposal,
   completeGuardianReview,
+  raiseObjection,
   recordDecision,
   requestGuardianReview,
+  submitAmendment,
+  versionPolicy,
   type CompleteGuardianReviewCommand,
   type CreateProposalCommand,
+  type RaiseObjectionCommand,
   type RecordDecisionCommand,
-  type RequestGuardianReviewCommand
+  type RequestGuardianReviewCommand,
+  type SubmitAmendmentCommand,
+  type VersionPolicyCommand
 } from "@canopy/capabilities-governance";
+import {
+  applyRedaction,
+  requestRedaction,
+  type ApplyRedactionCommand,
+  type RequestRedactionCommand
+} from "@canopy/capabilities-data-stewardship";
 import {
   completeTask,
   createResource,
@@ -194,6 +206,24 @@ export function recordDecisionCommandHandler(
   return (command) => recordDecision(services, command).appendResult.event;
 }
 
+export function submitAmendmentCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<SubmitAmendmentCommand> {
+  return (command) => submitAmendment(services, command).appendResult.event;
+}
+
+export function raiseObjectionCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RaiseObjectionCommand> {
+  return (command) => raiseObjection(services, command).appendResult.event;
+}
+
+export function versionPolicyCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<VersionPolicyCommand> {
+  return (command) => versionPolicy(services, command).appendResult.event;
+}
+
 export function requestGuardianReviewCommandHandler(
   services: CanopyCommandServices
 ): CanopyCommandHandler<RequestGuardianReviewCommand> {
@@ -291,6 +321,18 @@ export function postLedgerEntryCommandHandler(
     ).event;
 }
 
+export function requestRedactionCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RequestRedactionCommand> {
+  return (command) => requestRedaction(services, command).append.event;
+}
+
+export function applyRedactionCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<ApplyRedactionCommand> {
+  return (command) => applyRedaction(services, command).append.event;
+}
+
 export function reverseLedgerEntryCommandHandler(
   services: CanopyCommandServices
 ): CanopyCommandHandler<ReverseLedgerEntryCommand> {
@@ -378,6 +420,33 @@ export function executeRecordDecisionCommand(
   return executeCanopyCommand({
     ...input,
     handle: recordDecisionCommandHandler(input.services)
+  });
+}
+
+export function executeSubmitAmendmentCommand(
+  input: ExecuteCanonicalCanopyCommandInput<SubmitAmendmentCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: submitAmendmentCommandHandler(input.services)
+  });
+}
+
+export function executeRaiseObjectionCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RaiseObjectionCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: raiseObjectionCommandHandler(input.services)
+  });
+}
+
+export function executeVersionPolicyCommand(
+  input: ExecuteCanonicalCanopyCommandInput<VersionPolicyCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: versionPolicyCommandHandler(input.services)
   });
 }
 
@@ -513,6 +582,24 @@ export function executePostLedgerEntryCommand(
   return executeCanopyCommand({
     ...input,
     handle: postLedgerEntryCommandHandler(input.services)
+  });
+}
+
+export function executeRequestRedactionCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RequestRedactionCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: requestRedactionCommandHandler(input.services)
+  });
+}
+
+export function executeApplyRedactionCommand(
+  input: ExecuteCanonicalCanopyCommandInput<ApplyRedactionCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: applyRedactionCommandHandler(input.services)
   });
 }
 

@@ -42,9 +42,13 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
         "learning.outcome.recorded",
         "learning.retrospective.completed",
         "governance.amendment.submitted",
+        "governance.objection.raised",
         "stewardship.use_right.revoked",
         "accounting.ledger_entry.reversed",
         "governance.policy.versioned",
+        "stewardship.redaction.requested",
+        "system.redaction.applied",
+        "governance.decision_packet.recorded",
         "federation.export.approved"
       ])
     );
@@ -153,6 +157,57 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
     );
   });
 
+  it("preserves contested governance and redaction continuity in the adaptive packet", () => {
+    const slice = executeRiverbendCyberneticSlice();
+    const eventTypes = slice.events.map((event) => event.type);
+    const objection = slice.events.find(
+      (event) => event.type === "governance.objection.raised"
+    );
+    const redaction = slice.events.find(
+      (event) => event.type === "system.redaction.applied"
+    );
+    const packet = slice.events.find(
+      (event) => event.type === "governance.decision_packet.recorded"
+    );
+    const decisionPacket = packet?.payload["decisionPacket"] as
+      | {
+          unresolvedObjectionRefs?: readonly { id: string }[];
+          redactionSummary?: {
+            hasRedactions?: boolean;
+            redactedRefs?: readonly { id: string }[];
+            continuityEventRefs?: readonly { id: string }[];
+          };
+        }
+      | undefined;
+
+    expect(eventTypes.indexOf("governance.objection.raised")).toBeLessThan(
+      eventTypes.indexOf("governance.decision_packet.recorded")
+    );
+    expect(eventTypes.indexOf("system.redaction.applied")).toBeLessThan(
+      eventTypes.indexOf("federation.export.approved")
+    );
+    expect(objection?.objectRef).toEqual(slice.refs.adaptiveObjectionRef);
+    expect(redaction?.redaction).toMatchObject({
+      originalEventId: "event.evidence.created.school-kitchen-intake",
+      reason: "vulnerable_group_protection",
+      removedPayloadKeys: ["payload.schoolContact", "payload.pickupNotes"]
+    });
+    expect(decisionPacket?.unresolvedObjectionRefs?.map((ref) => ref.id)).toEqual([
+      slice.refs.adaptiveObjectionRef.id
+    ]);
+    expect(decisionPacket?.redactionSummary?.hasRedactions).toBe(true);
+    expect(decisionPacket?.redactionSummary?.redactedRefs?.map((ref) => ref.id)).toEqual([
+      slice.refs.evidenceRef.id
+    ]);
+    expect(decisionPacket?.redactionSummary?.continuityEventRefs?.map((ref) => ref.id)).toEqual([
+      slice.refs.redactionRef.id
+    ]);
+    expect(slice.federationExport.preview.redactionSummary.redactionCount).toBeGreaterThan(0);
+    expect(slice.federationExport.preview.redactionSummary.removedFields).toEqual(
+      expect.arrayContaining(["payload.schoolContact", "payload.pickupNotes"])
+    );
+  });
+
   it("exports the proof path with authority refs, stewardship agreement, and replayable objects", () => {
     const slice = executeRiverbendCyberneticSlice();
     const preview = slice.federationExport.preview;
@@ -172,6 +227,9 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
         "flow",
         "task",
         "amendment",
+        "objection",
+        "decision-packet",
+        "evidence",
         "policy"
       ])
     );

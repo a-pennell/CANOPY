@@ -19,6 +19,7 @@ import type {
   GovernanceControlEvaluation,
   GovernanceControlIssue,
   Issue,
+  Objection,
   PolicyVersion,
   Proposal,
   QuorumState
@@ -101,6 +102,10 @@ export interface RecordDecisionPacketCommand extends GovernanceCommandContext {
 
 export interface SubmitAmendmentCommand extends GovernanceCommandContext {
   readonly amendment: Amendment;
+}
+
+export interface RaiseObjectionCommand extends GovernanceCommandContext {
+  readonly objection: Objection;
 }
 
 export interface VersionPolicyCommand extends GovernanceCommandContext {
@@ -316,6 +321,34 @@ export function submitAmendment(
       amendment: command.amendment
     },
     record: command.amendment
+  });
+}
+
+export function raiseObjection(
+  services: GovernanceCommandServices,
+  command: RaiseObjectionCommand
+): GovernanceCommandResult<Objection> {
+  assertValidAuthority(validateObjectionAuthority(command.objection));
+  const ref = refFor(command.objection, "objection");
+  registerRefs(services.registry, [
+    ref,
+    ...refsForObjection(command.objection),
+    command.actorRef
+  ]);
+
+  return appendGovernanceEvent(services, command, {
+    type: "governance.objection.raised",
+    objectRef: ref,
+    relatedRefs: refsForObjection(command.objection),
+    authorityRefs: command.objection.authorityRefs,
+    orgId: command.objection.orgId,
+    visibility: command.objection.visibility,
+    dataState: command.objection.dataState,
+    payload: {
+      command: "raiseObjection",
+      objection: command.objection
+    },
+    record: command.objection
   });
 }
 
@@ -666,6 +699,12 @@ export function validateAmendmentAuthority(
   amendment: Amendment
 ): GovernanceAuthorityValidationResult {
   return result(validateNonMembershipAuthority(amendment.authorityRefs));
+}
+
+export function validateObjectionAuthority(
+  objection: Objection
+): GovernanceAuthorityValidationResult {
+  return result(validateNonMembershipAuthority(objection.authorityRefs));
 }
 
 export function validatePolicyVersionAuthority(
@@ -1140,6 +1179,19 @@ function refsForAmendment(amendment: Amendment): readonly ObjectRef[] {
     ...amendment.affectedRefs,
     ...amendment.claimRefs,
     ...amendment.evidenceRefs
+  ]);
+}
+
+function refsForObjection(objection: Objection): readonly ObjectRef[] {
+  return compactRefs([
+    objection.createdByRef,
+    ...objection.authorityRefs,
+    ...objection.dataStewardshipAgreementRefs,
+    objection.proposalRef,
+    objection.authorRef,
+    objection.responseByRef,
+    ...objection.claimRefs,
+    ...objection.evidenceRefs
   ]);
 }
 

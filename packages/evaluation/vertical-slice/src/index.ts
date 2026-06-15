@@ -1,4 +1,12 @@
-import type { Amendment, Decision, Issue, PolicyVersion, Proposal } from "@canopy/contracts-governance";
+import type {
+  Amendment,
+  Decision,
+  DecisionPacket,
+  Issue,
+  Objection,
+  PolicyVersion,
+  Proposal
+} from "@canopy/contracts-governance";
 import type {
   CanopyShellSession,
   CanopyShellScope,
@@ -28,7 +36,9 @@ import {
   reviewClaim
 } from "@canopy/capabilities-claims-evidence";
 import {
+  applyRedaction,
   approveExport,
+  requestRedaction,
   setVisibilityRule
 } from "@canopy/capabilities-data-stewardship";
 import {
@@ -43,6 +53,8 @@ import {
   completeGuardianReview,
   requestGuardianReview,
   recordDecision,
+  recordDecisionPacket,
+  raiseObjection,
   submitAmendment,
   versionPolicy
 } from "@canopy/capabilities-governance";
@@ -140,11 +152,15 @@ export interface RiverbendCyberneticSliceRefs {
   readonly adaptiveIssueRef: ObjectRef;
   readonly adaptiveProposalRef: ObjectRef;
   readonly adaptiveAmendmentRef: ObjectRef;
+  readonly adaptiveObjectionRef: ObjectRef;
   readonly adaptiveDecisionRef: ObjectRef;
+  readonly adaptiveDecisionPacketRef: ObjectRef;
   readonly adaptiveGuardianReviewRef: ObjectRef;
   readonly policyRef: ObjectRef;
   readonly policyVersionRef: ObjectRef;
   readonly adaptiveTaskRef: ObjectRef;
+  readonly redactionRequestRef: ObjectRef;
+  readonly redactionRef: ObjectRef;
   readonly exportRef: ObjectRef;
   readonly cashLedgerRef: ObjectRef;
   readonly stewardshipLedgerRef: ObjectRef;
@@ -653,6 +669,11 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     actorRef: refs.actorRef,
     amendment: makeAdaptiveAmendment(refs)
   });
+  raiseObjection(services, {
+    occurredAt,
+    actorRef: refs.actorRef,
+    objection: makeAdaptiveObjection(refs)
+  });
   requestGuardianReview(services, {
     eventId: "event.ecology.guardian.review_requested.mill-creek-policy-adaptation",
     occurredAt,
@@ -767,6 +788,52 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
       refs.reversalLedgerEntryRef
     ]
   });
+  requestRedaction(services, {
+    eventId: "event.stewardship.redaction.requested.school-kitchen-intake",
+    occurredAt,
+    actorRef: refs.actorRef,
+    requestRef: refs.redactionRequestRef,
+    targetRef: refs.evidenceRef,
+    targetEventId: "event.evidence.created.school-kitchen-intake",
+    reason: "vulnerable_group_protection",
+    method: "field_generalized",
+    requestedFields: ["payload.schoolContact", "payload.pickupNotes"],
+    preservedFields: ["id", "type", "occurredAt", "objectRef", "relatedRefs", "authorityRefs"],
+    dataStewardshipAgreementRef: refs.dataStewardshipAgreementRef,
+    relatedRefs: [refs.adaptiveObjectionRef, refs.adaptiveDecisionRef],
+    authorityRefs: [refs.adaptiveDecisionRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    note: "Minority report requests export-safe handling for school kitchen details."
+  });
+  applyRedaction(services, {
+    eventId: "event.system.redaction.applied.school-kitchen-intake",
+    occurredAt,
+    actorRef: refs.actorRef,
+    redactionRef: refs.redactionRef,
+    originalEventId: "event.evidence.created.school-kitchen-intake",
+    targetRef: refs.evidenceRef,
+    reason: "vulnerable_group_protection",
+    method: "field_generalized",
+    redactedFields: ["payload.schoolContact", "payload.pickupNotes"],
+    preservedFields: ["id", "type", "occurredAt", "objectRef", "relatedRefs", "authorityRefs"],
+    originalContentHash: "sha256:school-kitchen-intake-full",
+    redactedContentHash: "sha256:school-kitchen-intake-redacted",
+    dataStewardshipAgreementRef: refs.dataStewardshipAgreementRef,
+    authorityRefs: [refs.adaptiveDecisionRef, refs.dataStewardshipAgreementRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    note: "Export preserves evidence continuity while removing sensitive school contact and pickup detail."
+  });
+  recordDecisionPacket(services, {
+    occurredAt,
+    actorRef: refs.actorRef,
+    decisionPacket: makeAdaptiveDecisionPacket(refs)
+  });
 
   setVisibilityRule(services, {
     eventId: "event.stewardship.data_visibility_rule.set.phase-7-export",
@@ -804,8 +871,11 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
       refs.retrospectiveRef,
       refs.adaptiveProposalRef,
       refs.adaptiveAmendmentRef,
+      refs.adaptiveObjectionRef,
       refs.adaptiveDecisionRef,
-      refs.policyRef
+      refs.adaptiveDecisionPacketRef,
+      refs.policyRef,
+      refs.redactionRef
     ],
     format: "json",
     includeRedactionStubs: true,
@@ -823,11 +893,14 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
         "claim",
         "proposal",
         "amendment",
+        "objection",
         "guardian-review",
         "decision",
+        "decision-packet",
         "use-right",
         "flow",
         "task",
+        "evidence",
         "policy"
       ],
       allowedRecipientRefs: [refs.federationPeerRef],
@@ -997,9 +1070,19 @@ function riverbendRefs(): RiverbendCyberneticSliceRefs {
       "amendment",
       "governance"
     ),
+    adaptiveObjectionRef: ref(
+      "objection.downstream-school-data-stewardship",
+      "objection",
+      "governance"
+    ),
     adaptiveDecisionRef: ref(
       "decision.pause-and-revise-food-flow-policy",
       "decision",
+      "governance"
+    ),
+    adaptiveDecisionPacketRef: ref(
+      "decision-packet.pause-and-revise-food-flow-policy",
+      "decision-packet",
       "governance"
     ),
     adaptiveGuardianReviewRef: ref(
@@ -1013,6 +1096,8 @@ function riverbendRefs(): RiverbendCyberneticSliceRefs {
       "governance"
     ),
     adaptiveTaskRef: ref("task.review-breach-window-food-flow-policy", "task"),
+    redactionRequestRef: ref("redaction-request.school-kitchen-intake", "evidence"),
+    redactionRef: ref("redaction.school-kitchen-intake", "evidence"),
     exportRef: ref("agreement.export.riverbend-phase-7", "agreement"),
     cashLedgerRef: ref("ledger-account.food-commons-reserve", "ledger-account"),
     stewardshipLedgerRef: ref("ledger-account.stewardship-allocation", "ledger-account"),
@@ -1298,6 +1383,34 @@ function makeAdaptiveAmendment(refs: RiverbendCyberneticSliceRefs): Amendment {
   };
 }
 
+function makeAdaptiveObjection(refs: RiverbendCyberneticSliceRefs): Objection {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveObjectionRef.id,
+    type: "objection",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    authorityRefs: [refs.mandateRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [refs.dataStewardshipAgreementRef],
+    proposalRef: refs.adaptiveProposalRef,
+    authorRef: refs.actorRef,
+    objectionType: "data_stewardship",
+    text: "The export should not expose school contact details or pickup notes while proving why the route was paused.",
+    severity: "high",
+    disposition: "preserved",
+    response: "Proceed with the adaptive decision while redacting sensitive evidence fields and preserving the objection in the decision packet.",
+    responseByRef: refs.watershedGuardianRef,
+    resolvedAt: occurredAt,
+    claimRefs: [refs.claimRef],
+    evidenceRefs: [refs.evidenceRef, refs.retrospectiveRef],
+    preservationRationale: "The objection is not a veto, but it constrains export and future review."
+  };
+}
+
 function makeAdaptiveDecision(refs: RiverbendCyberneticSliceRefs): Decision {
   return {
     schemaVersion: "0.0.0",
@@ -1334,6 +1447,95 @@ function makeAdaptiveDecision(refs: RiverbendCyberneticSliceRefs): Decision {
     policyRefs: [refs.policyRef],
     appealPathRef: refs.appealPathRef,
     supersedesDecisionRefs: [refs.decisionRef]
+  };
+}
+
+function makeAdaptiveDecisionPacket(refs: RiverbendCyberneticSliceRefs): DecisionPacket {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveDecisionPacketRef.id,
+    type: "decision-packet",
+    orgId,
+    status: "complete",
+    issueRefs: [refs.adaptiveIssueRef],
+    proposalRefs: [refs.adaptiveProposalRef],
+    decisionRef: refs.adaptiveDecisionRef,
+    authorityRefs: [refs.adaptiveDecisionRef, refs.mandateRef, refs.watershedGuardianRef],
+    decisionMethod: adaptiveDecisionMethod(refs),
+    scopeRefs: [refs.commonsRef, refs.livingSystemRef],
+    affectedObjectRefs: [refs.thresholdRef, refs.useRightRef, refs.policyRef, refs.evidenceRef],
+    claimRefs: [refs.claimRef],
+    evidenceRefs: [refs.evidenceRef, refs.retrospectiveRef, refs.redactionRef],
+    evidenceLinkRefs: [],
+    perspectiveRefs: [],
+    scenarioRefs: [refs.scenarioRef],
+    modelRefs: [refs.scenarioRef],
+    guardianReviewRefs: [refs.adaptiveGuardianReviewRef],
+    unresolvedObjectionRefs: [refs.adaptiveObjectionRef],
+    unresolvedObjectionsSummary: "A data-stewardship objection is preserved as a minority report; the decision proceeds only with redaction continuity.",
+    outcome: "passed",
+    rationale: "The adaptive branch must pause the route and version policy, while export must protect sensitive school evidence detail.",
+    conditions: [
+      "Preserve the objection in the packet.",
+      "Apply redaction before federation export.",
+      "Keep the original evidence event replayable through redaction continuity."
+    ],
+    obligationRefs: [refs.adaptiveTaskRef],
+    agreementRefs: [refs.dataStewardshipAgreementRef],
+    policyRefs: [refs.policyRef],
+    policyVersionRefs: [refs.policyVersionRef],
+    reviewAt: "2026-06-30T16:00:00.000Z",
+    appealPathRef: refs.appealPathRef,
+    ecologicalHooks: {
+      relevance: "governance_trigger",
+      affectedLivingSystemRefs: [refs.livingSystemRef],
+      indicatorRefs: [refs.indicatorRef],
+      thresholdRefs: [refs.thresholdRef],
+      ecologicalClaimRefs: [refs.claimRef],
+      impactModelRefs: [refs.scenarioRef],
+      notes: "The packet preserves the ecological trigger and the governance response."
+    },
+    dataStewardship: {
+      visibility: "federation",
+      dataState: "sensitive",
+      dataStewardshipAgreementRefs: [refs.dataStewardshipAgreementRef],
+      consentSignalRefs: [],
+      allowedUses: ["coordinate", "govern", "federate"],
+      prohibitedUses: ["commercialize", "reidentify"],
+      retentionRule: "retain redacted evidence summary with full detail sealed by local agreement",
+      exportRule: "redaction stubs required for school evidence",
+      federationRuleRefs: [refs.dataStewardshipAgreementRef]
+    },
+    redactionSummary: {
+      hasRedactions: true,
+      redactedRefs: [refs.evidenceRef],
+      sealedRefs: [refs.sourceRef],
+      reason: "vulnerable_group_protection",
+      redactedByRef: refs.actorRef,
+      redactedAt: occurredAt,
+      continuityEventRefs: [refs.redactionRef]
+    },
+    eventRefs: [
+      refs.adaptiveIssueRef,
+      refs.adaptiveProposalRef,
+      refs.adaptiveAmendmentRef,
+      refs.adaptiveObjectionRef,
+      refs.adaptiveDecisionRef,
+      refs.redactionRef
+    ],
+    schemaVersions: [
+      {
+        contractName: "@canopy/contracts-governance",
+        schemaVersion: "0.0.0"
+      },
+      {
+        contractName: "@canopy/contracts-kernel",
+        schemaVersion: "0.0.0"
+      }
+    ],
+    contentHash: "sha256:riverbend-adaptive-decision-packet",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef
   };
 }
 

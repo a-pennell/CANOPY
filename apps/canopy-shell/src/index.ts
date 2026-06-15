@@ -2029,6 +2029,7 @@ const canopyObjectTypes = [
   "mandate",
   "model",
   "need",
+  "objection",
   "offer",
   "organization",
   "person",
