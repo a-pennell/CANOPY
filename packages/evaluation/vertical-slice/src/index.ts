@@ -1,5 +1,11 @@
 import type { Decision, Issue, Proposal } from "@canopy/contracts-governance";
 import type {
+  CanopyShellSession,
+  CanopyShellScope,
+  PersistedCanopyShellSnapshotResult
+} from "@canopy/app-shell";
+import { buildPersistedCanopyShellSession, buildPersistedCanopyShellSnapshot } from "@canopy/app-shell";
+import type {
   CanopyEvent,
   CanopyEventType,
   CanopyId,
@@ -22,19 +28,37 @@ import {
   setVisibilityRule
 } from "@canopy/capabilities-data-stewardship";
 import {
+  createModelScenario,
+  createThreshold,
+  recordThresholdBreach
+} from "@canopy/capabilities-ecological-modeling";
+import {
   createIssue,
   createProposal,
+  completeGuardianReview,
+  requestGuardianReview,
   recordDecision
 } from "@canopy/capabilities-governance";
 import {
+  completeLearningRetrospective,
+  recordLearningOutcome
+} from "@canopy/capabilities-learning-accountability";
+import {
+  completeTask,
   createResource,
+  createTask,
   grantUseRight,
   proposeUseRight,
+  recordFoodFlow,
   recordResourceContext,
   type UseRightScope
 } from "@canopy/capabilities-stewardship";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import { createObjectRegistry } from "@canopy/kernel-object-registry";
+import {
+  createInMemoryCanonicalPersistence,
+  type CanonicalPersistenceRuntime
+} from "@canopy/database-runtime";
 import {
   buildCivicMemoryProjection,
   type CivicMemoryProjection
@@ -47,6 +71,14 @@ import {
   buildObjectPageProjection,
   type ObjectPageProjection
 } from "@canopy/projections-object-page";
+import {
+  createInMemoryMaterializedProjectionStore,
+  queryMaterializedProjections,
+  rebuildAndPersistAllProjections,
+  type MaterializedProjectionDocument,
+  type MaterializedProjectionStore,
+  type PersistentProjectionRebuildResult
+} from "@canopy/workflows-projection-rebuild";
 
 export interface VerticalSliceMarker {
   readonly package: "@canopy/evaluation-vertical-slice";
@@ -117,6 +149,24 @@ export interface RiverbendCyberneticSliceResult {
   readonly federationExport: FederationExportEnvelopeReadModel;
 }
 
+export interface RiverbendPersistedRuntimeScenario {
+  readonly slice: RiverbendCyberneticSliceResult;
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly materializedProjectionStore: MaterializedProjectionStore;
+  readonly materializedDocuments: readonly MaterializedProjectionDocument[];
+  readonly projectionRebuild: PersistentProjectionRebuildResult;
+  readonly scope: CanopyShellScope;
+  readonly shell: PersistedCanopyShellSnapshotResult;
+  readonly shellSessions: {
+    readonly threshold: CanopyShellSession;
+    readonly decision: CanopyShellSession;
+    readonly resource: CanopyShellSession;
+    readonly useRight: CanopyShellSession;
+    readonly outcome: CanopyShellSession;
+    readonly federation: CanopyShellSession;
+  };
+}
+
 const occurredAt = "2026-06-14T12:00:00.000Z";
 const namespace = "canopy.phase-7.riverbend";
 const orgId = "org.riverbend-foodshed-commons";
@@ -144,36 +194,41 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
       summary: "Living system connected to the Riverbend food route."
     }
   });
-  append("observe", {
-    id: "event.ecology.threshold.created.mill-creek-nitrate",
-    type: "ecology.threshold.created",
-    objectRef: refs.thresholdRef,
-    relatedRefs: [refs.livingSystemRef, refs.indicatorRef, refs.watershedGuardianRef],
+  createThreshold(services, {
+    eventId: "event.ecology.threshold.created.mill-creek-nitrate",
+    occurredAt,
+    actorRef: refs.actorRef,
+    thresholdRef: refs.thresholdRef,
+    indicatorRef: refs.indicatorRef,
+    livingSystemRef: refs.livingSystemRef,
+    guardianRefs: [refs.watershedGuardianRef],
     authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
-    sourceCapability: "stewardship",
-    payload: {
-      title: "Mill Creek nitrate threshold",
-      indicatorRefId: refs.indicatorRef.id,
-      threshold: 10,
-      unit: "mg/L",
-      guardianReviewRequired: true
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Mill Creek nitrate threshold",
+    threshold: 10,
+    unit: "mg/L",
+    guardianReviewRequired: true
   });
-  append("observe", {
-    id: "event.ecology.threshold.breached.mill-creek-nitrate",
-    type: "ecology.threshold.breached",
-    objectRef: refs.thresholdRef,
-    relatedRefs: [refs.livingSystemRef, refs.indicatorRef, refs.issueRef],
+  recordThresholdBreach(services, {
+    eventId: "event.ecology.threshold.breached.mill-creek-nitrate",
+    occurredAt,
+    actorRef: refs.actorRef,
+    thresholdRef: refs.thresholdRef,
+    indicatorRef: refs.indicatorRef,
+    relatedRefs: [refs.livingSystemRef, refs.issueRef],
     authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
-    sourceCapability: "stewardship",
-    dataState: "sensor_derived",
-    payload: {
-      title: "Mill Creek nitrate threshold breached",
-      observedValue: 14.2,
-      unit: "mg/L",
-      observedAt: occurredAt,
-      requiresGuardianReview: true
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Mill Creek nitrate threshold breached",
+    observedValue: 14.2,
+    unit: "mg/L",
+    observedAt: occurredAt,
+    requiresGuardianReview: true
   });
   append("observe", {
     id: "event.coordination.need.created.school-meals",
@@ -263,20 +318,21 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     dataState: "expert_reviewed"
   });
 
-  append("simulate", {
-    id: "event.model.scenario.created.low-runoff-route",
-    type: "model.scenario.created",
-    objectRef: refs.scenarioRef,
+  createModelScenario(services, {
+    eventId: "event.model.scenario.created.low-runoff-route",
+    occurredAt,
+    actorRef: refs.actorRef,
+    scenarioRef: refs.scenarioRef,
     relatedRefs: [refs.thresholdRef, refs.needRef, refs.offerRef, refs.claimRef],
     authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
-    sourceCapability: "ecological-modeling",
-    dataState: "model_derived",
-    payload: {
-      title: "Low runoff food-flow route",
-      summary: "Route surplus boxes without additional irrigation or creek-adjacent staging.",
-      assumptions: ["no additional irrigation", "existing cold-chain capacity"],
-      guardianReviewRequired: true
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Low runoff food-flow route",
+    summary: "Route surplus boxes without additional irrigation or creek-adjacent staging.",
+    assumptions: ["no additional irrigation", "existing cold-chain capacity"],
+    guardianReviewRequired: true
   });
 
   createIssue(services, {
@@ -289,44 +345,37 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     actorRef: refs.actorRef,
     proposal: makeProposal(refs)
   });
-  append("deliberate", {
-    id: "event.ecology.guardian.review_requested.mill-creek-food-flow",
-    type: "ecology.guardian.review_requested",
-    objectRef: refs.guardianReviewRef,
-    relatedRefs: [
-      refs.thresholdRef,
-      refs.livingSystemRef,
-      refs.scenarioRef,
-      refs.proposalRef,
-      refs.claimRef
-    ],
+  requestGuardianReview(services, {
+    eventId: "event.ecology.guardian.review_requested.mill-creek-food-flow",
+    occurredAt,
+    actorRef: refs.actorRef,
+    guardianReviewRef: refs.guardianReviewRef,
+    proposalRef: refs.proposalRef,
+    thresholdRef: refs.thresholdRef,
+    subjectRefs: [refs.thresholdRef, refs.livingSystemRef, refs.scenarioRef, refs.proposalRef, refs.claimRef],
+    guardianRefs: [refs.watershedGuardianRef],
     authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
-    sourceCapability: "governance",
-    visibility: "guardian_restricted",
-    payload: {
-      title: "Guardian review for Mill Creek food-flow intervention",
-      reason: "Threshold breach affects food-flow route conditions.",
-      thresholdRefId: refs.thresholdRef.id,
-      proposalRefId: refs.proposalRef.id
-    }
+    orgId,
+    title: "Guardian review for Mill Creek food-flow intervention",
+    reason: "Threshold breach affects food-flow route conditions."
   });
-  append("deliberate", {
-    id: "event.ecology.guardian.review_completed.mill-creek-food-flow",
-    type: "ecology.guardian.review_completed",
-    objectRef: refs.guardianReviewRef,
-    relatedRefs: [refs.thresholdRef, refs.scenarioRef, refs.proposalRef],
+  completeGuardianReview(services, {
+    eventId: "event.ecology.guardian.review_completed.mill-creek-food-flow",
+    occurredAt,
+    actorRef: refs.actorRef,
+    guardianReviewRef: refs.guardianReviewRef,
+    subjectRefs: [refs.thresholdRef, refs.scenarioRef, refs.proposalRef],
+    guardianRefs: [refs.watershedGuardianRef],
     authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
-    sourceCapability: "governance",
-    visibility: "guardian_restricted",
-    dataState: "expert_reviewed",
-    payload: {
-      title: "Guardian review completed",
-      outcome: "approved_with_conditions",
-      conditions: [
-        "No additional irrigation during the breach window.",
-        "Record delivery outcome and watershed follow-up."
-      ]
-    }
+    orgId,
+    title: "Guardian review completed",
+    outcome: "approved_with_conditions",
+    conditions: [
+      "No additional irrigation during the breach window.",
+      "Record delivery outcome and watershed follow-up."
+    ],
+    claimRefs: [refs.claimRef],
+    evidenceRefs: [refs.evidenceRef]
   });
   recordDecision(services, {
     occurredAt,
@@ -461,74 +510,90 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     ]
   });
 
-  append("act", {
-    id: "event.stewardship.task.created.deliver-produce",
-    type: "stewardship.task.created",
-    objectRef: refs.taskRef,
-    relatedRefs: [refs.commitmentRef, refs.useRightRef, refs.resourceRef],
+  createTask(services, {
+    eventId: "event.stewardship.task.created.deliver-produce",
+    occurredAt,
+    actorRef: refs.actorRef,
+    taskRef: refs.taskRef,
+    title: "Deliver twenty produce boxes",
+    assignedToRefs: [refs.actorRef],
+    resourceRefs: [refs.resourceRef],
+    commitmentRef: refs.commitmentRef,
+    useRightRef: refs.useRightRef,
     authorityRefs: [refs.decisionRef],
-    sourceCapability: "stewardship",
-    payload: {
-      title: "Deliver twenty produce boxes",
-      assignedToRefId: refs.actorRef.id,
-      dueAt: "2026-06-15T16:00:00.000Z"
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    dueAt: "2026-06-15T16:00:00.000Z"
   });
-  append("act", {
-    id: "event.flow.food.recorded.school-produce-delivery",
-    type: "flow.food.recorded",
-    objectRef: refs.flowRef,
-    relatedRefs: [refs.resourceRef, refs.useRightRef, refs.taskRef, refs.thresholdRef],
+  recordFoodFlow(services, {
+    eventId: "event.flow.food.recorded.school-produce-delivery",
+    occurredAt,
+    actorRef: refs.actorRef,
+    flowRef: refs.flowRef,
+    resourceRef: refs.resourceRef,
+    taskRef: refs.taskRef,
+    useRightRef: refs.useRightRef,
+    commitmentRef: refs.commitmentRef,
+    outcomeRef: refs.outcomeRef,
+    thresholdRefs: [refs.thresholdRef],
     authorityRefs: [refs.decisionRef, refs.useRightRef],
-    sourceCapability: "stewardship",
-    payload: {
-      title: "Produce boxes moved to Northside School Kitchen",
-      quantity: "20 boxes",
-      from: "Green Acre Farm",
-      to: "Northside School Kitchen",
-      watershedSafeguard: "no additional irrigation"
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    quantity: "20 boxes",
+    from: "Green Acre Farm",
+    to: "Northside School Kitchen",
+    watershedSafeguard: "no additional irrigation"
   });
-  append("act", {
-    id: "event.stewardship.task.completed.deliver-produce",
-    type: "stewardship.task.completed",
-    objectRef: refs.taskRef,
-    relatedRefs: [refs.flowRef, refs.outcomeRef],
+  completeTask(services, {
+    eventId: "event.stewardship.task.completed.deliver-produce",
+    occurredAt,
+    actorRef: refs.actorRef,
+    taskRef: refs.taskRef,
+    completedByRef: refs.actorRef,
+    evidenceRefs: [refs.evidenceRef],
+    flowRefs: [refs.flowRef],
+    outcomeRef: refs.outcomeRef,
     authorityRefs: [refs.decisionRef],
-    sourceCapability: "stewardship",
-    payload: {
-      title: "Delivery completed",
-      completedAt: occurredAt,
-      evidenceRefIds: [refs.evidenceRef.id]
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId
   });
 
-  append("learn", {
-    id: "event.learning.outcome.recorded.school-meals",
-    type: "learning.outcome.recorded",
-    objectRef: refs.outcomeRef,
+  recordLearningOutcome(services, {
+    eventId: "event.learning.outcome.recorded.school-meals",
+    occurredAt,
+    actorRef: refs.actorRef,
+    outcomeRef: refs.outcomeRef,
     relatedRefs: [refs.flowRef, refs.claimRef, refs.decisionRef, refs.thresholdRef],
     authorityRefs: [refs.decisionRef],
-    sourceCapability: "learning-accountability",
-    payload: {
-      title: "School meal produce gap closed",
-      outcome: "twenty boxes delivered without additional irrigation",
-      metric: "meal_cycles_supported",
-      value: 3
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "School meal produce gap closed",
+    outcome: "twenty boxes delivered without additional irrigation",
+    metric: "meal_cycles_supported",
+    value: 3
   });
-  append("learn", {
-    id: "event.learning.retrospective.completed.food-flow",
-    type: "learning.retrospective.completed",
-    objectRef: refs.retrospectiveRef,
+  completeLearningRetrospective(services, {
+    eventId: "event.learning.retrospective.completed.food-flow",
+    occurredAt,
+    actorRef: refs.actorRef,
+    retrospectiveRef: refs.retrospectiveRef,
     relatedRefs: [refs.outcomeRef, refs.guardianReviewRef, refs.thresholdRef],
     authorityRefs: [refs.decisionRef, refs.watershedGuardianRef],
-    sourceCapability: "learning-accountability",
-    payload: {
-      title: "Food-flow threshold breach retrospective",
-      summary: "Guardian conditions let the commons meet meal needs while preserving watershed safeguards.",
-      nextPolicyQuestion: "Should breach-window food flows default to low-runoff route checks?"
-    }
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    title: "Food-flow threshold breach retrospective",
+    summary: "Guardian conditions let the commons meet meal needs while preserving watershed safeguards.",
+    nextPolicyQuestion: "Should breach-window food flows default to low-runoff route checks?"
   });
 
   setVisibilityRule(services, {
@@ -619,6 +684,98 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
   };
 }
 
+export function buildRiverbendPersistedRuntimeScenario(): RiverbendPersistedRuntimeScenario {
+  const slice = executeRiverbendCyberneticSlice();
+  const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+  const materializedProjectionStore = createInMemoryMaterializedProjectionStore();
+  const scope: CanopyShellScope = {
+    label: "Riverbend Foodshed Commons",
+    scope: { orgRef: orgId }
+  };
+
+  for (const event of slice.events) {
+    runtime.appendEvent(event, { recordedAt: occurredAt });
+  }
+
+  const projectionRebuild = rebuildAndPersistAllProjections(runtime, {
+    rebuiltAt: occurredAt,
+    materializedProjections: materializedProjectionStore,
+    civicMemory: { scope: scope.scope },
+    federationExport: {
+      exportedAt: occurredAt,
+      exportedByRef: slice.refs.actorRef,
+      scopeRef: slice.refs.commonsRef,
+      federationRuleRef: slice.refs.dataStewardshipAgreementRef,
+      format: "json"
+    }
+  });
+  const materializedDocuments = queryMaterializedProjections(materializedProjectionStore).items;
+  const shell = buildPersistedCanopyShellSnapshot({
+    runtime,
+    scope,
+    selectedObjectRef: slice.refs.thresholdRef,
+    activeMode: "objects",
+    rebuiltAt: occurredAt,
+    materializedProjectionStore,
+    materializedProjections: materializedDocuments,
+    persistProjectionState: false
+  });
+
+  return {
+    slice,
+    runtime,
+    materializedProjectionStore,
+    materializedDocuments,
+    projectionRebuild,
+    scope,
+    shell,
+    shellSessions: {
+      threshold: buildScenarioSession({
+        runtime,
+        scope,
+        materializedDocuments,
+        route: objectRoute(slice.refs.thresholdRef),
+        selectedObjectRef: slice.refs.thresholdRef
+      }),
+      decision: buildScenarioSession({
+        runtime,
+        scope,
+        materializedDocuments,
+        route: "/decisions",
+        selectedObjectRef: slice.refs.decisionRef
+      }),
+      resource: buildScenarioSession({
+        runtime,
+        scope,
+        materializedDocuments,
+        route: "/resource-care",
+        selectedObjectRef: slice.refs.resourceRef
+      }),
+      useRight: buildScenarioSession({
+        runtime,
+        scope,
+        materializedDocuments,
+        route: objectRoute(slice.refs.useRightRef),
+        selectedObjectRef: slice.refs.useRightRef
+      }),
+      outcome: buildScenarioSession({
+        runtime,
+        scope,
+        materializedDocuments,
+        route: objectRoute(slice.refs.outcomeRef),
+        selectedObjectRef: slice.refs.outcomeRef
+      }),
+      federation: buildScenarioSession({
+        runtime,
+        scope,
+        materializedDocuments,
+        route: "/federation",
+        selectedObjectRef: slice.refs.exportRef
+      })
+    }
+  };
+}
+
 function riverbendRefs(): RiverbendCyberneticSliceRefs {
   return {
     actorRef: ref("person.mira", "person"),
@@ -656,6 +813,28 @@ function riverbendRefs(): RiverbendCyberneticSliceRefs {
     stewardshipLedgerRef: ref("ledger-account.stewardship-allocation", "ledger-account"),
     ledgerEntryRef: ref("ledger-entry.food-flow-allocation", "ledger-entry")
   };
+}
+
+function buildScenarioSession(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly scope: CanopyShellScope;
+  readonly materializedDocuments: readonly MaterializedProjectionDocument[];
+  readonly route: string;
+  readonly selectedObjectRef: ObjectRef;
+}): CanopyShellSession {
+  return buildPersistedCanopyShellSession({
+    runtime: input.runtime,
+    scope: input.scope,
+    route: input.route,
+    selectedObjectRef: input.selectedObjectRef,
+    materializedProjections: input.materializedDocuments,
+    rebuiltAt: occurredAt,
+    persistProjectionState: false
+  }).session;
+}
+
+function objectRoute(ref: ObjectRef): string {
+  return `/objects/${ref.type}/${encodeURIComponent(ref.id)}`;
 }
 
 function createSliceAppender(

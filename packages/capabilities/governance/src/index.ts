@@ -105,6 +105,44 @@ export interface OpenAppealCommand extends GovernanceCommandContext {
   readonly appeal: Appeal;
 }
 
+export interface RequestGuardianReviewCommand extends GovernanceCommandContext {
+  readonly guardianReviewRef: ObjectRef;
+  readonly subjectRefs: readonly ObjectRef[];
+  readonly guardianRefs: readonly ObjectRef[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly orgId?: CanopyId;
+  readonly proposalRef?: ObjectRef;
+  readonly thresholdRef?: ObjectRef;
+  readonly title?: string;
+  readonly reason?: string;
+}
+
+export interface CompleteGuardianReviewCommand extends GovernanceCommandContext {
+  readonly guardianReviewRef: ObjectRef;
+  readonly subjectRefs: readonly ObjectRef[];
+  readonly guardianRefs: readonly ObjectRef[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly orgId?: CanopyId;
+  readonly outcome: string;
+  readonly conditions: readonly string[];
+  readonly title?: string;
+  readonly claimRefs?: readonly ObjectRef[];
+  readonly evidenceRefs?: readonly ObjectRef[];
+  readonly unresolvedObjectionRefs?: readonly ObjectRef[];
+}
+
+export interface GuardianReviewCommandRecord {
+  readonly id: CanopyId;
+  readonly type: "guardian-review";
+  readonly status: "requested" | "completed";
+  readonly subjectRefs: readonly ObjectRef[];
+  readonly guardianRefs: readonly ObjectRef[];
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly title?: string;
+  readonly outcome?: string;
+  readonly conditions?: readonly string[];
+}
+
 export interface GovernanceAuthorityValidationIssue {
   readonly code: GovernanceCommandErrorCode;
   readonly message: string;
@@ -238,6 +276,102 @@ export function recordDecision(
         : { governanceControls: evaluateGovernanceHardening(command.decision, command.controls) })
     },
     record: command.decision
+  });
+}
+
+export function requestGuardianReview(
+  services: GovernanceCommandServices,
+  command: RequestGuardianReviewCommand
+): GovernanceCommandResult<GuardianReviewCommandRecord> {
+  const record: GuardianReviewCommandRecord = {
+    id: command.guardianReviewRef.id,
+    type: "guardian-review",
+    status: "requested",
+    subjectRefs: command.subjectRefs,
+    guardianRefs: command.guardianRefs,
+    authorityRefs: command.authorityRefs,
+    ...(command.title === undefined ? {} : { title: command.title })
+  };
+  const relatedRefs = compactRefs([
+    command.proposalRef,
+    command.thresholdRef,
+    ...command.subjectRefs,
+    ...command.guardianRefs
+  ]);
+
+  registerRefs(services.registry, [
+    command.guardianReviewRef,
+    command.actorRef,
+    ...relatedRefs,
+    ...command.authorityRefs
+  ]);
+
+  return appendGovernanceEvent(services, command, {
+    type: "ecology.guardian.review_requested",
+    objectRef: command.guardianReviewRef,
+    relatedRefs,
+    authorityRefs: command.authorityRefs,
+    orgId: command.orgId,
+    visibility: "guardian_restricted",
+    dataState: "locally_verified",
+    payload: {
+      command: "requestGuardianReview",
+      guardianReview: record,
+      proposalRefId: command.proposalRef?.id,
+      thresholdRefId: command.thresholdRef?.id,
+      reason: command.reason
+    },
+    record
+  });
+}
+
+export function completeGuardianReview(
+  services: GovernanceCommandServices,
+  command: CompleteGuardianReviewCommand
+): GovernanceCommandResult<GuardianReviewCommandRecord> {
+  const record: GuardianReviewCommandRecord = {
+    id: command.guardianReviewRef.id,
+    type: "guardian-review",
+    status: "completed",
+    subjectRefs: command.subjectRefs,
+    guardianRefs: command.guardianRefs,
+    authorityRefs: command.authorityRefs,
+    ...(command.title === undefined ? {} : { title: command.title }),
+    outcome: command.outcome,
+    conditions: command.conditions
+  };
+  const relatedRefs = compactRefs([
+    ...command.subjectRefs,
+    ...command.guardianRefs,
+    ...(command.claimRefs ?? []),
+    ...(command.evidenceRefs ?? []),
+    ...(command.unresolvedObjectionRefs ?? [])
+  ]);
+
+  registerRefs(services.registry, [
+    command.guardianReviewRef,
+    command.actorRef,
+    ...relatedRefs,
+    ...command.authorityRefs
+  ]);
+
+  return appendGovernanceEvent(services, command, {
+    type: "ecology.guardian.review_completed",
+    objectRef: command.guardianReviewRef,
+    relatedRefs,
+    authorityRefs: command.authorityRefs,
+    orgId: command.orgId,
+    visibility: "guardian_restricted",
+    dataState: "expert_reviewed",
+    payload: {
+      command: "completeGuardianReview",
+      guardianReview: record,
+      outcome: command.outcome,
+      conditions: command.conditions,
+      claimRefIds: (command.claimRefs ?? []).map((ref) => ref.id),
+      evidenceRefIds: (command.evidenceRefs ?? []).map((ref) => ref.id)
+    },
+    record
   });
 }
 

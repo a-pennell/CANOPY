@@ -14,6 +14,16 @@ describe("Canopy App Router acceptance", () => {
       surfaceKind: "object-page"
     },
     {
+      routeSegments: ["objects", "threshold", "threshold.mill-creek-nitrate"],
+      routePath: "/objects/threshold/threshold.mill-creek-nitrate",
+      surfaceKind: "object-page"
+    },
+    {
+      routeSegments: ["objects", "evidence", "outcome.school-meal-produce-gap-closed"],
+      routePath: "/objects/evidence/outcome.school-meal-produce-gap-closed",
+      surfaceKind: "object-page"
+    },
+    {
       routeSegments: ["resource-care"],
       routePath: "/resource-care",
       surfaceKind: "resource-stewardship"

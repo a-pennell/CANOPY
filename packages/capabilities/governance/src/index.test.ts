@@ -18,8 +18,10 @@ import {
   GovernanceCommandError,
   createIssue,
   createProposal,
+  completeGuardianReview,
   openAppeal,
   openProposal,
+  requestGuardianReview,
   recordDecision,
   recordDecisionPacket,
   evaluateGovernanceHardening,
@@ -50,6 +52,8 @@ const packetRef = ref(
 );
 const appealRef = ref("canopy:appeal:water-plan", "appeal", "governance");
 const mandateRef = ref("canopy:mandate:watershed", "mandate", "authority");
+const guardianReviewRef = ref("canopy:guardian-review:water-plan", "guardian-review", "governance");
+const thresholdRef = ref("canopy:threshold:flow", "threshold", "ecology");
 const emergencyMandateRef = ref(
   "canopy:mandate:emergency-water",
   "mandate",
@@ -132,6 +136,59 @@ describe("governance capability commands", () => {
     expect(result.appendResult.event.relatedRefs).toContainEqual(issueRef);
     expect(services.registry.require(proposalRef.id)).toEqual(proposalRef);
     expect(services.registry.require(issueRef.id)).toEqual(issueRef);
+  });
+
+  it("requests and completes guardian review as restricted governance events", () => {
+    const services = servicesForTest();
+    const requested = requestGuardianReview(services, {
+      eventId: "event.guardian.review.requested",
+      occurredAt,
+      actorRef,
+      guardianReviewRef,
+      proposalRef,
+      thresholdRef,
+      subjectRefs: [proposalRef, thresholdRef],
+      guardianRefs: [guardianReviewRef],
+      authorityRefs: [mandateRef, guardianReviewRef],
+      orgId: "org.riverbend",
+      title: "Guardian review for flow threshold",
+      reason: "Threshold breach affects the proposal."
+    });
+    const completed = completeGuardianReview(services, {
+      eventId: "event.guardian.review.completed",
+      occurredAt,
+      actorRef,
+      guardianReviewRef,
+      subjectRefs: [proposalRef, thresholdRef],
+      guardianRefs: [guardianReviewRef],
+      authorityRefs: [mandateRef, guardianReviewRef],
+      orgId: "org.riverbend",
+      outcome: "approved_with_conditions",
+      conditions: ["pause if threshold worsens"],
+      claimRefs: [claimRef],
+      evidenceRefs: [evidenceRef]
+    });
+
+    expect(requested.appendResult.event).toMatchObject({
+      type: "ecology.guardian.review_requested",
+      visibility: "guardian_restricted",
+      objectRef: guardianReviewRef,
+      payload: {
+        command: "requestGuardianReview",
+        proposalRefId: proposalRef.id,
+        thresholdRefId: thresholdRef.id
+      }
+    });
+    expect(completed.appendResult.event).toMatchObject({
+      type: "ecology.guardian.review_completed",
+      visibility: "guardian_restricted",
+      dataState: "expert_reviewed",
+      payload: {
+        command: "completeGuardianReview",
+        outcome: "approved_with_conditions",
+        conditions: ["pause if threshold worsens"]
+      }
+    });
   });
 
   it("opens a proposal with executable authority validation", () => {

@@ -7,9 +7,12 @@ import {
   appealUseRight,
   approveUseRight,
   createResource,
+  createTask,
+  completeTask,
   denyUseRight,
   grantUseRight,
   proposeUseRight,
+  recordFoodFlow,
   recordResourceContext,
   revokeUseRight
 } from "./index.js";
@@ -31,6 +34,9 @@ const issueRef = ref("issue.north-pasture-review", "issue");
 const decisionRef = ref("decision.north-pasture-use-right", "decision");
 const proposalRef = ref("proposal.north-pasture-use-right", "proposal");
 const appealRef = ref("appeal.north-pasture-use-right", "appeal");
+const taskRef = ref("task.deliver-produce", "task");
+const flowRef = ref("flow.food-delivery", "flow");
+const outcomeRef = ref("outcome.food-delivery", "evidence");
 
 const scope = {
   holderRef,
@@ -334,6 +340,71 @@ describe("stewardship capability", () => {
           carryingCapacity: 12,
           ecologicalConcern: "riparian recovery"
         }
+      }
+    });
+  });
+
+  it("creates tasks, records food flows, and completes tasks", () => {
+    const ctx = services();
+    const task = createTask(ctx, {
+      eventId: "event.stewardship.task.created.delivery",
+      occurredAt,
+      taskRef,
+      title: "Deliver produce boxes",
+      assignedToRefs: [holderRef],
+      resourceRefs: [resourceRef],
+      commitmentRef: proposalRef,
+      useRightRef,
+      authorityRefs: [decisionRef],
+      dueAt: "2026-06-15T16:00:00.000Z"
+    });
+    const flow = recordFoodFlow(ctx, {
+      eventId: "event.flow.food.recorded.delivery",
+      occurredAt,
+      flowRef,
+      resourceRef,
+      taskRef,
+      useRightRef,
+      outcomeRef,
+      authorityRefs: [decisionRef, useRightRef],
+      from: "Green Acre Farm",
+      to: "Northside School Kitchen",
+      quantity: "20 boxes"
+    });
+    const completed = completeTask(ctx, {
+      eventId: "event.stewardship.task.completed.delivery",
+      occurredAt,
+      taskRef,
+      completedByRef: holderRef,
+      flowRefs: [flowRef],
+      outcomeRef,
+      authorityRefs: [decisionRef]
+    });
+
+    expect(task.append.event).toMatchObject({
+      type: "stewardship.task.created",
+      objectRef: taskRef,
+      payload: {
+        title: "Deliver produce boxes",
+        state: "open"
+      }
+    });
+    expect(flow.append.event).toMatchObject({
+      type: "flow.food.recorded",
+      objectRef: flowRef,
+      payload: {
+        resourceRefId: resourceRef.id,
+        outcomeRefId: outcomeRef.id,
+        quantity: "20 boxes"
+      }
+    });
+    expect(completed.append.event).toMatchObject({
+      type: "stewardship.task.completed",
+      objectRef: taskRef,
+      payload: {
+        state: "completed",
+        flowRefIds: [flowRef.id],
+        outcomeRefId: outcomeRef.id
       }
     });
   });

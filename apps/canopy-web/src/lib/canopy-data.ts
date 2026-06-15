@@ -20,10 +20,9 @@ import {
   type SampleExportBundle
 } from "@canopy/database-import-plans";
 import {
-  createInMemoryCanonicalPersistence,
   type CanonicalPersistenceRuntime
 } from "@canopy/database-runtime";
-import { executeRiverbendCyberneticSlice } from "@canopy/evaluation-vertical-slice";
+import { buildRiverbendPersistedRuntimeScenario } from "@canopy/evaluation-vertical-slice";
 import {
   executeSampleExportBundleImports,
   type SampleExportBundleImportExecutionResult
@@ -33,7 +32,6 @@ import {
   type CanopyOperationsReport
 } from "@canopy/workflows-operations";
 import {
-  createInMemoryMaterializedProjectionStore,
   queryMaterializedProjections,
   rebuildAndPersistAllProjections,
   type MaterializedProjectionDocument
@@ -204,9 +202,10 @@ const generatedAt = "2026-06-14T12:00:00.000Z";
 export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): CanopyWebModel {
   const routePath = normalizeRoutePath(options.routePath);
   const scopePreset = options.scopePreset ?? "riverbend";
-  const runtime = createInMemoryCanonicalPersistence({ now: () => generatedAt });
-  const materializedProjectionStore = createInMemoryMaterializedProjectionStore();
-  const phase7Slice = executeRiverbendCyberneticSlice();
+  const phase7Scenario = buildRiverbendPersistedRuntimeScenario();
+  const phase7Slice = phase7Scenario.slice;
+  const runtime = phase7Scenario.runtime;
+  const materializedProjectionStore = phase7Scenario.materializedProjectionStore;
   const imports = executeSampleExportBundleImports({
     bundles: foldedSourceSampleExportBundles,
     runtime,
@@ -217,9 +216,6 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     }
   });
   for (const event of firstReplayableGoldenFixtureEvents) {
-    runtime.appendEvent(event, { recordedAt: generatedAt });
-  }
-  for (const event of phase7Slice.events) {
     runtime.appendEvent(event, { recordedAt: generatedAt });
   }
   rebuildAndPersistAllProjections(runtime, {

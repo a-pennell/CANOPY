@@ -29,6 +29,12 @@ export type StewardshipCommandErrorCode =
   | "missing-revocation-reason"
   | "missing-appeal-ref"
   | "missing-appeal-grounds"
+  | "invalid-task-ref"
+  | "invalid-flow-ref"
+  | "missing-task-title"
+  | "missing-assignee"
+  | "missing-completion-ref"
+  | "missing-flow-subject"
   | "missing-context";
 
 export class StewardshipCommandError extends Error {
@@ -153,6 +159,40 @@ export interface RecordResourceContextCommand extends EventEnvelopeInput {
   readonly relatedRefs?: readonly ObjectRef[];
   readonly context: Readonly<Record<string, unknown>>;
   readonly observedAt?: IsoDateTime;
+}
+
+export interface CreateTaskCommand extends EventEnvelopeInput {
+  readonly taskRef: ObjectRef;
+  readonly title: string;
+  readonly assignedToRefs: readonly ObjectRef[];
+  readonly resourceRefs?: readonly ObjectRef[];
+  readonly commitmentRef?: ObjectRef;
+  readonly useRightRef?: ObjectRef;
+  readonly dueAt?: IsoDateTime;
+  readonly priority?: string;
+}
+
+export interface CompleteTaskCommand extends EventEnvelopeInput {
+  readonly taskRef: ObjectRef;
+  readonly completedByRef: ObjectRef;
+  readonly evidenceRefs?: readonly ObjectRef[];
+  readonly outcomeRef?: ObjectRef;
+  readonly flowRefs?: readonly ObjectRef[];
+  readonly completedAt?: IsoDateTime;
+}
+
+export interface RecordFoodFlowCommand extends EventEnvelopeInput {
+  readonly flowRef: ObjectRef;
+  readonly resourceRef: ObjectRef;
+  readonly taskRef?: ObjectRef;
+  readonly useRightRef?: ObjectRef;
+  readonly commitmentRef?: ObjectRef;
+  readonly outcomeRef?: ObjectRef;
+  readonly thresholdRefs?: readonly ObjectRef[];
+  readonly from: string;
+  readonly to: string;
+  readonly quantity: string;
+  readonly watershedSafeguard?: string;
 }
 
 export interface StewardshipCommandResult {
@@ -489,6 +529,146 @@ export function recordResourceContext(
       resourceRefId: command.resourceRef.id,
       context: command.context,
       observedAt: command.observedAt ?? command.occurredAt
+    })
+  });
+
+  return { append, objectRef, relatedRefs, authorityRefs };
+}
+
+export function createTask(
+  services: StewardshipServices,
+  command: CreateTaskCommand
+): StewardshipCommandResult {
+  assertRefType(command.taskRef, "task", "invalid-task-ref");
+  assertNonEmptyString(command.title, "missing-task-title", "Tasks require a title.");
+  assertNonEmptyRefs(command.assignedToRefs, "missing-assignee", "Tasks require at least one assignee.");
+
+  const objectRef = services.registry.register(command.taskRef);
+  registerRefs(services.registry, [
+    command.actorRef,
+    command.commitmentRef,
+    command.useRightRef,
+    ...(command.assignedToRefs ?? []),
+    ...(command.resourceRefs ?? []),
+    ...(command.authorityRefs ?? [])
+  ]);
+
+  const authorityRefs = canonicalRefs(services.registry, command.authorityRefs ?? []);
+  const relatedRefs = canonicalRefs(services.registry, [
+    command.commitmentRef,
+    command.useRightRef,
+    ...command.assignedToRefs,
+    ...(command.resourceRefs ?? [])
+  ]);
+  const append = appendStewardshipEvent(services.memory, {
+    command,
+    type: "stewardship.task.created",
+    objectRef,
+    relatedRefs,
+    authorityRefs,
+    payload: compactPayload({
+      title: command.title,
+      assignedToRefIds: command.assignedToRefs.map((ref) => ref.id),
+      resourceRefIds: (command.resourceRefs ?? []).map((ref) => ref.id),
+      commitmentRefId: command.commitmentRef?.id,
+      useRightRefId: command.useRightRef?.id,
+      dueAt: command.dueAt,
+      priority: command.priority,
+      state: "open"
+    })
+  });
+
+  return { append, objectRef, relatedRefs, authorityRefs };
+}
+
+export function completeTask(
+  services: StewardshipServices,
+  command: CompleteTaskCommand
+): StewardshipCommandResult {
+  assertRefType(command.taskRef, "task", "invalid-task-ref");
+  assertRef(command.completedByRef, "missing-completion-ref", "Task completion requires a completedByRef.");
+
+  const objectRef = services.registry.register(command.taskRef);
+  registerRefs(services.registry, [
+    command.actorRef,
+    command.completedByRef,
+    command.outcomeRef,
+    ...(command.evidenceRefs ?? []),
+    ...(command.flowRefs ?? []),
+    ...(command.authorityRefs ?? [])
+  ]);
+
+  const authorityRefs = canonicalRefs(services.registry, command.authorityRefs ?? []);
+  const relatedRefs = canonicalRefs(services.registry, [
+    command.completedByRef,
+    command.outcomeRef,
+    ...(command.evidenceRefs ?? []),
+    ...(command.flowRefs ?? [])
+  ]);
+  const append = appendStewardshipEvent(services.memory, {
+    command,
+    type: "stewardship.task.completed",
+    objectRef,
+    relatedRefs,
+    authorityRefs,
+    payload: compactPayload({
+      completedByRefId: command.completedByRef.id,
+      completedAt: command.completedAt ?? command.occurredAt,
+      evidenceRefIds: (command.evidenceRefs ?? []).map((ref) => ref.id),
+      outcomeRefId: command.outcomeRef?.id,
+      flowRefIds: (command.flowRefs ?? []).map((ref) => ref.id),
+      state: "completed"
+    })
+  });
+
+  return { append, objectRef, relatedRefs, authorityRefs };
+}
+
+export function recordFoodFlow(
+  services: StewardshipServices,
+  command: RecordFoodFlowCommand
+): StewardshipCommandResult {
+  assertRefType(command.flowRef, "flow", "invalid-flow-ref");
+  assertRef(command.resourceRef, "missing-flow-subject", "Food flows require a resourceRef.");
+
+  const objectRef = services.registry.register(command.flowRef);
+  registerRefs(services.registry, [
+    command.actorRef,
+    command.resourceRef,
+    command.taskRef,
+    command.useRightRef,
+    command.commitmentRef,
+    command.outcomeRef,
+    ...(command.thresholdRefs ?? []),
+    ...(command.authorityRefs ?? [])
+  ]);
+
+  const authorityRefs = canonicalRefs(services.registry, command.authorityRefs ?? []);
+  const relatedRefs = canonicalRefs(services.registry, [
+    command.resourceRef,
+    command.taskRef,
+    command.useRightRef,
+    command.commitmentRef,
+    command.outcomeRef,
+    ...(command.thresholdRefs ?? [])
+  ]);
+  const append = appendStewardshipEvent(services.memory, {
+    command,
+    type: "flow.food.recorded",
+    objectRef,
+    relatedRefs,
+    authorityRefs,
+    payload: compactPayload({
+      resourceRefId: command.resourceRef.id,
+      taskRefId: command.taskRef?.id,
+      useRightRefId: command.useRightRef?.id,
+      commitmentRefId: command.commitmentRef?.id,
+      outcomeRefId: command.outcomeRef?.id,
+      thresholdRefIds: (command.thresholdRefs ?? []).map((ref) => ref.id),
+      from: command.from,
+      to: command.to,
+      quantity: command.quantity,
+      watershedSafeguard: command.watershedSafeguard
     })
   });
 

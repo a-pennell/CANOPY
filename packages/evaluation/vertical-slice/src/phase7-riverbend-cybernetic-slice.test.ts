@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { executeRiverbendCyberneticSlice } from "./index.js";
+import {
+  buildRiverbendPersistedRuntimeScenario,
+  executeRiverbendCyberneticSlice
+} from "./index.js";
 
 describe("Phase 7 Riverbend cybernetic slice", () => {
   it("runs one Riverbend/Mill Creek path from observe through federation export", () => {
@@ -134,5 +137,43 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
       format: "json"
     });
     expect(preview.contentHash).toMatch(/^sha256:/);
+  });
+
+  it("builds a persisted runtime with materialized shell sessions for Phase 7 routes", () => {
+    const scenario = buildRiverbendPersistedRuntimeScenario();
+
+    expect(scenario.runtime.counts().events).toBe(scenario.slice.events.length);
+    expect(scenario.materializedDocuments.map((document) => document.projectionName)).toEqual(
+      expect.arrayContaining([
+        "object-page",
+        "civic-memory",
+        "authority",
+        "claim-evidence",
+        "resource-stewardship",
+        "decision-packet",
+        "federation-export"
+      ])
+    );
+    expect(scenario.shell.snapshot.civicMemory.replayCheckpoint.projectedEventCount).toBe(
+      scenario.slice.events.length
+    );
+    expect(scenario.shellSessions.threshold.navigation.activePath).toBe(
+      "/objects/threshold/threshold.mill-creek-nitrate"
+    );
+    expect(scenario.shellSessions.threshold.snapshot.surfaces.objectPage?.timeline.map(
+      (event) => event.type
+    )).toEqual(expect.arrayContaining(["ecology.threshold.breached"]));
+    expect(scenario.shellSessions.decision.snapshot.surfaces.decisionPacket?.decisionRef).toEqual(
+      scenario.slice.refs.decisionRef
+    );
+    expect(scenario.shellSessions.resource.snapshot.surfaces.resourceStewardship?.resourceRef).toEqual(
+      scenario.slice.refs.resourceRef
+    );
+    expect(scenario.shellSessions.outcome.snapshot.surfaces.objectPage?.timeline.map(
+      (event) => event.type
+    )).toEqual(expect.arrayContaining(["learning.outcome.recorded"]));
+    expect(scenario.shellSessions.federation.snapshot.surfaces.federationExportState?.includedEventIds).toHaveLength(
+      scenario.slice.events.length
+    );
   });
 });
