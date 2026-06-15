@@ -122,6 +122,18 @@ export interface OpenAppealCommand extends GovernanceCommandContext {
   readonly appeal: Appeal;
 }
 
+export interface ReviewAppealCommand extends GovernanceCommandContext {
+  readonly appeal: Appeal;
+}
+
+export interface RecordAppealRemedyCommand extends GovernanceCommandContext {
+  readonly appeal: Appeal;
+}
+
+export interface CloseAppealCommand extends GovernanceCommandContext {
+  readonly appeal: Appeal;
+}
+
 export interface RequestGuardianReviewCommand extends GovernanceCommandContext {
   readonly guardianReviewRef: ObjectRef;
   readonly subjectRefs: readonly ObjectRef[];
@@ -518,6 +530,45 @@ export function openAppeal(
   services: GovernanceCommandServices,
   command: OpenAppealCommand
 ): GovernanceCommandResult<Appeal> {
+  return appendAppealLifecycleEvent(services, command, "governance.appeal.opened", "openAppeal");
+}
+
+export function reviewAppeal(
+  services: GovernanceCommandServices,
+  command: ReviewAppealCommand
+): GovernanceCommandResult<Appeal> {
+  return appendAppealLifecycleEvent(services, command, "governance.appeal.reviewed", "reviewAppeal");
+}
+
+export function recordAppealRemedy(
+  services: GovernanceCommandServices,
+  command: RecordAppealRemedyCommand
+): GovernanceCommandResult<Appeal> {
+  return appendAppealLifecycleEvent(
+    services,
+    command,
+    "governance.appeal.remedy_recorded",
+    "recordAppealRemedy"
+  );
+}
+
+export function closeAppeal(
+  services: GovernanceCommandServices,
+  command: CloseAppealCommand
+): GovernanceCommandResult<Appeal> {
+  return appendAppealLifecycleEvent(services, command, "governance.appeal.closed", "closeAppeal");
+}
+
+function appendAppealLifecycleEvent(
+  services: GovernanceCommandServices,
+  command:
+    | OpenAppealCommand
+    | ReviewAppealCommand
+    | RecordAppealRemedyCommand
+    | CloseAppealCommand,
+  type: CanopyEventType,
+  commandName: string
+): GovernanceCommandResult<Appeal> {
   assertValidAuthority(validateAppealAuthority(command.appeal));
   const ref = refFor(command.appeal, "appeal");
   registerRefs(services.registry, [
@@ -527,7 +578,7 @@ export function openAppeal(
   ]);
 
   return appendGovernanceEvent(services, command, {
-    type: "governance.appeal.opened",
+    type,
     objectRef: ref,
     relatedRefs: refsForAppeal(command.appeal),
     authorityRefs: command.appeal.authorityRefs,
@@ -535,7 +586,7 @@ export function openAppeal(
     visibility: command.appeal.visibility,
     dataState: command.appeal.dataState,
     payload: {
-      command: "openAppeal",
+      command: commandName,
       appeal: command.appeal
     },
     record: command.appeal

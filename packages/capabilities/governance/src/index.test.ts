@@ -22,12 +22,15 @@ import {
   createIssue,
   createProposal,
   completeGuardianReview,
+  closeAppeal,
   openAppeal,
   openProposal,
   raiseObjection,
+  recordAppealRemedy,
   requestGuardianReview,
   recordDecision,
   recordDecisionPacket,
+  reviewAppeal,
   submitAmendment,
   versionPolicy,
   evaluateGovernanceHardening,
@@ -553,6 +556,71 @@ describe("governance capability commands", () => {
     expect(services.registry.require(appealRef.id)).toEqual(appealRef);
   });
 
+  it("reviews, remedies, and closes appeals without mutating the target decision", () => {
+    const services = servicesForTest();
+    const opened = openAppeal(services, {
+      appeal: makeAppeal(),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:appeal-opened"
+    });
+    const reviewed = reviewAppeal(services, {
+      appeal: makeAppeal({
+        status: "under_review",
+        reviewerRefs: [roleAuthorityRef]
+      }),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:appeal-reviewed"
+    });
+    const remedied = recordAppealRemedy(services, {
+      appeal: makeAppeal({
+        status: "remedied",
+        reviewerRefs: [roleAuthorityRef],
+        outcome: "Consent-revocation redaction remedy accepted."
+      }),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:appeal-remedy-recorded"
+    });
+    const closed = closeAppeal(services, {
+      appeal: makeAppeal({
+        status: "upheld",
+        reviewerRefs: [roleAuthorityRef],
+        outcome: "Appeal upheld after remedy was recorded.",
+        closedAt: occurredAt
+      }),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:appeal-closed"
+    });
+
+    expect(services.memory.replay().events.map((event) => event.type)).toEqual([
+      "governance.appeal.opened",
+      "governance.appeal.reviewed",
+      "governance.appeal.remedy_recorded",
+      "governance.appeal.closed"
+    ]);
+    expect(
+      services.memory.replay().events
+        .filter((event) => event.objectRef.id === decisionRef.id)
+        .map((event) => event.type)
+    ).toEqual([]);
+    expect(reviewed.appendResult.event.relatedRefs).toEqual(
+      expect.arrayContaining([decisionRef, roleAuthorityRef])
+    );
+    expect(remedied.record).toMatchObject({
+      status: "remedied",
+      outcome: "Consent-revocation redaction remedy accepted."
+    });
+    expect(closed.record).toMatchObject({
+      status: "upheld",
+      outcome: "Appeal upheld after remedy was recorded.",
+      closedAt: occurredAt
+    });
+    expect(opened.ref).toEqual(appealRef);
+  });
+
   it("rejects appeals without stated grounds", () => {
     const appeal = {
       ...makeAppeal(),
@@ -562,6 +630,16 @@ describe("governance capability commands", () => {
     expect(() =>
       openAppeal(servicesForTest(), { appeal, occurredAt, actorRef })
     ).toThrow("Appeals require at least one stated ground.");
+  });
+
+  it("rejects appeal lifecycle events under review or later without reviewers", () => {
+    expect(() =>
+      reviewAppeal(servicesForTest(), {
+        appeal: makeAppeal({ status: "under_review" }),
+        occurredAt,
+        actorRef
+      })
+    ).toThrow("Appeals under review or later require at least one reviewerRef.");
   });
 });
 
@@ -813,7 +891,7 @@ function makeDecisionPacket(): DecisionPacket {
   };
 }
 
-function makeAppeal(): Appeal {
+function makeAppeal(overrides: Partial<Appeal> = {}): Appeal {
   return {
     schemaVersion: "0.0.0",
     id: appealRef.id,
@@ -832,7 +910,8 @@ function makeAppeal(): Appeal {
     requestedRemedy: "Reopen deliberation for the contested evidence.",
     reviewerRefs: [],
     decisionRefs: [decisionRef],
-    evidenceRefs: [evidenceRef]
+    evidenceRefs: [evidenceRef],
+    ...overrides
   };
 }
 

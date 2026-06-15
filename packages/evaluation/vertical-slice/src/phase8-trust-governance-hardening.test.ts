@@ -6,11 +6,11 @@ import {
 } from "./index.js";
 
 describe("Phase 8 Riverbend trust and governance hardening", () => {
-  it("opens an appeal against the adaptive decision without mutating the Phase 7 decision stream", () => {
+  it("runs an appeal lifecycle against the adaptive decision without mutating the Phase 7 decision stream", () => {
     const phase7 = executeRiverbendCyberneticSlice();
     const phase8 = executeRiverbendTrustHardeningSlice();
-    const appeal = phase8.events.find(
-      (event) => event.type === "governance.appeal.opened"
+    const appealEvents = phase8.events.filter(
+      (event) => event.objectRef.id === phase8.refs.adaptiveAppealRef.id
     );
     const adaptiveDecisions = phase8.events.filter(
       (event) =>
@@ -23,21 +23,34 @@ describe("Phase 8 Riverbend trust and governance hardening", () => {
     );
     expect(phase8.phase8EventIds).toEqual([
       "event.governance.appeal.opened.food-flow-pause",
+      "event.governance.appeal.reviewed.food-flow-pause",
       "event.stewardship.consent.recorded.school-kitchen-intake",
       "event.stewardship.consent.revoked.school-kitchen-intake",
       "event.stewardship.redaction.requested.consent-revoked-school-kitchen-intake",
-      "event.system.redaction.applied.consent-revoked-school-kitchen-intake"
+      "event.system.redaction.applied.consent-revoked-school-kitchen-intake",
+      "event.governance.appeal.remedy_recorded.food-flow-pause",
+      "event.governance.appeal.closed.food-flow-pause"
     ]);
     expect(adaptiveDecisions).toHaveLength(1);
-    expect(appeal?.objectRef).toEqual(phase8.refs.adaptiveAppealRef);
-    expect(appeal?.relatedRefs.map((ref) => ref.id)).toEqual(
+    expect(appealEvents.map((event) => event.type)).toEqual([
+      "governance.appeal.opened",
+      "governance.appeal.reviewed",
+      "governance.appeal.remedy_recorded",
+      "governance.appeal.closed"
+    ]);
+    expect(appealEvents[0]?.relatedRefs.map((ref) => ref.id)).toEqual(
       expect.arrayContaining([
         phase8.refs.adaptiveDecisionRef.id,
         phase8.refs.evidenceRef.id,
         phase8.refs.redactionRef.id
       ])
     );
-    expect(appeal?.authorityRefs.map((ref) => ref.id)).toEqual(
+    expect(appealEvents.at(-1)?.payload["appeal"]).toMatchObject({
+      status: "upheld",
+      outcome: "Appeal upheld after remedy preserved the decision and strengthened redaction continuity.",
+      closedAt: "2026-06-14T12:00:00.000Z"
+    });
+    expect(appealEvents.at(-1)?.authorityRefs.map((ref) => ref.id)).toEqual(
       expect.arrayContaining([
         phase8.refs.appealPathRef.id,
         phase8.refs.dataStewardshipAgreementRef.id
@@ -139,6 +152,14 @@ describe("Phase 8 Riverbend trust and governance hardening", () => {
     );
     expect(packet?.redactionSummary.continuityEventIds).toEqual(
       expect.arrayContaining(phase8.phase8EventIds.filter((eventId) => eventId.includes("redaction.applied")))
+    );
+    expect(packet?.timeline.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "governance.appeal.opened",
+        "governance.appeal.reviewed",
+        "governance.appeal.remedy_recorded",
+        "governance.appeal.closed"
+      ])
     );
   });
 });

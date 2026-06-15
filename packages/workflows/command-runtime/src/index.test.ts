@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ObjectRef } from "@canopy/contracts-kernel";
 import type {
+  Appeal,
   Amendment,
   Decision,
   Objection,
@@ -28,9 +29,13 @@ import type {
   RecordThresholdBreachCommand
 } from "@canopy/capabilities-ecological-modeling";
 import type {
+  CloseAppealCommand,
   CompleteGuardianReviewCommand,
+  OpenAppealCommand,
   RaiseObjectionCommand,
+  RecordAppealRemedyCommand,
   RequestGuardianReviewCommand,
+  ReviewAppealCommand,
   SubmitAmendmentCommand,
   VersionPolicyCommand
 } from "@canopy/capabilities-governance";
@@ -67,18 +72,22 @@ import {
   executeCreateResourceCommand,
   executeCreateTaskCommand,
   executeCreateThresholdCommand,
+  executeCloseAppealCommand,
   executeApplyRedactionCommand,
   executeGrantUseRightCommand,
   executeLinkEvidenceToClaimCommand,
+  executeOpenAppealCommand,
   executeOpenProposalCommand,
   executePostLedgerEntryCommand,
   executeRaiseObjectionCommand,
+  executeRecordAppealRemedyCommand,
   executeRecordDecisionCommand,
   executeRecordFoodFlowCommand,
   executeRecordLearningOutcomeCommand,
   executeRecordThresholdBreachCommand,
   executeRequestRedactionCommand,
   executeRequestGuardianReviewCommand,
+  executeReviewAppealCommand,
   executeReverseLedgerEntryCommand,
   executeRevokeUseRightCommand,
   executeSubmitAmendmentCommand,
@@ -112,6 +121,7 @@ const policyVersionRef = refIn(
   "policy",
   "governance"
 );
+const appealRef = refIn("appeal.water-rotation", "appeal", "governance");
 const roleAuthorityRef = ref("role.watershed-council", "role");
 const resourceRef = ref("resource.north-pasture", "resource");
 const holderRef = ref("person.eli", "person");
@@ -449,6 +459,65 @@ describe("command runtime", () => {
     ]);
   });
 
+  it("persists governance appeal lifecycle commands through outbox and projection rebuilds", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+    const services = servicesForTest();
+
+    const opened = await executeOpenAppealCommand({
+      command: openAppealCommand("event.helper.appeal.opened"),
+      services,
+      runtime
+    });
+    const reviewed = await executeReviewAppealCommand({
+      command: reviewAppealCommand("event.helper.appeal.reviewed"),
+      services,
+      runtime
+    });
+    const remedied = await executeRecordAppealRemedyCommand({
+      command: recordAppealRemedyCommand("event.helper.appeal.remedy-recorded"),
+      services,
+      runtime
+    });
+    const closed = await executeCloseAppealCommand({
+      command: closeAppealCommand("event.helper.appeal.closed"),
+      services,
+      runtime
+    });
+
+    expect([opened.event.type, reviewed.event.type, remedied.event.type, closed.event.type]).toEqual([
+      "governance.appeal.opened",
+      "governance.appeal.reviewed",
+      "governance.appeal.remedy_recorded",
+      "governance.appeal.closed"
+    ]);
+    expect(closed.event.objectRef).toEqual(appealRef);
+    expect(closed.event.payload).toMatchObject({
+      appeal: {
+        status: "upheld",
+        outcome: "Appeal upheld after remedy."
+      }
+    });
+    expect(runtime.getEvent(decisionRef.id)).toBeUndefined();
+    expect(
+      runtime
+        .listOutbox()
+        .filter((record) =>
+          [opened.event.id, reviewed.event.id, remedied.event.id, closed.event.id].includes(
+            record.eventId
+          )
+        )
+    ).toHaveLength(4);
+    expect(closed.projectionRebuild?.persistedStates.map((state) => state.id)).toContain(
+      "projection-state.authority"
+    );
+    expect(services.memory.replay().events.map((event) => event.type)).toEqual([
+      "governance.appeal.opened",
+      "governance.appeal.reviewed",
+      "governance.appeal.remedy_recorded",
+      "governance.appeal.closed"
+    ]);
+  });
+
   it("keeps open proposal as the create proposal runtime alias", () => {
     expect(executeOpenProposalCommand).toBe(executeCreateProposalCommand);
   });
@@ -765,6 +834,30 @@ function makeObjection(): Objection {
   };
 }
 
+function makeAppeal(overrides: Partial<Appeal> = {}): Appeal {
+  return {
+    schemaVersion: "0.0.0",
+    id: appealRef.id,
+    type: "appeal",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    authorityRefs: [roleAuthorityRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    targetRef: decisionRef,
+    openedByRef: actorRef,
+    grounds: ["The water rotation omitted late stewardship evidence."],
+    requestedRemedy: "Reopen review for the contested evidence.",
+    reviewerRefs: [],
+    decisionRefs: [decisionRef],
+    evidenceRefs: [evidenceRef],
+    ...overrides
+  };
+}
+
 function submitAmendmentCommand(eventId: string): SubmitAmendmentCommand {
   return {
     eventId,
@@ -780,6 +873,55 @@ function raiseObjectionCommand(eventId: string): RaiseObjectionCommand {
     occurredAt,
     actorRef,
     objection: makeObjection()
+  };
+}
+
+function openAppealCommand(eventId: string): OpenAppealCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    appeal: makeAppeal()
+  };
+}
+
+function reviewAppealCommand(eventId: string): ReviewAppealCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    appeal: makeAppeal({
+      status: "under_review",
+      reviewerRefs: [roleAuthorityRef],
+      outcome: "Appeal accepted for remedy review."
+    })
+  };
+}
+
+function recordAppealRemedyCommand(eventId: string): RecordAppealRemedyCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    appeal: makeAppeal({
+      status: "remedied",
+      reviewerRefs: [roleAuthorityRef],
+      outcome: "Remedy recorded before closure."
+    })
+  };
+}
+
+function closeAppealCommand(eventId: string): CloseAppealCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    appeal: makeAppeal({
+      status: "upheld",
+      reviewerRefs: [roleAuthorityRef],
+      outcome: "Appeal upheld after remedy.",
+      closedAt: occurredAt
+    })
   };
 }
 

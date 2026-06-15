@@ -51,14 +51,17 @@ import {
   recordThresholdBreach
 } from "@canopy/capabilities-ecological-modeling";
 import {
+  closeAppeal,
   createIssue,
   createProposal,
   completeGuardianReview,
   requestGuardianReview,
   recordDecision,
   recordDecisionPacket,
+  recordAppealRemedy,
   openAppeal,
   raiseObjection,
+  reviewAppeal,
   submitAmendment,
   versionPolicy
 } from "@canopy/capabilities-governance";
@@ -961,6 +964,15 @@ export function executeRiverbendTrustHardeningSlice(): RiverbendTrustHardeningSl
     actorRef: refs.actorRef,
     appeal: makeAdaptiveAppeal(refs)
   });
+  reviewAppeal(services, {
+    eventId: "event.governance.appeal.reviewed.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    appeal: makeAdaptiveAppeal(refs, {
+      status: "under_review",
+      outcome: "Guardian review accepts the appeal for remedy design."
+    })
+  });
   recordConsent(services, {
     eventId: "event.stewardship.consent.recorded.school-kitchen-intake",
     occurredAt,
@@ -1045,6 +1057,25 @@ export function executeRiverbendTrustHardeningSlice(): RiverbendTrustHardeningSl
     commonsId,
     livingSystemId,
     note: "Consent revocation keeps the original event replayable while replacing export detail with a stub."
+  });
+  recordAppealRemedy(services, {
+    eventId: "event.governance.appeal.remedy_recorded.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    appeal: makeAdaptiveAppeal(refs, {
+      status: "remedied",
+      outcome: "Consent revocation remedy recorded with export-safe evidence continuity."
+    })
+  });
+  closeAppeal(services, {
+    eventId: "event.governance.appeal.closed.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    appeal: makeAdaptiveAppeal(refs, {
+      status: "upheld",
+      outcome: "Appeal upheld after remedy preserved the decision and strengthened redaction continuity.",
+      closedAt: occurredAt
+    })
   });
 
   const events = memory.replay().events;
@@ -1697,7 +1728,10 @@ function makeAdaptiveDecisionPacket(refs: RiverbendCyberneticSliceRefs): Decisio
   };
 }
 
-function makeAdaptiveAppeal(refs: RiverbendCyberneticSliceRefs): Appeal {
+function makeAdaptiveAppeal(
+  refs: RiverbendCyberneticSliceRefs,
+  overrides: Partial<Appeal> = {}
+): Appeal {
   return {
     schemaVersion: "0.0.0",
     id: refs.adaptiveAppealRef.id,
@@ -1719,7 +1753,8 @@ function makeAdaptiveAppeal(refs: RiverbendCyberneticSliceRefs): Appeal {
     requestedRemedy: "Keep the original adaptive decision intact, add consent-revocation redaction continuity, and carry the appeal in the packet/export trace.",
     reviewerRefs: [refs.watershedGuardianRef],
     decisionRefs: [refs.adaptiveDecisionRef],
-    evidenceRefs: [refs.evidenceRef, refs.redactionRef]
+    evidenceRefs: [refs.evidenceRef, refs.redactionRef],
+    ...overrides
   };
 }
 

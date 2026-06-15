@@ -555,6 +555,7 @@ function TrustHardeningReview({ model }: { readonly model: CanopyWebModel }) {
     <div className="stack">
       <div className="reviewGrid">
         <KeyValue label="Appeal refs" value={formatRefs(review.appealRefs)} />
+        <KeyValue label="Appeal lifecycle" value={formatAppealLifecycle(review.appealLifecycleRows)} />
         <KeyValue label="Appeal path" value={formatRef(review.appealPathRef)} />
         <KeyValue label="Consent recorded" value={formatRefs(review.consentRecordedRefs)} />
         <KeyValue label="Consent revoked" value={formatRefs(review.consentRevokedRefs)} />
@@ -567,6 +568,18 @@ function TrustHardeningReview({ model }: { readonly model: CanopyWebModel }) {
       </div>
     </div>
   );
+}
+
+function formatAppealLifecycle(
+  rows: readonly {
+    readonly appealRef: { readonly type: string; readonly id: string };
+    readonly eventType: string;
+    readonly state: string;
+  }[]
+): string {
+  return rows
+    .map((row) => `${formatRef(row.appealRef)} ${row.state} via ${row.eventType}`)
+    .join(", ");
 }
 
 function formatRows(rows: readonly { readonly label: string; readonly value: number }[]): string {

@@ -205,12 +205,23 @@ export interface CanopyWebTrustHardeningReview {
   readonly title: string;
   readonly phase8EventIds: readonly string[];
   readonly appealRefs: readonly ObjectRef[];
+  readonly appealLifecycleRows: readonly CanopyWebAppealLifecycleRow[];
   readonly appealPathRef: ObjectRef;
   readonly consentRecordedRefs: readonly ObjectRef[];
   readonly consentRevokedRefs: readonly ObjectRef[];
   readonly redactionReasons: readonly string[];
   readonly redactionSummary: string;
   readonly authorityRefs: readonly ObjectRef[];
+}
+
+export interface CanopyWebAppealLifecycleRow {
+  readonly appealRef: ObjectRef;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly state: string;
+  readonly targetRef: ObjectRef | undefined;
+  readonly reviewerRefs: readonly ObjectRef[];
+  readonly remedy: string | undefined;
 }
 
 export interface CanopyWebReviewRow {
@@ -1060,6 +1071,10 @@ function buildTrustHardeningReview(
     title: "Phase 8 adaptive trust review",
     phase8EventIds: slice.phase8EventIds,
     appealRefs: dedupeRefs(appealEvents.map((event) => event.objectRef)),
+    appealLifecycleRows: phase8Events
+      .filter((event) => event.type.startsWith("governance.appeal."))
+      .map(appealLifecycleRow)
+      .filter((row) => row !== undefined),
     appealPathRef: slice.refs.appealPathRef,
     consentRecordedRefs: dedupeRefs(consentRecordedEvents.map((event) => event.objectRef)),
     consentRevokedRefs: dedupeRefs(consentRevokedEvents.map((event) => event.objectRef)),
@@ -1070,6 +1085,58 @@ function buildTrustHardeningReview(
       ...phase8Events.flatMap((event) => event.authorityRefs)
     ])
   };
+}
+
+function appealLifecycleRow(event: CanopyEvent): CanopyWebAppealLifecycleRow | undefined {
+  const appeal = payloadRecord(event.payload, "appeal");
+  const targetRef = payloadObjectRef(appeal, "targetRef");
+  const reviewerRefs = payloadRefs(appeal, "reviewerRefs");
+
+  if (!event.type.startsWith("governance.appeal.")) {
+    return undefined;
+  }
+
+  return {
+    appealRef: event.objectRef,
+    eventId: event.id,
+    eventType: event.type,
+    state: appealLifecycleState({
+      eventType: event.type,
+      status: payloadString(appeal, "status"),
+      reviewerCount: reviewerRefs.length
+    }),
+    targetRef,
+    reviewerRefs,
+    remedy: payloadString(appeal, "requestedRemedy") ?? payloadString(appeal, "outcome")
+  };
+}
+
+function appealLifecycleState(input: {
+  readonly eventType: string;
+  readonly status: string | undefined;
+  readonly reviewerCount: number;
+}): string {
+  if (input.eventType === "governance.appeal.remedy_recorded" || input.status === "remedied") {
+    return "remedy";
+  }
+
+  if (input.status === "upheld" || input.status === "rejected" || input.status === "withdrawn") {
+    return input.status;
+  }
+
+  if (input.eventType === "governance.appeal.closed" || input.status === "closed") {
+    return "closed";
+  }
+
+  if (
+    input.eventType === "governance.appeal.reviewed" ||
+    input.status === "under_review" ||
+    (input.eventType === "governance.appeal.opened" && input.reviewerCount > 0)
+  ) {
+    return "under review";
+  }
+
+  return "opened";
 }
 
 function reviewRows(values: readonly string[]): readonly CanopyWebReviewRow[] {
@@ -1109,6 +1176,15 @@ function payloadRefs(
   const value = payload?.[key];
 
   return Array.isArray(value) ? value.filter(isObjectRef) : [];
+}
+
+function payloadObjectRef(
+  payload: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): ObjectRef | undefined {
+  const value = payload?.[key];
+
+  return isObjectRef(value) ? value : undefined;
 }
 
 function payloadString(

@@ -15,18 +15,26 @@ import {
   type LinkEvidenceToClaimCommand
 } from "@canopy/capabilities-claims-evidence";
 import {
+  closeAppeal,
   createProposal,
   completeGuardianReview,
+  openAppeal,
   raiseObjection,
+  recordAppealRemedy,
   recordDecision,
   requestGuardianReview,
+  reviewAppeal,
   submitAmendment,
   versionPolicy,
+  type CloseAppealCommand,
   type CompleteGuardianReviewCommand,
   type CreateProposalCommand,
+  type OpenAppealCommand,
   type RaiseObjectionCommand,
+  type RecordAppealRemedyCommand,
   type RecordDecisionCommand,
   type RequestGuardianReviewCommand,
+  type ReviewAppealCommand,
   type SubmitAmendmentCommand,
   type VersionPolicyCommand
 } from "@canopy/capabilities-governance";
@@ -234,6 +242,30 @@ export function completeGuardianReviewCommandHandler(
   services: CanopyCommandServices
 ): CanopyCommandHandler<CompleteGuardianReviewCommand> {
   return (command) => completeGuardianReview(services, command).appendResult.event;
+}
+
+export function openAppealCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<OpenAppealCommand> {
+  return (command) => openAppeal(services, command).appendResult.event;
+}
+
+export function reviewAppealCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<ReviewAppealCommand> {
+  return (command) => reviewAppeal(services, command).appendResult.event;
+}
+
+export function recordAppealRemedyCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RecordAppealRemedyCommand> {
+  return (command) => recordAppealRemedy(services, command).appendResult.event;
+}
+
+export function closeAppealCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CloseAppealCommand> {
+  return (command) => closeAppeal(services, command).appendResult.event;
 }
 
 export function createThresholdCommandHandler(
@@ -465,6 +497,42 @@ export function executeCompleteGuardianReviewCommand(
   return executeCanopyCommand({
     ...input,
     handle: completeGuardianReviewCommandHandler(input.services)
+  });
+}
+
+export function executeOpenAppealCommand(
+  input: ExecuteCanonicalCanopyCommandInput<OpenAppealCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: openAppealCommandHandler(input.services)
+  });
+}
+
+export function executeReviewAppealCommand(
+  input: ExecuteCanonicalCanopyCommandInput<ReviewAppealCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: reviewAppealCommandHandler(input.services)
+  });
+}
+
+export function executeRecordAppealRemedyCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RecordAppealRemedyCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: recordAppealRemedyCommandHandler(input.services)
+  });
+}
+
+export function executeCloseAppealCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CloseAppealCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: closeAppealCommandHandler(input.services)
   });
 }
 
