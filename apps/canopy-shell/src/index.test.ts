@@ -24,6 +24,7 @@ const policyRef = ref("policy.export-foodshed", "policy");
 const resourceRef = ref("resource.cooling-center", "resource");
 const useRightRef = ref("use-right.cooling-center-shelter", "use-right");
 const objectionRef = ref("objection.school-data-stewardship", "objection");
+const appealRef = ref("appeal.school-data-stewardship", "appeal");
 const decisionPacketRef = ref("decision-packet.adaptive-school-need", "decision-packet");
 const evidenceRef = ref("evidence.school-contact", "evidence");
 const agreementRef = ref(
@@ -346,7 +347,7 @@ describe("canopy shell snapshot", () => {
     );
   });
 
-  it("surfaces preserved objections, redaction summary, and adaptive policy versions", () => {
+  it("surfaces preserved objections, appeals, conflicts, redaction summary, and adaptive policy versions", () => {
     const session = buildCanopyShellSession({
       events: adaptiveGovernanceEvents,
       scope: {
@@ -360,6 +361,12 @@ describe("canopy shell snapshot", () => {
 
     expect(session.screen.text).toContain(
       "Unresolved objections: objection:objection.school-data-stewardship"
+    );
+    expect(session.screen.text).toContain(
+      "Appeal refs: appeal:appeal.school-data-stewardship"
+    );
+    expect(session.screen.text).toContain(
+      "Conflict traces: claim:claim.school-need"
     );
     expect(session.screen.text).toContain("Redactions: present");
     expect(session.screen.text).toContain(
@@ -698,6 +705,23 @@ const adaptiveGovernanceEvents = [
     dataState: "institutionally_certified"
   },
   {
+    id: "event.claim.contested.school-need",
+    type: "claim.contested",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: claimRef,
+    relatedRefs: [evidenceRef, objectionRef],
+    authorityRefs: [mandateRef],
+    orgId,
+    sourceCapability: "claims-evidence",
+    payload: {
+      reason: "School contact evidence is disputed until redaction continuity is reviewed."
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "contested"
+  },
+  {
     id: "event.governance.policy.versioned.school-need",
     type: "governance.policy.versioned",
     occurredAt,
@@ -718,6 +742,30 @@ const adaptiveGovernanceEvents = [
     schemaVersion: 1,
     visibility: "commons",
     dataState: "institutionally_certified"
+  },
+  {
+    id: "event.governance.appeal.opened.school-data-stewardship",
+    type: "governance.appeal.opened",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: appealRef,
+    relatedRefs: [decisionRef, objectionRef, evidenceRef],
+    authorityRefs: [mandateRef],
+    orgId,
+    sourceCapability: "governance",
+    payload: {
+      appeal: {
+        id: appealRef.id,
+        targetRef: decisionRef,
+        grounds: ["Data stewardship objection needs redaction continuity review."],
+        status: "open",
+        decisionRefs: [decisionRef],
+        evidenceRefs: [evidenceRef]
+      }
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "contested"
   },
   {
     id: "event.evidence.redacted.school-contact",

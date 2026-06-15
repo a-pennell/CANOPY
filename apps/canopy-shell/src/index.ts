@@ -767,6 +767,8 @@ function renderDecisionPacket(snapshot: CanopyShellSnapshot): readonly string[] 
     `Claims: ${packet.claimRefs.map(formatRef).join(", ") || "none"}`,
     `Evidence: ${packet.evidenceRefs.map(formatRef).join(", ") || "none"}`,
     `Unresolved objections: ${packet.unresolvedObjectionRefs.map(formatRef).join(", ") || "none"}`,
+    `Appeal refs: ${appealRefs(packet.timeline).map(formatRef).join(", ") || "none"}`,
+    `Conflict traces: ${conflictTraceRefs(packet.timeline).map(formatRef).join(", ") || "none"}`,
     `Redactions: ${packet.hasRedactions ? "present" : "clear"}`,
     `Adaptive policy versions: ${policyVersionRefs(packet.timeline).map(formatRef).join(", ") || "none"}`,
     `Care outcomes: ${packet.stewardshipOutcomes.length}`,
@@ -867,6 +869,26 @@ function policyVersionRefs(
   return dedupeRefs(
     timeline
       .filter((entry) => entry.type === "governance.policy.versioned")
+      .map((entry) => entry.objectRef)
+  );
+}
+
+function appealRefs(
+  timeline: readonly CanopyUiTimelineEntry[]
+): readonly ObjectRef[] {
+  return dedupeRefs(
+    timeline
+      .filter((entry) => entry.type === "governance.appeal.opened")
+      .map((entry) => entry.objectRef)
+  );
+}
+
+function conflictTraceRefs(
+  timeline: readonly CanopyUiTimelineEntry[]
+): readonly ObjectRef[] {
+  return dedupeRefs(
+    timeline
+      .filter((entry) => entry.type === "claim.contested")
       .map((entry) => entry.objectRef)
   );
 }

@@ -48,3 +48,12 @@ Harden Canopy's trust layer so contested governance, privacy, provider enforceme
 - A provider-backed replay/export test verifies authority refs, adapter audit rows, and redaction sanitization.
 - The shell shows objection, appeal, redaction, and policy-version traces from the same event stream.
 - `npm run check` remains the baseline verification command.
+
+## Checkpoint 1
+
+Status: in progress, executable first gates added.
+
+- Added a Phase 8 Riverbend trust-hardening overlay that appends appeal, consent grant, consent revocation, redaction request, and consent-revoked redaction continuity events without mutating the Phase 7 stream.
+- Added provider hardening coverage for Postgres event-store replay authority refs, adapter audit/outbox rows, and ActivityPub redaction sanitization.
+- Added shell surfacing for appeal refs and conflict traces alongside preserved objections, redactions, and adaptive policy versions.
+- Remaining Phase 8 work should deepen packet projections, add conflict/appeal lifecycle commands beyond open appeal, add operational readiness checks, and expose these traces in the web shell.

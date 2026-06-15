@@ -1,5 +1,6 @@
 import type {
   Amendment,
+  Appeal,
   Decision,
   DecisionPacket,
   Issue,
@@ -38,7 +39,9 @@ import {
 import {
   applyRedaction,
   approveExport,
+  recordConsent,
   requestRedaction,
+  revokeConsent,
   setVisibilityRule
 } from "@canopy/capabilities-data-stewardship";
 import {
@@ -54,6 +57,7 @@ import {
   requestGuardianReview,
   recordDecision,
   recordDecisionPacket,
+  openAppeal,
   raiseObjection,
   submitAmendment,
   versionPolicy
@@ -156,11 +160,16 @@ export interface RiverbendCyberneticSliceRefs {
   readonly adaptiveDecisionRef: ObjectRef;
   readonly adaptiveDecisionPacketRef: ObjectRef;
   readonly adaptiveGuardianReviewRef: ObjectRef;
+  readonly adaptiveAppealRef: ObjectRef;
+  readonly schoolConsentRef: ObjectRef;
+  readonly schoolConsentRevocationRef: ObjectRef;
   readonly policyRef: ObjectRef;
   readonly policyVersionRef: ObjectRef;
   readonly adaptiveTaskRef: ObjectRef;
   readonly redactionRequestRef: ObjectRef;
   readonly redactionRef: ObjectRef;
+  readonly consentRedactionRequestRef: ObjectRef;
+  readonly consentRedactionRef: ObjectRef;
   readonly exportRef: ObjectRef;
   readonly cashLedgerRef: ObjectRef;
   readonly stewardshipLedgerRef: ObjectRef;
@@ -180,6 +189,10 @@ export interface RiverbendCyberneticSliceResult {
     readonly outcome: ObjectPageProjection;
   };
   readonly federationExport: FederationExportEnvelopeReadModel;
+}
+
+export interface RiverbendTrustHardeningSliceResult extends RiverbendCyberneticSliceResult {
+  readonly phase8EventIds: readonly CanopyId[];
 }
 
 export interface RiverbendPersistedRuntimeScenario {
@@ -935,6 +948,130 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
   };
 }
 
+export function executeRiverbendTrustHardeningSlice(): RiverbendTrustHardeningSliceResult {
+  const phase7 = executeRiverbendCyberneticSlice();
+  const registry = createObjectRegistry();
+  const memory = createInMemoryCivicMemory(phase7.events);
+  const services = { registry, memory };
+  const refs = phase7.refs;
+
+  openAppeal(services, {
+    eventId: "event.governance.appeal.opened.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    appeal: makeAdaptiveAppeal(refs)
+  });
+  recordConsent(services, {
+    eventId: "event.stewardship.consent.recorded.school-kitchen-intake",
+    occurredAt,
+    actorRef: refs.actorRef,
+    consentRef: refs.schoolConsentRef,
+    ruleRef: refs.dataStewardshipAgreementRef,
+    rule: {
+      id: "consent-rule.school-kitchen-intake-export",
+      status: "granted",
+      scope: "object",
+      subjectRef: refs.evidenceRef,
+      consentingRefs: [refs.actorRef],
+      purpose: "Federated proof path with contact details kept local.",
+      allowedUses: ["govern", "federate"],
+      revocable: true,
+      revocationProcessRef: refs.appealPathRef,
+      evidenceRefs: [refs.evidenceRef]
+    },
+    consentingRef: refs.actorRef,
+    subjectRef: refs.evidenceRef,
+    evidenceRefs: [refs.evidenceRef],
+    authorityRefs: [refs.dataStewardshipAgreementRef, refs.adaptiveDecisionRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    note: "Temporary consent permits federation of an export-safe proof path."
+  });
+  revokeConsent(services, {
+    eventId: "event.stewardship.consent.revoked.school-kitchen-intake",
+    occurredAt,
+    actorRef: refs.actorRef,
+    consentRef: refs.schoolConsentRevocationRef,
+    ruleRef: refs.dataStewardshipAgreementRef,
+    consentingRef: refs.actorRef,
+    supersedesConsentRecordId: refs.schoolConsentRef.id,
+    revocationReason: "School kitchen withdraws permission for contact-bearing details after appeal opens.",
+    authorityRefs: [refs.dataStewardshipAgreementRef, refs.adaptiveAppealRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    note: "Consent revocation triggers a second continuity-preserving redaction."
+  });
+  requestRedaction(services, {
+    eventId: "event.stewardship.redaction.requested.consent-revoked-school-kitchen-intake",
+    occurredAt,
+    actorRef: refs.actorRef,
+    requestRef: refs.consentRedactionRequestRef,
+    targetRef: refs.evidenceRef,
+    targetEventId: "event.evidence.created.school-kitchen-intake",
+    reason: "consent_revoked",
+    method: "stub_only",
+    requestedFields: ["payload.schoolContact", "payload.pickupNotes", "payload.deliveryAccessNotes"],
+    preservedFields: ["id", "type", "occurredAt", "objectRef", "relatedRefs", "authorityRefs"],
+    dataStewardshipAgreementRef: refs.dataStewardshipAgreementRef,
+    relatedRefs: [refs.schoolConsentRevocationRef, refs.adaptiveAppealRef, refs.adaptiveDecisionPacketRef],
+    authorityRefs: [refs.adaptiveAppealRef, refs.dataStewardshipAgreementRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    note: "Appeal-triggered consent revocation requests export-safe evidence stubs."
+  });
+  applyRedaction(services, {
+    eventId: "event.system.redaction.applied.consent-revoked-school-kitchen-intake",
+    occurredAt,
+    actorRef: refs.actorRef,
+    redactionRef: refs.consentRedactionRef,
+    originalEventId: "event.evidence.created.school-kitchen-intake",
+    targetRef: refs.evidenceRef,
+    reason: "consent_revoked",
+    method: "stub_only",
+    redactedFields: ["payload.schoolContact", "payload.pickupNotes", "payload.deliveryAccessNotes"],
+    preservedFields: ["id", "type", "occurredAt", "objectRef", "relatedRefs", "authorityRefs"],
+    originalContentHash: "sha256:school-kitchen-intake-full",
+    redactedContentHash: "sha256:school-kitchen-intake-consent-revoked-stub",
+    dataStewardshipAgreementRef: refs.dataStewardshipAgreementRef,
+    authorityRefs: [refs.adaptiveAppealRef, refs.dataStewardshipAgreementRef],
+    orgId,
+    placeId,
+    commonsId,
+    livingSystemId,
+    note: "Consent revocation keeps the original event replayable while replacing export detail with a stub."
+  });
+
+  const events = memory.replay().events;
+  const phase8EventIds = events.slice(phase7.events.length).map((event) => event.id);
+
+  return {
+    refs,
+    steps: reconcileStepsWithEvents(phase7.steps, events),
+    events,
+    phase8EventIds,
+    civicMemory: buildCivicMemoryProjection(events, { scope: { orgRef: orgId } }),
+    objectPages: {
+      threshold: buildObjectPageProjection(refs.thresholdRef, events),
+      decision: buildObjectPageProjection(refs.adaptiveDecisionRef, events),
+      useRight: buildObjectPageProjection(refs.useRightRef, events),
+      outcome: buildObjectPageProjection(refs.outcomeRef, events)
+    },
+    federationExport: buildFederationExportEnvelopeReadModel(events, {
+      exportedAt: occurredAt,
+      exportedByRef: refs.actorRef,
+      scopeRef: refs.commonsRef,
+      format: "json",
+      federationRuleRef: refs.dataStewardshipAgreementRef
+    })
+  };
+}
+
 export function buildRiverbendPersistedRuntimeScenario(): RiverbendPersistedRuntimeScenario {
   const slice = executeRiverbendCyberneticSlice();
   const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
@@ -1089,6 +1226,19 @@ function riverbendRefs(): RiverbendCyberneticSliceRefs {
       "guardian-review.mill-creek-policy-adaptation",
       "guardian-review"
     ),
+    adaptiveAppealRef: ref(
+      "appeal.food-flow-pause-data-stewardship",
+      "appeal",
+      "governance"
+    ),
+    schoolConsentRef: ref(
+      "agreement.consent.school-kitchen-intake-export",
+      "agreement"
+    ),
+    schoolConsentRevocationRef: ref(
+      "agreement.consent-revocation.school-kitchen-intake-export",
+      "agreement"
+    ),
     policyRef: ref("policy.breach-window-food-flow", "policy", "governance"),
     policyVersionRef: ref(
       "policy-version.breach-window-food-flow.v2",
@@ -1098,6 +1248,14 @@ function riverbendRefs(): RiverbendCyberneticSliceRefs {
     adaptiveTaskRef: ref("task.review-breach-window-food-flow-policy", "task"),
     redactionRequestRef: ref("redaction-request.school-kitchen-intake", "evidence"),
     redactionRef: ref("redaction.school-kitchen-intake", "evidence"),
+    consentRedactionRequestRef: ref(
+      "redaction-request.consent-revoked-school-kitchen-intake",
+      "evidence"
+    ),
+    consentRedactionRef: ref(
+      "redaction.consent-revoked-school-kitchen-intake",
+      "evidence"
+    ),
     exportRef: ref("agreement.export.riverbend-phase-7", "agreement"),
     cashLedgerRef: ref("ledger-account.food-commons-reserve", "ledger-account"),
     stewardshipLedgerRef: ref("ledger-account.stewardship-allocation", "ledger-account"),
@@ -1536,6 +1694,32 @@ function makeAdaptiveDecisionPacket(refs: RiverbendCyberneticSliceRefs): Decisio
     contentHash: "sha256:riverbend-adaptive-decision-packet",
     createdAt: occurredAt,
     createdByRef: refs.actorRef
+  };
+}
+
+function makeAdaptiveAppeal(refs: RiverbendCyberneticSliceRefs): Appeal {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveAppealRef.id,
+    type: "appeal",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    authorityRefs: [refs.appealPathRef, refs.dataStewardshipAgreementRef],
+    dataState: "contested",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [refs.dataStewardshipAgreementRef],
+    targetRef: refs.adaptiveDecisionRef,
+    openedByRef: refs.actorRef,
+    grounds: [
+      "The adaptive pause is valid, but the export record must prove consent revocation and preserve the minority report.",
+      "Sensitive school details must remain local after consent is revoked."
+    ],
+    requestedRemedy: "Keep the original adaptive decision intact, add consent-revocation redaction continuity, and carry the appeal in the packet/export trace.",
+    reviewerRefs: [refs.watershedGuardianRef],
+    decisionRefs: [refs.adaptiveDecisionRef],
+    evidenceRefs: [refs.evidenceRef, refs.redactionRef]
   };
 }
 
