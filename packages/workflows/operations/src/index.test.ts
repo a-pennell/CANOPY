@@ -241,6 +241,83 @@ describe("canopy operations workflow", () => {
     ]);
   });
 
+  it("surfaces Phase 8 operational readiness checks", () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => now });
+    const dryRun = dryRunCommonCreditImport([
+      {
+        sourceObject: "transaction",
+        id: "tx-phase-8-readiness",
+        from: "account-a",
+        to: "account-b",
+        amount: 42,
+        posted_at: "2026-06-13T18:00:00.000Z",
+        authorityRef: "agreement.local-ledger",
+        status: "posted"
+      }
+    ]);
+    const review = createImportReviewReport(dryRun, {
+      defaultDecision: "accept",
+      reviewedAt: now
+    });
+    executeReviewedImport({
+      dryRun,
+      review,
+      runtime,
+      recordedAt: now,
+      enqueueProjectionRebuild: false
+    });
+
+    runtime.putProjectionState(staleReplayProjectionState());
+    runtime.putProjectionState(laggingProjectionState());
+    runtime.putProjectionState(currentFederationProjectionState());
+    runtime.putOutbox(pendingFederationOutboxRecord());
+    runtime.putAdapterAudit(failedFederationAuditRecord());
+
+    const report = buildCanopyOperationsReport({
+      runtime,
+      generatedAt: "2026-06-13T19:30:00.000Z",
+      expectedProjectionNames: [
+        "postgres-event-store.event-log",
+        "civic-memory",
+        "federation-export"
+      ]
+    });
+
+    expect(report.readiness).toBe("blocked");
+    expect(report.readinessChecks.replayFreshness).toMatchObject({
+      status: "attention",
+      evidenceIds: ["projection-state.postgres-event-store.event-log"]
+    });
+    expect(report.readinessChecks.projectionLag).toMatchObject({
+      status: "attention",
+      evidenceIds: ["projection-state.civic-memory"]
+    });
+    expect(report.readinessChecks.outboxBacklog).toMatchObject({
+      status: "attention",
+      evidenceIds: ["outbox.federation.pending"]
+    });
+    expect(report.readinessChecks.adapterAuditHealth).toMatchObject({
+      status: "blocked",
+      evidenceIds: ["adapter-audit.federation.failed"]
+    });
+    expect(report.readinessChecks.federationHealth).toMatchObject({
+      status: "blocked",
+      evidenceIds: [
+        "adapter-audit.federation.failed",
+        "outbox.federation.pending"
+      ]
+    });
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        "replay cursor is stale",
+        "projection checkpoints lag event log",
+        "outbox backlog is open",
+        "adapter audit contains failed operations",
+        "federation operations have failures"
+      ])
+    );
+  });
+
   it("turns operations reports into operator remediation commands", () => {
     const runtime = createInMemoryCanonicalPersistence({ now: () => now });
     runtime.putProjectionState(failedProjectionState());
@@ -388,6 +465,60 @@ function failedProjectionState(): ProjectionStateRecord {
   };
 }
 
+function staleReplayProjectionState(): ProjectionStateRecord {
+  return {
+    id: "projection-state.postgres-event-store.event-log",
+    kind: "projection-state",
+    schemaVersion: 1,
+    createdAt: now,
+    projectionName: "postgres-event-store.event-log",
+    projectionVersion: "0.0.0",
+    status: "current",
+    checkpoint: {
+      processedAt: "2026-06-13T18:00:00.000Z",
+      cursor: "0",
+      sequence: 0
+    },
+    processedEventCount: 0,
+    rebuiltAt: "2026-06-13T18:00:00.000Z"
+  };
+}
+
+function laggingProjectionState(): ProjectionStateRecord {
+  return {
+    id: "projection-state.civic-memory",
+    kind: "projection-state",
+    schemaVersion: 1,
+    createdAt: now,
+    projectionName: "civic-memory",
+    projectionVersion: "0.0.0",
+    status: "current",
+    checkpoint: { processedAt: "2026-06-13T18:00:00.000Z", sequence: 0 },
+    processedEventCount: 0,
+    rebuiltAt: "2026-06-13T18:00:00.000Z"
+  };
+}
+
+function currentFederationProjectionState(): ProjectionStateRecord {
+  return {
+    id: "projection-state.federation-export",
+    kind: "projection-state",
+    schemaVersion: 1,
+    createdAt: now,
+    projectionName: "federation-export",
+    projectionVersion: "0.0.0",
+    status: "current",
+    checkpoint: {
+      eventId:
+        "event.import.common-credit.transaction.tx-phase-8-readiness.accounting-ledger-entry-posted",
+      processedAt: now,
+      sequence: 1
+    },
+    processedEventCount: 1,
+    rebuiltAt: now
+  };
+}
+
 function failedImportOutboxRecord(): OutboxRecord {
   return {
     id: "outbox.import.failed",
@@ -435,6 +566,31 @@ function retryableOutboxRecord(): OutboxRecord {
   };
 }
 
+function pendingFederationOutboxRecord(): OutboxRecord {
+  return {
+    id: "outbox.federation.pending",
+    kind: "outbox",
+    schemaVersion: 1,
+    createdAt: now,
+    eventId:
+      "event.import.common-credit.transaction.tx-phase-8-readiness.accounting-ledger-entry-posted",
+    eventType: "accounting.ledger-entry.posted",
+    destination: {
+      kind: "federation-peer",
+      name: "riverbend-peer"
+    },
+    status: "pending",
+    payload: {
+      eventId:
+        "event.import.common-credit.transaction.tx-phase-8-readiness.accounting-ledger-entry-posted"
+    },
+    dedupeKey:
+      "federation:event.import.common-credit.transaction.tx-phase-8-readiness.accounting-ledger-entry-posted:riverbend-peer",
+    attemptCount: 0,
+    maxAttempts: 3
+  };
+}
+
 function failedImportAuditRecord(): AdapterAuditRecord {
   return {
     id: "adapter-audit.import.failed",
@@ -454,5 +610,27 @@ function failedImportAuditRecord(): AdapterAuditRecord {
     warnings: [],
     errors: ["projection builder rejected import payload"],
     metadata: { importPlanId: "common-credit.transaction" }
+  };
+}
+
+function failedFederationAuditRecord(): AdapterAuditRecord {
+  return {
+    id: "adapter-audit.federation.failed",
+    kind: "adapter-audit",
+    schemaVersion: 1,
+    createdAt: now,
+    adapterName: "federation.activitypub",
+    direction: "egress",
+    operation: "federation.export",
+    status: "failed",
+    startedAt: now,
+    completedAt: now,
+    eventIds: [
+      "event.import.common-credit.transaction.tx-phase-8-readiness.accounting-ledger-entry-posted"
+    ],
+    outboxIds: ["outbox.federation.pending"],
+    warnings: [],
+    errors: ["ActivityPub peer rejected redacted export envelope"],
+    metadata: { peer: "riverbend-peer" }
   };
 }

@@ -231,6 +231,16 @@ export interface CanopyUiDecisionPacketOutcomeSummary {
   readonly conditions: readonly string[];
 }
 
+export interface CanopyUiDecisionPacketRedactionSummary {
+  readonly redactedEventIds: readonly CanopyId[];
+  readonly redactionEventIds: readonly CanopyId[];
+  readonly redactedRefs: readonly ObjectRef[];
+  readonly sealedRefs: readonly ObjectRef[];
+  readonly reasons: readonly string[];
+  readonly removedFields: readonly string[];
+  readonly continuityEventIds: readonly CanopyId[];
+}
+
 export interface CanopyUiDecisionPacketViewModel {
   readonly kind: "decision-packet";
   readonly decisionRef: ObjectRef;
@@ -240,13 +250,18 @@ export interface CanopyUiDecisionPacketViewModel {
   readonly rationale?: string;
   readonly conditions: readonly string[];
   readonly authorityRefs: readonly ObjectRef[];
+  readonly amendmentRefs: readonly ObjectRef[];
   readonly claimRefs: readonly ObjectRef[];
   readonly evidenceRefs: readonly ObjectRef[];
   readonly unresolvedObjectionRefs: readonly ObjectRef[];
+  readonly objectionRefs: readonly ObjectRef[];
+  readonly appealRefs: readonly ObjectRef[];
+  readonly policyVersionRefs: readonly ObjectRef[];
   readonly stewardshipOutcomes: readonly CanopyUiDecisionPacketOutcomeSummary[];
   readonly allocationAccountingOutcomeEventIds: readonly CanopyId[];
   readonly timeline: readonly CanopyUiTimelineEntry[];
   readonly hasRedactions: boolean;
+  readonly redactionSummary: CanopyUiDecisionPacketRedactionSummary;
   readonly hasSupersessions: boolean;
   readonly projectionRead: CanopyUiProjectionRead;
 }

@@ -1,3 +1,4 @@
+import React from "react";
 import Link from "next/link";
 import type { CanopyWebModel, CanopyWebWorkspace } from "../lib/canopy-data";
 import { CommandPreview } from "./command-preview";
@@ -201,6 +202,10 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
 
           <Panel title="Data Stewardship" kicker="visibility, retention, redaction">
             <DataStewardshipReview model={model} />
+          </Panel>
+
+          <Panel title="Adaptive Trust Review" kicker="appeal, consent, authority">
+            <TrustHardeningReview model={model} />
           </Panel>
 
           {model.workspaces.map((workspace) => (
@@ -543,8 +548,33 @@ function DataStewardshipReview({ model }: { readonly model: CanopyWebModel }) {
   );
 }
 
+function TrustHardeningReview({ model }: { readonly model: CanopyWebModel }) {
+  const review = model.trustHardeningReview;
+
+  return (
+    <div className="stack">
+      <div className="reviewGrid">
+        <KeyValue label="Appeal refs" value={formatRefs(review.appealRefs)} />
+        <KeyValue label="Appeal path" value={formatRef(review.appealPathRef)} />
+        <KeyValue label="Consent recorded" value={formatRefs(review.consentRecordedRefs)} />
+        <KeyValue label="Consent revoked" value={formatRefs(review.consentRevokedRefs)} />
+      </div>
+      <div className="reviewGrid">
+        <KeyValue label="Redaction reasons" value={review.redactionReasons.join(", ")} />
+        <KeyValue label="Redaction posture" value={review.redactionSummary} />
+        <KeyValue label="Authority refs" value={formatRefs(review.authorityRefs.slice(0, 6))} />
+        <KeyValue label="Phase 8 events" value={String(review.phase8EventIds.length)} />
+      </div>
+    </div>
+  );
+}
+
 function formatRows(rows: readonly { readonly label: string; readonly value: number }[]): string {
   return rows.map((row) => `${row.label}: ${row.value}`).join(", ");
+}
+
+function formatRefs(refs: readonly { readonly type: string; readonly id: string }[]): string {
+  return refs.map(formatRef).join(", ");
 }
 
 function displayText(value: string): string {

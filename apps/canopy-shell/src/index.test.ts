@@ -370,6 +370,12 @@ describe("canopy shell snapshot", () => {
     );
     expect(session.screen.text).toContain("Redactions: present");
     expect(session.screen.text).toContain(
+      "Redaction reasons: vulnerable_group_protection"
+    );
+    expect(session.screen.text).toContain(
+      "Redaction continuity events: event.evidence.redacted.school-contact"
+    );
+    expect(session.screen.text).toContain(
       "Adaptive policy versions: policy:policy.export-foodshed"
     );
     expect(renderCanopyShell(session.snapshot, "/federation")).toContain(
@@ -692,6 +698,7 @@ const adaptiveGovernanceEvents = [
           "Preserve the objection in the packet.",
           "Apply redaction before federation export."
         ],
+        policyVersionRefs: [policyRef],
         redactionSummary: {
           hasRedactions: true,
           redactedRefs: [evidenceRef],

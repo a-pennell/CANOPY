@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildCanopyShellSession } from "@canopy/app-shell";
 import {
   executeRiverbendCyberneticSlice,
   executeRiverbendTrustHardeningSlice
@@ -106,6 +107,38 @@ describe("Phase 8 Riverbend trust and governance hardening", () => {
         "payload.pickupNotes",
         "payload.schoolContact"
       ])
+    );
+  });
+
+  it("projects the Phase 8 trail into the decision packet proof artifact", () => {
+    const phase8 = executeRiverbendTrustHardeningSlice();
+    const session = buildCanopyShellSession({
+      events: phase8.events,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: "org.riverbend-foodshed-commons" }
+      },
+      selectedObjectRef: phase8.refs.adaptiveDecisionRef,
+      activeMode: "decisions",
+      route: "/decisions"
+    });
+    const packet = session.snapshot.surfaces.decisionPacket;
+
+    expect(packet?.appealRefs).toEqual([phase8.refs.adaptiveAppealRef]);
+    expect(packet?.objectionRefs).toEqual([phase8.refs.adaptiveObjectionRef]);
+    expect(packet?.policyVersionRefs).toEqual([phase8.refs.policyVersionRef]);
+    expect(packet?.redactionSummary.reasons).toEqual(
+      expect.arrayContaining(["consent_revoked", "vulnerable_group_protection"])
+    );
+    expect(packet?.redactionSummary.removedFields).toEqual(
+      expect.arrayContaining<string>([
+        "payload.deliveryAccessNotes",
+        "payload.pickupNotes",
+        "payload.schoolContact"
+      ])
+    );
+    expect(packet?.redactionSummary.continuityEventIds).toEqual(
+      expect.arrayContaining(phase8.phase8EventIds.filter((eventId) => eventId.includes("redaction.applied")))
     );
   });
 });

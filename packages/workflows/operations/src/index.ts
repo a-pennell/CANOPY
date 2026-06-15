@@ -109,6 +109,25 @@ export interface CanopyOperationsHealthSummary {
   readonly alertCount: number;
 }
 
+export type CanopyOperationalReadinessCheckStatus =
+  | CanopyOperationsReadiness
+  | "not-observed";
+
+export interface CanopyOperationalReadinessCheck {
+  readonly id: string;
+  readonly status: CanopyOperationalReadinessCheckStatus;
+  readonly message: string;
+  readonly evidenceIds: readonly CanopyId[];
+}
+
+export interface CanopyOperationalReadinessChecks {
+  readonly replayFreshness: CanopyOperationalReadinessCheck;
+  readonly projectionLag: CanopyOperationalReadinessCheck;
+  readonly outboxBacklog: CanopyOperationalReadinessCheck;
+  readonly adapterAuditHealth: CanopyOperationalReadinessCheck;
+  readonly federationHealth: CanopyOperationalReadinessCheck;
+}
+
 export interface CanopyAdapterAuditReviewSummary {
   readonly total: number;
   readonly byStatus: Readonly<Record<AdapterAuditStatus, number>>;
@@ -161,6 +180,7 @@ export interface CanopyOperationsReport {
   readonly outbox: CanopyOutboxOperationsSummary;
   readonly projections: CanopyProjectionOperationsSummary;
   readonly adapterAuditReview: CanopyAdapterAuditReviewSummary;
+  readonly readinessChecks: CanopyOperationalReadinessChecks;
   readonly adapterAudits: readonly AdapterAuditRecord[];
   readonly failedImportRemediation: CanopyFailedImportRemediationSummary;
   readonly invariantDriftAlerts: readonly CanopyInvariantDriftAlert[];
@@ -355,8 +375,17 @@ export function buildCanopyOperationsReport(
     adapterAudits,
     outboxRecords
   );
+  const counts = input.runtime.counts();
+  const readinessChecks = summarizeReadinessChecks({
+    counts,
+    outbox: outboxSummary,
+    outboxRecords,
+    projections,
+    adapterAuditReview,
+    adapterAudits
+  });
   const invariantDriftAlerts = collectInvariantDriftAlerts({
-    counts: input.runtime.counts(),
+    counts,
     outbox: outboxSummary,
     projections,
     adapterAuditReview,
@@ -367,13 +396,13 @@ export function buildCanopyOperationsReport(
     outbox: outboxSummary,
     projections,
     adapterAuditReview,
+    readinessChecks,
     failedImportRemediation,
     invariantDriftAlerts,
     adapterAudits,
     ...optionalReportShell(shell)
   });
   const readiness = readinessForFindings(findings);
-  const counts = input.runtime.counts();
 
   return optionalOperationsReport({
     generatedAt: input.generatedAt,
@@ -383,6 +412,7 @@ export function buildCanopyOperationsReport(
     outbox: outboxSummary,
     projections,
     adapterAuditReview,
+    readinessChecks,
     adapterAudits,
     failedImportRemediation,
     invariantDriftAlerts,
@@ -1275,6 +1305,175 @@ function summarizeHealth(
   };
 }
 
+function summarizeReadinessChecks(input: {
+  readonly counts: CanonicalRecordCounts;
+  readonly outbox: CanopyOutboxOperationsSummary;
+  readonly outboxRecords: readonly OutboxRecord[];
+  readonly projections: CanopyProjectionOperationsSummary;
+  readonly adapterAuditReview: CanopyAdapterAuditReviewSummary;
+  readonly adapterAudits: readonly AdapterAuditRecord[];
+}): CanopyOperationalReadinessChecks {
+  return {
+    replayFreshness: summarizeReplayFreshness(input),
+    projectionLag: summarizeProjectionLag(input),
+    outboxBacklog: summarizeOutboxBacklog(input),
+    adapterAuditHealth: summarizeAdapterAuditHealth(input.adapterAuditReview),
+    federationHealth: summarizeFederationHealth(input)
+  };
+}
+
+function summarizeReplayFreshness(input: {
+  readonly counts: CanonicalRecordCounts;
+  readonly projections: CanopyProjectionOperationsSummary;
+}): CanopyOperationalReadinessCheck {
+  const replayStates = input.projections.states.filter(isReplayProjectionState);
+  if (replayStates.length === 0) {
+    return readinessCheck({
+      id: "readiness.replay-freshness",
+      status: "not-observed",
+      message: "No replay cursor state is available in the current data model.",
+      evidenceIds: []
+    });
+  }
+
+  const staleReplayStateIds = replayStates
+    .filter((state) => state.processedEventCount < input.counts.events)
+    .map((state) => state.id);
+
+  return readinessCheck({
+    id: "readiness.replay-freshness",
+    status: staleReplayStateIds.length > 0 ? "attention" : "ready",
+    message:
+      staleReplayStateIds.length > 0
+        ? "Replay cursor state lags the canonical event log."
+        : "Replay cursor state covers the canonical event log.",
+    evidenceIds: staleReplayStateIds
+  });
+}
+
+function summarizeProjectionLag(input: {
+  readonly counts: CanonicalRecordCounts;
+  readonly projections: CanopyProjectionOperationsSummary;
+}): CanopyOperationalReadinessCheck {
+  const laggingStateIds = projectionStateIdsBehindEventLog(
+    input.projections,
+    input.counts.events
+  );
+
+  return readinessCheck({
+    id: "readiness.projection-lag",
+    status: laggingStateIds.length > 0 ? "attention" : "ready",
+    message:
+      laggingStateIds.length > 0
+        ? "Projection checkpoints lag the canonical event log."
+        : "Projection checkpoints cover the canonical event log.",
+    evidenceIds: laggingStateIds
+  });
+}
+
+function summarizeOutboxBacklog(input: {
+  readonly outbox: CanopyOutboxOperationsSummary;
+  readonly outboxRecords: readonly OutboxRecord[];
+}): CanopyOperationalReadinessCheck {
+  const backlogRecordIds = input.outboxRecords
+    .filter((record) => !isTerminalOutboxStatus(record.status))
+    .map((record) => record.id);
+  const status =
+    input.outbox.drainStatus === "blocked"
+      ? "blocked"
+      : backlogRecordIds.length > 0
+        ? "attention"
+        : "ready";
+
+  return readinessCheck({
+    id: "readiness.outbox-backlog",
+    status,
+    message:
+      backlogRecordIds.length > 0
+        ? "Outbox contains work that has not reached a terminal state."
+        : "Outbox has no open backlog.",
+    evidenceIds: backlogRecordIds
+  });
+}
+
+function summarizeAdapterAuditHealth(
+  review: CanopyAdapterAuditReviewSummary
+): CanopyOperationalReadinessCheck {
+  const evidenceIds = dedupeStrings([
+    ...review.failedAuditIds,
+    ...review.partialAuditIds,
+    ...review.warningAuditIds,
+    ...review.unresolvedAuditIds
+  ]);
+  const status =
+    review.failedAuditIds.length > 0
+      ? "blocked"
+      : evidenceIds.length > 0
+        ? "attention"
+        : "ready";
+
+  return readinessCheck({
+    id: "readiness.adapter-audit-health",
+    status,
+    message:
+      evidenceIds.length > 0
+        ? "Adapter audit records require operator review."
+        : "Adapter audit records are resolved.",
+    evidenceIds
+  });
+}
+
+function summarizeFederationHealth(input: {
+  readonly outboxRecords: readonly OutboxRecord[];
+  readonly adapterAudits: readonly AdapterAuditRecord[];
+}): CanopyOperationalReadinessCheck {
+  const failedAuditIds = input.adapterAudits
+    .filter((audit) => isFederationAudit(audit) && isRemediableAudit(audit))
+    .map((audit) => audit.id);
+  const blockedOutboxIds = input.outboxRecords
+    .filter(isFederationOutbox)
+    .filter(
+      (record) =>
+        record.status === "failed" ||
+        record.status === "dead-lettered" ||
+        isExhaustedFailure(record)
+    )
+    .map((record) => record.id);
+  const pendingOutboxIds = input.outboxRecords
+    .filter(isFederationOutbox)
+    .filter((record) => !isTerminalOutboxStatus(record.status))
+    .map((record) => record.id);
+  const evidenceIds = dedupeStrings([
+    ...failedAuditIds,
+    ...blockedOutboxIds,
+    ...pendingOutboxIds
+  ]);
+  const status =
+    failedAuditIds.length > 0 || blockedOutboxIds.length > 0
+      ? "blocked"
+      : pendingOutboxIds.length > 0
+        ? "attention"
+        : "ready";
+
+  return readinessCheck({
+    id: "readiness.federation-health",
+    status,
+    message:
+      status === "blocked"
+        ? "Federation operations have failed or terminal dispatch records."
+        : pendingOutboxIds.length > 0
+          ? "Federation dispatch has pending work."
+          : "Federation operations have no observed failures.",
+    evidenceIds
+  });
+}
+
+function readinessCheck(
+  check: CanopyOperationalReadinessCheck
+): CanopyOperationalReadinessCheck {
+  return check;
+}
+
 function collectInvariantDriftAlerts(input: {
   readonly counts: CanonicalRecordCounts;
   readonly outbox: CanopyOutboxOperationsSummary;
@@ -1371,6 +1570,7 @@ function collectFindings(input: {
   readonly projections: CanopyProjectionOperationsSummary;
   readonly shell?: CanopyShellOperationsSummary;
   readonly adapterAuditReview: CanopyAdapterAuditReviewSummary;
+  readonly readinessChecks: CanopyOperationalReadinessChecks;
   readonly failedImportRemediation: CanopyFailedImportRemediationSummary;
   readonly invariantDriftAlerts: readonly CanopyInvariantDriftAlert[];
   readonly adapterAudits: readonly AdapterAuditRecord[];
@@ -1389,6 +1589,10 @@ function collectFindings(input: {
     findings.push("outbox has dead-lettered records");
   }
 
+  if (input.readinessChecks.outboxBacklog.status !== "ready") {
+    findings.push("outbox backlog is open");
+  }
+
   if (input.projections.failedStateIds.length > 0) {
     findings.push("projection rebuild has failed states");
   }
@@ -1401,6 +1605,14 @@ function collectFindings(input: {
     findings.push("expected projections have not been built");
   }
 
+  if (input.readinessChecks.replayFreshness.status === "attention") {
+    findings.push("replay cursor is stale");
+  }
+
+  if (input.readinessChecks.projectionLag.status === "attention") {
+    findings.push("projection checkpoints lag event log");
+  }
+
   if (input.shell !== undefined && input.shell.sourceEventIds.length === 0) {
     findings.push("shell has no source events");
   }
@@ -1411,6 +1623,12 @@ function collectFindings(input: {
 
   if (input.adapterAuditReview.partialAuditIds.length > 0) {
     findings.push("adapter audit contains partial operations");
+  }
+
+  if (input.readinessChecks.federationHealth.status === "blocked") {
+    findings.push("federation operations have failures");
+  } else if (input.readinessChecks.federationHealth.status === "attention") {
+    findings.push("federation operations need review");
   }
 
   if (input.failedImportRemediation.total > 0) {
@@ -1430,6 +1648,7 @@ function readinessForFindings(
   if (
     findings.includes("outbox has dead-lettered records") ||
     findings.includes("outbox has exhausted failures") ||
+    findings.includes("federation operations have failures") ||
     findings.includes("projection rebuild has failed states") ||
     findings.includes("adapter audit contains failed operations") ||
     findings.includes("failed import remediation is open")
@@ -1479,6 +1698,14 @@ function isExpiredLease(
   return Date.parse(record.leasedAt) + leaseTimeoutMs <= Date.parse(now);
 }
 
+function isTerminalOutboxStatus(status: OutboxStatus): boolean {
+  return (
+    status === "acknowledged" ||
+    status === "cancelled" ||
+    status === "dead-lettered"
+  );
+}
+
 function drainStatus(input: {
   readonly total: number;
   readonly readyToLease: number;
@@ -1516,6 +1743,27 @@ function projectionNamesByStatus(
   return states
     .filter((state) => state.status === status)
     .map((state) => state.projectionName);
+}
+
+function projectionStateIdsBehindEventLog(
+  projections: CanopyProjectionOperationsSummary,
+  eventCount: number
+): readonly CanopyId[] {
+  return projections.states
+    .filter(
+      (state) =>
+        state.status === "current" &&
+        !isReplayProjectionState(state) &&
+        state.processedEventCount < eventCount
+    )
+    .map((state) => state.id);
+}
+
+function isReplayProjectionState(state: ProjectionStateRecord): boolean {
+  return (
+    state.projectionName.includes("event-log") ||
+    state.projectionName.includes("replay")
+  );
 }
 
 function projectionRebuildStatus(input: {
@@ -1657,6 +1905,22 @@ function isImportOutbox(record: OutboxRecord): boolean {
   );
 }
 
+function isFederationAudit(audit: AdapterAuditRecord): boolean {
+  return (
+    audit.adapterName.includes("federation") ||
+    audit.operation.includes("federation")
+  );
+}
+
+function isFederationOutbox(record: OutboxRecord): boolean {
+  return (
+    record.destination.kind === "federation-peer" ||
+    record.destination.name.includes("federation") ||
+    record.eventType.startsWith("federation.") ||
+    record.dedupeKey?.startsWith("federation:") === true
+  );
+}
+
 function isRemediableOutbox(record: OutboxRecord): boolean {
   return record.status === "failed" || record.status === "dead-lettered";
 }
@@ -1687,6 +1951,7 @@ function optionalOperationsReport(
     readonly outbox: CanopyOutboxOperationsSummary;
     readonly projections: CanopyProjectionOperationsSummary;
     readonly adapterAuditReview: CanopyAdapterAuditReviewSummary;
+    readonly readinessChecks: CanopyOperationalReadinessChecks;
     readonly adapterAudits: readonly AdapterAuditRecord[];
     readonly failedImportRemediation: CanopyFailedImportRemediationSummary;
     readonly invariantDriftAlerts: readonly CanopyInvariantDriftAlert[];
@@ -1703,6 +1968,7 @@ function optionalOperationsReport(
       outbox: report.outbox,
       projections: report.projections,
       adapterAuditReview: report.adapterAuditReview,
+      readinessChecks: report.readinessChecks,
       adapterAudits: report.adapterAudits,
       failedImportRemediation: report.failedImportRemediation,
       invariantDriftAlerts: report.invariantDriftAlerts,
@@ -1718,6 +1984,7 @@ function optionalOperationsReport(
     outbox: report.outbox,
     projections: report.projections,
     adapterAuditReview: report.adapterAuditReview,
+    readinessChecks: report.readinessChecks,
     adapterAudits: report.adapterAudits,
     failedImportRemediation: report.failedImportRemediation,
     invariantDriftAlerts: report.invariantDriftAlerts,

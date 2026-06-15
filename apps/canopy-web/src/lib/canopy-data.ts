@@ -22,7 +22,11 @@ import {
 import {
   type CanonicalPersistenceRuntime
 } from "@canopy/database-runtime";
-import { buildRiverbendPersistedRuntimeScenario } from "@canopy/evaluation-vertical-slice";
+import {
+  buildRiverbendPersistedRuntimeScenario,
+  executeRiverbendTrustHardeningSlice,
+  type RiverbendTrustHardeningSliceResult
+} from "@canopy/evaluation-vertical-slice";
 import {
   executeSampleExportBundleImports,
   type SampleExportBundleImportExecutionResult
@@ -63,6 +67,7 @@ export interface CanopyWebModel {
   readonly dataStewardshipReview: CanopyWebDataStewardshipReview;
   readonly federationReview: CanopyWebFederationReview | undefined;
   readonly adaptiveBranchReview: CanopyWebAdaptiveBranchReview;
+  readonly trustHardeningReview: CanopyWebTrustHardeningReview;
 }
 
 export interface CanopyWebWorkspace {
@@ -196,6 +201,18 @@ export interface CanopyWebAdaptiveBranchReview {
   readonly adaptivePolicyVersionRef: ObjectRef;
 }
 
+export interface CanopyWebTrustHardeningReview {
+  readonly title: string;
+  readonly phase8EventIds: readonly string[];
+  readonly appealRefs: readonly ObjectRef[];
+  readonly appealPathRef: ObjectRef;
+  readonly consentRecordedRefs: readonly ObjectRef[];
+  readonly consentRevokedRefs: readonly ObjectRef[];
+  readonly redactionReasons: readonly string[];
+  readonly redactionSummary: string;
+  readonly authorityRefs: readonly ObjectRef[];
+}
+
 export interface CanopyWebReviewRow {
   readonly label: string;
   readonly value: number;
@@ -213,8 +230,12 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   const scopePreset = options.scopePreset ?? "riverbend";
   const phase7Scenario = buildRiverbendPersistedRuntimeScenario();
   const phase7Slice = phase7Scenario.slice;
+  const phase8Slice = executeRiverbendTrustHardeningSlice();
   const runtime = phase7Scenario.runtime;
   const materializedProjectionStore = phase7Scenario.materializedProjectionStore;
+  for (const event of phase8Slice.events.filter((event) => phase8Slice.phase8EventIds.includes(event.id))) {
+    runtime.appendEvent(event, { recordedAt: generatedAt });
+  }
   const imports = executeSampleExportBundleImports({
     bundles: foldedSourceSampleExportBundles,
     runtime,
@@ -427,6 +448,7 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     events: phase7Slice.events,
     refs: phase7Slice.refs
   });
+  const trustHardeningReview = buildTrustHardeningReview(phase8Slice);
 
   return {
     generatedAt,
@@ -453,7 +475,8 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     permissionExplanation,
     dataStewardshipReview,
     federationReview,
-    adaptiveBranchReview
+    adaptiveBranchReview,
+    trustHardeningReview
   };
 }
 
@@ -1020,6 +1043,35 @@ function buildAdaptiveBranchReview(input: {
   };
 }
 
+function buildTrustHardeningReview(
+  slice: RiverbendTrustHardeningSliceResult
+): CanopyWebTrustHardeningReview {
+  const phase8Events = slice.events.filter((event) => slice.phase8EventIds.includes(event.id));
+  const appealEvents = phase8Events.filter((event) => event.type === "governance.appeal.opened");
+  const consentRecordedEvents = phase8Events.filter(
+    (event) => event.type === "stewardship.consent.recorded"
+  );
+  const consentRevokedEvents = phase8Events.filter(
+    (event) => event.type === "stewardship.consent.revoked"
+  );
+  const redactionReasons = slice.federationExport.preview.redactionSummary.reasons;
+
+  return {
+    title: "Phase 8 adaptive trust review",
+    phase8EventIds: slice.phase8EventIds,
+    appealRefs: dedupeRefs(appealEvents.map((event) => event.objectRef)),
+    appealPathRef: slice.refs.appealPathRef,
+    consentRecordedRefs: dedupeRefs(consentRecordedEvents.map((event) => event.objectRef)),
+    consentRevokedRefs: dedupeRefs(consentRevokedEvents.map((event) => event.objectRef)),
+    redactionReasons,
+    redactionSummary: `${slice.federationExport.preview.redactionSummary.redactionCount} redactions; reasons ${redactionReasons.join(", ")}`,
+    authorityRefs: dedupeRefs([
+      ...slice.federationExport.preview.authorityRefs,
+      ...phase8Events.flatMap((event) => event.authorityRefs)
+    ])
+  };
+}
+
 function reviewRows(values: readonly string[]): readonly CanopyWebReviewRow[] {
   return Object.entries(
     values.reduce<Record<string, number>>((counts, value) => {
@@ -1093,6 +1145,22 @@ function pathwayStep(
 
 function refKey(ref: ObjectRef): string {
   return `${ref.namespace}:${ref.type}:${ref.id}`;
+}
+
+function dedupeRefs(refs: readonly ObjectRef[]): readonly ObjectRef[] {
+  const seen = new Set<string>();
+  const deduped: ObjectRef[] = [];
+
+  for (const ref of refs) {
+    const key = refKey(ref);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(ref);
+    }
+  }
+
+  return deduped;
 }
 
 function displayRef(ref: ObjectRef): string {

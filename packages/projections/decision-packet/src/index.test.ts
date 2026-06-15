@@ -281,7 +281,10 @@ describe("buildDecisionPacketProjection", () => {
       redactedEventIds: ["packet-event"],
       redactionEventIds: [],
       redactedRefs: [sealedRef],
-      sealedRefs: [sealedRef]
+      sealedRefs: [sealedRef],
+      reasons: ["privacy"],
+      removedFields: ["rationale"],
+      continuityEventIds: []
     });
     expect(projection.supersession).toEqual({
       hasSupersessions: true,
@@ -292,5 +295,153 @@ describe("buildDecisionPacketProjection", () => {
     });
     expect(projection.eventTrail[0]?.roles).toContain("redaction");
     expect(projection.eventTrail[0]?.roles).toContain("supersession");
+  });
+
+  it("deepens contested governance packet traces for Phase 8", () => {
+    const decisionRef = ref("decision", "decision-1");
+    const proposalRef = ref("proposal", "proposal-1");
+    const amendmentRef = ref("amendment", "amendment-1");
+    const objectionRef = ref("objection", "objection-1");
+    const appealRef = ref("appeal", "appeal-1");
+    const policyRef = ref("policy", "policy-1");
+    const policyVersionRef = ref("policy", "policy-version-1");
+    const evidenceRef = ref("evidence", "evidence-1", "evidence");
+    const redactionRef = ref("evidence", "redaction-1", "evidence");
+    const packetRef = ref("decision-packet", "packet-1");
+
+    const projection = buildDecisionPacketProjection(decisionRef, [
+      event({
+        id: "decision-event",
+        type: "governance.decision.recorded",
+        objectRef: decisionRef,
+        relatedRefs: [proposalRef, evidenceRef],
+        payload: {
+          decision: {
+            id: decisionRef.id,
+            type: "decision",
+            proposalRefs: [proposalRef],
+            evidenceRefs: [evidenceRef],
+            policyRefs: [policyRef],
+            outcome: "passed"
+          }
+        }
+      }),
+      event({
+        id: "amendment-event",
+        type: "governance.amendment.submitted",
+        objectRef: amendmentRef,
+        relatedRefs: [proposalRef, decisionRef],
+        payload: {
+          amendment: {
+            id: amendmentRef.id,
+            type: "amendment",
+            title: "Add appeal review condition",
+            status: "open"
+          }
+        }
+      }),
+      event({
+        id: "objection-event",
+        type: "governance.objection.raised",
+        objectRef: objectionRef,
+        relatedRefs: [proposalRef, decisionRef, evidenceRef],
+        payload: {
+          objection: {
+            id: objectionRef.id,
+            type: "objection",
+            summary: "Minority report is preserved.",
+            status: "open"
+          }
+        }
+      }),
+      event({
+        id: "appeal-event",
+        type: "governance.appeal.opened",
+        objectRef: appealRef,
+        relatedRefs: [decisionRef, objectionRef, evidenceRef],
+        payload: {
+          appeal: {
+            id: appealRef.id,
+            type: "appeal",
+            status: "open",
+            summary: "Review redaction continuity before export."
+          }
+        }
+      }),
+      event({
+        id: "policy-version-event",
+        type: "governance.policy.versioned",
+        objectRef: policyRef,
+        relatedRefs: [decisionRef],
+        payload: {
+          policyVersion: {
+            id: policyVersionRef.id,
+            type: "policy-version",
+            title: "Policy v2",
+            summaryOfChanges: "Adds contested export review.",
+            status: "active"
+          }
+        }
+      }),
+      event({
+        id: "redaction-event",
+        type: "system.redaction.applied",
+        objectRef: redactionRef,
+        relatedRefs: [decisionRef, evidenceRef],
+        sourceCapability: "data-stewardship",
+        payload: {
+          removedPayloadKeys: ["payload.schoolContact"],
+          method: "field_removed"
+        },
+        redaction: {
+          isRedactedStub: false,
+          originalEventId: "evidence-event",
+          redactionEventId: "redaction-event",
+          redactedAt: "2026-01-07T00:00:00.000Z",
+          reason: "consent_revoked",
+          preservedFields: ["id", "type"],
+          removedPayloadKeys: ["payload.schoolContact"]
+        }
+      }),
+      event({
+        id: "packet-event",
+        type: "governance.decision_packet.recorded",
+        objectRef: packetRef,
+        relatedRefs: [decisionRef, amendmentRef, objectionRef, appealRef, policyVersionRef, redactionRef],
+        payload: {
+          decisionPacket: {
+            id: packetRef.id,
+            type: "decision-packet",
+            decisionRef,
+            proposalRefs: [proposalRef],
+            amendmentRefs: [amendmentRef],
+            evidenceRefs: [evidenceRef],
+            unresolvedObjectionRefs: [objectionRef],
+            policyVersionRefs: [policyVersionRef],
+            redactionSummary: {
+              hasRedactions: true,
+              redactedRefs: [evidenceRef],
+              sealedRefs: []
+            }
+          }
+        }
+      })
+    ]);
+
+    expect(projection.amendmentRefs).toEqual([amendmentRef]);
+    expect(projection.objectionRefs).toEqual([objectionRef]);
+    expect(projection.appealRefs).toEqual([appealRef]);
+    expect(projection.policyVersionRefs).toEqual([policyVersionRef]);
+    expect(projection.amendments).toMatchObject([{ ref: amendmentRef, title: "Add appeal review condition" }]);
+    expect(projection.objections).toMatchObject([{ ref: objectionRef, summary: "Minority report is preserved." }]);
+    expect(projection.appeals).toMatchObject([{ ref: appealRef, summary: "Review redaction continuity before export." }]);
+    expect(projection.policyVersions).toMatchObject([{ ref: policyVersionRef, title: "Policy v2" }]);
+    expect(projection.redaction).toMatchObject({
+      reasons: ["consent_revoked"],
+      removedFields: ["payload.schoolContact"],
+      continuityEventIds: ["redaction-event"]
+    });
+    expect(projection.eventTrail.find((entry) => entry.id === "appeal-event")?.roles).toContain("appeal");
+    expect(projection.eventTrail.find((entry) => entry.id === "policy-version-event")?.roles).toContain("policy-version");
   });
 });

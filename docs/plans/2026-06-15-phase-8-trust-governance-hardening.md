@@ -56,4 +56,5 @@ Status: in progress, executable first gates added.
 - Added a Phase 8 Riverbend trust-hardening overlay that appends appeal, consent grant, consent revocation, redaction request, and consent-revoked redaction continuity events without mutating the Phase 7 stream.
 - Added provider hardening coverage for Postgres event-store replay authority refs, adapter audit/outbox rows, and ActivityPub redaction sanitization.
 - Added shell surfacing for appeal refs and conflict traces alongside preserved objections, redactions, and adaptive policy versions.
-- Remaining Phase 8 work should deepen packet projections, add conflict/appeal lifecycle commands beyond open appeal, add operational readiness checks, and expose these traces in the web shell.
+- Added operations report readiness checks for replay freshness, projection lag, outbox backlog, adapter audit health, and federation health where the current runtime model exposes those signals.
+- Remaining Phase 8 work should deepen packet projections, add conflict/appeal lifecycle commands beyond open appeal, define validation report completion gates, and expose these traces in the web shell.

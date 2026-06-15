@@ -17,12 +17,15 @@ export type DecisionPacketEventRole =
   | "decision-packet"
   | "issue"
   | "proposal"
+  | "amendment"
   | "claim"
   | "evidence"
   | "authority"
   | "stewardship-outcome"
   | "allocation-accounting-outcome"
   | "objection"
+  | "appeal"
+  | "policy-version"
   | "redaction"
   | "supersession"
   | "related";
@@ -112,6 +115,9 @@ export interface DecisionPacketRedactionIndicators {
   readonly redactionEventIds: readonly CanopyId[];
   readonly redactedRefs: readonly ObjectRef[];
   readonly sealedRefs: readonly ObjectRef[];
+  readonly reasons: readonly string[];
+  readonly removedFields: readonly string[];
+  readonly continuityEventIds: readonly CanopyId[];
 }
 
 export interface DecisionPacketSupersessionIndicators {
@@ -132,13 +138,21 @@ export interface DecisionPacketProjection {
   readonly authorityRefs: readonly ObjectRef[];
   readonly issueRefs: readonly ObjectRef[];
   readonly proposalRefs: readonly ObjectRef[];
+  readonly amendmentRefs: readonly ObjectRef[];
   readonly claimRefs: readonly ObjectRef[];
   readonly evidenceRefs: readonly ObjectRef[];
   readonly unresolvedObjectionRefs: readonly ObjectRef[];
+  readonly objectionRefs: readonly ObjectRef[];
+  readonly appealRefs: readonly ObjectRef[];
+  readonly policyVersionRefs: readonly ObjectRef[];
   readonly issues: readonly DecisionPacketRecordSummary[];
   readonly proposals: readonly DecisionPacketRecordSummary[];
+  readonly amendments: readonly DecisionPacketRecordSummary[];
   readonly claims: readonly DecisionPacketClaimSummary[];
   readonly evidence: readonly DecisionPacketEvidenceSummary[];
+  readonly objections: readonly DecisionPacketRecordSummary[];
+  readonly appeals: readonly DecisionPacketRecordSummary[];
+  readonly policyVersions: readonly DecisionPacketRecordSummary[];
   readonly decision?: DecisionPacketDecisionSummary;
   readonly stewardshipOutcomes: readonly DecisionPacketStewardshipOutcome[];
   readonly allocationAccountingOutcomes: readonly DecisionPacketAllocationAccountingOutcome[];
@@ -168,16 +182,22 @@ export const buildDecisionPacketProjection = (
     packetRef,
     ...recordRefs(packet, "issueRefs"),
     ...recordRefs(packet, "proposalRefs"),
+    ...recordRefs(packet, "amendmentRefs"),
     ...recordRefs(packet, "claimRefs"),
     ...recordRefs(packet, "evidenceRefs"),
     ...recordRefs(packet, "authorityRefs"),
     ...recordRefs(packet, "unresolvedObjectionRefs"),
+    ...recordRefs(packet, "policyRefs"),
+    ...recordRefs(packet, "policyVersionRefs"),
+    recordRef(packet, "appealPathRef"),
     ...recordRefs(decision, "issueRefs"),
     ...recordRefs(decision, "proposalRefs"),
     ...recordRefs(decision, "claimRefs"),
     ...recordRefs(decision, "evidenceRefs"),
     ...recordRefs(decision, "authorityRefs"),
-    ...recordRefs(decision, "unresolvedObjectionRefs")
+    ...recordRefs(decision, "unresolvedObjectionRefs"),
+    ...recordRefs(decision, "policyRefs"),
+    recordRef(decision, "appealPathRef")
   ].filter(isDefined));
 
   const relevantEvents = sortedEvents.filter((event) =>
@@ -193,13 +213,30 @@ export const buildDecisionPacketProjection = (
   const claimRefs = sortedRefs(
     dedupeRefs([...refsByType(expandedRefs, "claim"), ...recordRefs(packet, "claimRefs")])
   );
+  const amendmentRefs = sortedRefs(
+    dedupeRefs([...refsByType(expandedRefs, "amendment"), ...recordRefs(packet, "amendmentRefs")])
+  );
   const evidenceRefs = sortedRefs(
     dedupeRefs([...refsByType(expandedRefs, "evidence"), ...recordRefs(packet, "evidenceRefs")])
+  );
+  const objectionRefs = sortedRefs(
+    dedupeRefs([
+      ...refsByType(expandedRefs, "objection"),
+      ...recordRefs(packet, "unresolvedObjectionRefs"),
+      ...recordRefs(decision, "unresolvedObjectionRefs")
+    ])
   );
   const unresolvedObjectionRefs = sortedRefs(
     dedupeRefs([
       ...recordRefs(packet, "unresolvedObjectionRefs"),
       ...recordRefs(decision, "unresolvedObjectionRefs")
+    ])
+  );
+  const appealRefs = sortedRefs(refsByType(expandedRefs, "appeal"));
+  const policyVersionRefs = sortedRefs(
+    dedupeRefs([
+      ...recordRefs(packet, "policyVersionRefs"),
+      ...refsByType(expandedRefs, "policy").filter((ref) => ref.id.includes("version"))
     ])
   );
   const authorityRefs = sortedRefs(
@@ -223,13 +260,21 @@ export const buildDecisionPacketProjection = (
     authorityRefs,
     issueRefs,
     proposalRefs,
+    amendmentRefs,
     claimRefs,
     evidenceRefs,
     unresolvedObjectionRefs,
+    objectionRefs,
+    appealRefs,
+    policyVersionRefs,
     issues: summarizeRecords(relevantEvents, issueRefs, "issue"),
     proposals: summarizeRecords(relevantEvents, proposalRefs, "proposal"),
+    amendments: summarizeRecords(relevantEvents, amendmentRefs, "amendment"),
     claims: summarizeClaims(relevantEvents, claimRefs),
     evidence: summarizeEvidence(relevantEvents, evidenceRefs),
+    objections: summarizeRecords(relevantEvents, objectionRefs, "objection"),
+    appeals: summarizeRecords(relevantEvents, appealRefs, "appeal"),
+    policyVersions: summarizePolicyVersions(relevantEvents, policyVersionRefs),
     decision: summarizeDecision(decisionRef, decisionEvent),
     stewardshipOutcomes: summarizeStewardshipOutcomes(relevantEvents, decisionRef),
     allocationAccountingOutcomes: summarizeAllocationAccountingOutcomes(relevantEvents),
@@ -366,6 +411,39 @@ const summarizeEvidence = (
     .filter(isDefined)
     .sort(compareRecordSummaries);
 
+const summarizePolicyVersions = (
+  events: readonly CanopyEvent[],
+  refs: readonly ObjectRef[]
+): readonly DecisionPacketRecordSummary[] =>
+  refs
+    .map((ref) => {
+      const event = latestEvent(events, (candidate) => {
+        const record = recordFromPayload(candidate, "policyVersion");
+        return (
+          candidate.type === "governance.policy.versioned" &&
+          (recordString(record, "id") === ref.id || sameRef(candidate.objectRef, ref))
+        );
+      });
+      if (event === undefined) {
+        return undefined;
+      }
+
+      const record = recordFromPayload(event, "policyVersion");
+      return optionalRecordSummary({
+        ref,
+        eventId: event.id,
+        occurredAt: event.occurredAt,
+        title: recordString(record, "title") ?? payloadString(event.payload, ["title", "name", "label"]),
+        summary:
+          recordString(record, "summaryOfChanges") ??
+          recordString(record, "summary") ??
+          payloadString(event.payload, ["summary", "description"]),
+        status: recordString(record, "status")
+      });
+    })
+    .filter(isDefined)
+    .sort(compareRecordSummaries);
+
 const summarizeDecision = (
   decisionRef: ObjectRef,
   event: CanopyEvent | undefined
@@ -481,8 +559,24 @@ const eventRoles = (
     roles.push("proposal");
   }
 
+  if (event.objectRef.type === "amendment") {
+    roles.push("amendment");
+  }
+
   if (event.objectRef.type === "claim") {
     roles.push(event.type === "governance.objection.raised" ? "objection" : "claim");
+  }
+
+  if (event.objectRef.type === "objection") {
+    roles.push("objection");
+  }
+
+  if (event.objectRef.type === "appeal") {
+    roles.push("appeal");
+  }
+
+  if (event.type === "governance.policy.versioned") {
+    roles.push("policy-version");
   }
 
   if (event.objectRef.type === "evidence") {
@@ -525,6 +619,27 @@ const collectRedactionIndicators = (
   const redactionEventIds = events
     .flatMap((event) => [event.redaction?.redactionEventId, event.type === "system.redaction.applied" ? event.id : undefined])
     .filter(isDefined);
+  const removedFields = uniqueSortedStrings([
+    ...events.flatMap((event) => [
+      ...(event.redaction?.removedPayloadKeys ?? []),
+      ...payloadStrings(event.payload, "removedPayloadKeys"),
+      ...payloadStrings(event.payload, "removedFields")
+    ])
+  ]);
+  const reasons = uniqueSortedStrings(
+    events
+      .filter(isEventRedacted)
+      .map((event) => event.redaction?.reason ?? payloadString(event.payload, ["reason"]))
+      .filter(isDefined)
+  );
+  const continuityEventIds = uniqueSortedStrings(
+    events
+      .flatMap((event) => [
+        event.redaction?.redactionEventId,
+        event.type === "system.redaction.applied" ? event.id : undefined
+      ])
+      .filter(isDefined)
+  );
 
   return {
     hasRedactions:
@@ -534,7 +649,10 @@ const collectRedactionIndicators = (
     redactedEventIds: uniqueSortedStrings(redactedEventIds),
     redactionEventIds: uniqueSortedStrings(redactionEventIds),
     redactedRefs: sortedRefs(recordRefs(redactionSummary, "redactedRefs")),
-    sealedRefs: sortedRefs(recordRefs(redactionSummary, "sealedRefs"))
+    sealedRefs: sortedRefs(recordRefs(redactionSummary, "sealedRefs")),
+    reasons,
+    removedFields,
+    continuityEventIds
   };
 };
 
