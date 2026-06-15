@@ -19,6 +19,7 @@
     "@canopy/capabilities-governance": "0.0.0",
     "@canopy/capabilities-learning-accountability": "0.0.0",
     "@canopy/capabilities-stewardship": "0.0.0",
+    "@canopy/contracts-adapters": "0.0.0",
     "@canopy/contracts-governance": "0.0.0",
     "@canopy/contracts-kernel": "0.0.0",
     "@canopy/database-import-plans": "0.0.0",
@@ -30,6 +31,7 @@
     "@canopy/projections-federation-export": "0.0.0",
     "@canopy/projections-object-page": "0.0.0",
     "@canopy/workflows-command-runtime": "0.0.0",
+    "@canopy/workflows-federation-reconciliation": "0.0.0",
     "@canopy/workflows-import-execution": "0.0.0",
     "@canopy/workflows-outbox": "0.0.0",
     "@canopy/workflows-projection-rebuild": "0.0.0"

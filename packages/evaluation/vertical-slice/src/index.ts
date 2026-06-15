@@ -9,6 +9,7 @@ import type {
   PolicyVersion,
   Proposal
 } from "@canopy/contracts-governance";
+import type { FederationTransportMessage } from "@canopy/contracts-adapters";
 import type {
   CanopyShellSession,
   CanopyShellScope,
@@ -111,6 +112,10 @@ import {
   type MaterializedProjectionStore,
   type PersistentProjectionRebuildResult
 } from "@canopy/workflows-projection-rebuild";
+import {
+  reconcileFederationImport,
+  type FederationReconciliationResult
+} from "@canopy/workflows-federation-reconciliation";
 
 export interface VerticalSliceMarker {
   readonly package: "@canopy/evaluation-vertical-slice";
@@ -202,6 +207,14 @@ export interface RiverbendCyberneticSliceResult {
 
 export interface RiverbendTrustHardeningSliceResult extends RiverbendCyberneticSliceResult {
   readonly phase8EventIds: readonly CanopyId[];
+}
+
+export interface RiverbendFederationReconciliationSliceResult extends RiverbendTrustHardeningSliceResult {
+  readonly phase9EventIds: readonly CanopyId[];
+  readonly federationTransportMessage: FederationTransportMessage;
+  readonly federationReconciliation: FederationReconciliationResult;
+  readonly federationReceivingRuntime: CanonicalPersistenceRuntime;
+  readonly federationReceivingMaterializedDocuments: readonly MaterializedProjectionDocument[];
 }
 
 export interface RiverbendPersistedRuntimeScenario {
@@ -1146,6 +1159,60 @@ export function executeRiverbendTrustHardeningSlice(): RiverbendTrustHardeningSl
       format: "json",
       federationRuleRef: refs.dataStewardshipAgreementRef
     })
+  };
+}
+
+export function executeRiverbendFederationReconciliationSlice(): RiverbendFederationReconciliationSliceResult {
+  const phase8 = executeRiverbendTrustHardeningSlice();
+  const federationReceivingRuntime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+  const materializedProjectionStore = createInMemoryMaterializedProjectionStore();
+  const eventsById = new Map(phase8.events.map((event) => [event.id, event]));
+  const eventsForImport = phase8.federationExport.preview.eventIds
+    .map((eventId) => eventsById.get(eventId))
+    .filter((event): event is CanopyEvent => event !== undefined);
+  const federationTransportMessage: FederationTransportMessage = {
+    id: "message.federation.riverbend.phase-8-export",
+    federationRuleRef:
+      phase8.federationExport.envelope.federationRuleRef ??
+      phase8.refs.dataStewardshipAgreementRef,
+    sentAt: occurredAt,
+    receivedAt: occurredAt,
+    eventIds: eventsForImport.map((event) => event.id),
+    objectRefs: phase8.federationExport.preview.includedObjects.map((object) => object.ref),
+    payload: {
+      envelope: phase8.federationExport.envelope,
+      events: eventsForImport
+    },
+    contentHash: phase8.federationExport.envelope.contentHash,
+    schemaVersion: phase8.federationExport.envelope.schemaVersion
+  };
+  const federationReconciliation = reconcileFederationImport({
+    message: federationTransportMessage,
+    runtime: federationReceivingRuntime,
+    receivedAt: occurredAt,
+    importedByRef: phase8.refs.federationPeerRef,
+    projectionRebuildOptions: {
+      rebuiltAt: occurredAt,
+      materializedProjections: materializedProjectionStore,
+      federationExport: {
+        exportedAt: occurredAt,
+        exportedByRef: phase8.refs.federationPeerRef,
+        scopeRef: phase8.refs.commonsRef,
+        federationRuleRef: phase8.refs.dataStewardshipAgreementRef,
+        format: "json"
+      }
+    }
+  });
+  const federationReceivingMaterializedDocuments =
+    queryMaterializedProjections(materializedProjectionStore).items;
+
+  return {
+    ...phase8,
+    phase9EventIds: federationReconciliation.eventRecords.map((record) => record.eventId),
+    federationTransportMessage,
+    federationReconciliation,
+    federationReceivingRuntime,
+    federationReceivingMaterializedDocuments
   };
 }
 

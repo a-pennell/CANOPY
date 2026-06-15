@@ -24,7 +24,7 @@ import {
 } from "@canopy/database-runtime";
 import {
   buildRiverbendPersistedRuntimeScenario,
-  executeRiverbendTrustHardeningSlice,
+  executeRiverbendFederationReconciliationSlice,
   type RiverbendTrustHardeningSliceResult
 } from "@canopy/evaluation-vertical-slice";
 import {
@@ -66,6 +66,7 @@ export interface CanopyWebModel {
   readonly permissionExplanation: CanopyWebPermissionExplanation;
   readonly dataStewardshipReview: CanopyWebDataStewardshipReview;
   readonly federationReview: CanopyWebFederationReview | undefined;
+  readonly federationImportReview: CanopyWebFederationImportReview;
   readonly adaptiveBranchReview: CanopyWebAdaptiveBranchReview;
   readonly trustHardeningReview: CanopyWebTrustHardeningReview;
 }
@@ -193,6 +194,17 @@ export interface CanopyWebFederationReview {
   readonly eventTrail: readonly string[];
 }
 
+export interface CanopyWebFederationImportReview {
+  readonly importedEnvelopeId: string;
+  readonly reconciliationStatus: string;
+  readonly acceptedEventCount: number;
+  readonly quarantinedEventCount: number;
+  readonly redactionStubWarnings: readonly string[];
+  readonly localMappingCount: number;
+  readonly warnings: readonly string[];
+  readonly eventTrail: readonly string[];
+}
+
 export interface CanopyWebAdaptiveBranchReview {
   readonly decisionRef: ObjectRef;
   readonly preservedObjectionRefs: readonly ObjectRef[];
@@ -269,11 +281,24 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   const scopePreset = options.scopePreset ?? "riverbend";
   const phase7Scenario = buildRiverbendPersistedRuntimeScenario();
   const phase7Slice = phase7Scenario.slice;
-  const phase8Slice = executeRiverbendTrustHardeningSlice();
+  const phase9Slice = executeRiverbendFederationReconciliationSlice();
+  const phase8Slice = phase9Slice;
   const runtime = phase7Scenario.runtime;
   const materializedProjectionStore = phase7Scenario.materializedProjectionStore;
   for (const event of phase8Slice.events.filter((event) => phase8Slice.phase8EventIds.includes(event.id))) {
     runtime.appendEvent(event, { recordedAt: generatedAt });
+  }
+  for (const mapping of phase9Slice.federationReconciliation.mappingRecords) {
+    runtime.putMapping(mapping);
+  }
+  for (const record of phase9Slice.federationReconciliation.eventRecords) {
+    runtime.appendEvent(record.event, { recordedAt: generatedAt });
+  }
+  for (const record of phase9Slice.federationReconciliation.outboxRecords) {
+    runtime.putOutbox(record);
+  }
+  for (const record of phase9Slice.federationReconciliation.adapterAuditRecords) {
+    runtime.putAdapterAudit(record);
   }
   const imports = executeSampleExportBundleImports({
     bundles: foldedSourceSampleExportBundles,
@@ -483,6 +508,11 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   });
   const dataStewardshipReview = buildDataStewardshipReview(session);
   const federationReview = buildFederationReview(session);
+  const federationImportReview = buildFederationImportReview({
+    runtime,
+    session,
+    federationReview
+  });
   const adaptiveBranchReview = buildAdaptiveBranchReview({
     events: phase7Slice.events,
     refs: phase7Slice.refs
@@ -514,6 +544,7 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
     permissionExplanation,
     dataStewardshipReview,
     federationReview,
+    federationImportReview,
     adaptiveBranchReview,
     trustHardeningReview
   };
@@ -1050,6 +1081,89 @@ function buildFederationReview(
   };
 }
 
+function buildFederationImportReview(input: {
+  readonly runtime: CanonicalPersistenceRuntime;
+  readonly session: CanopyShellSession;
+  readonly federationReview: CanopyWebFederationReview | undefined;
+}): CanopyWebFederationImportReview {
+  const events = input.runtime.queryEvents().items.map((record) => record.event);
+  const importEvents = events.filter((event) => event.type === "federation.import.received");
+  const reconciliationEvents = events.filter(
+    (event) => event.type === "federation.reconciliation.completed"
+  );
+  const federatedEvents = events.filter((event) => event.provenance?.kind === "federated");
+  const reconciliationAudits = input.runtime.listAdapterAudits().filter(
+    (audit) => audit.operation === "federation.import.reconcile"
+  );
+  const latestReconciliationAudit = reconciliationAudits.at(-1);
+  const auditMetadata = isRecord(latestReconciliationAudit?.metadata)
+    ? latestReconciliationAudit.metadata
+    : undefined;
+  const shellSurfaces = input.session.snapshot.surfaces as unknown as Readonly<Record<string, unknown>>;
+  const coreState = firstRecord(
+    shellSurfaces.federationImportReconciliationState,
+    shellSurfaces.federationReconciliationState,
+    shellSurfaces.federationImportState
+  );
+  const localMappingCount =
+    numberField(coreState, "localMappingCount") ??
+    arrayCountField(coreState, "localMappings") ??
+    arrayCountField(coreState, "localMappingIds") ??
+    input.runtime.listMappings().length;
+  const acceptedEventCount =
+    numberField(coreState, "acceptedEventCount") ??
+    arrayCountField(coreState, "acceptedEventIds") ??
+    arrayCountField(auditMetadata, "acceptedEventIds") ??
+    nonZeroCount(federatedEvents.length) ??
+    nonZeroCount(importEvents.flatMap((event) => payloadStringArray(event.payload, "eventIds")).length) ??
+    importEvents.length;
+  const quarantinedEventCount =
+    numberField(coreState, "quarantinedEventCount") ??
+    arrayCountField(coreState, "quarantinedEventIds") ??
+    auditDispositionCount(auditMetadata, "quarantined") ??
+    events.filter((event) => dispositionForEvent(event) === "quarantined").length;
+  const redactionStubWarnings = [
+    ...warningMessagesByCode(coreState, "redaction_stub_only"),
+    ...(latestReconciliationAudit?.warnings ?? []).filter(isRedactionStubWarning),
+    ...events
+      .filter((event) => event.redaction?.isRedactedStub === true)
+      .map((event) => `redaction_stub_only: ${event.id}`)
+  ];
+  const importedEnvelopeId =
+    stringField(coreState, "importedEnvelopeId") ??
+    stringField(coreState, "sourceEnvelopeId") ??
+    stringField(coreState, "envelopeId") ??
+    firstFederatedEnvelopeId(federatedEvents) ??
+    firstImportEnvelopeId(importEvents) ??
+    "awaiting-federation-import-envelope";
+  const coreStatus = stringField(coreState, "reconciliationStatus") ?? stringField(coreState, "status");
+  const reconciliationStatus =
+    coreStatus ??
+    auditReconciliationStatus(latestReconciliationAudit?.status) ??
+    (reconciliationEvents.length > 0
+      ? "completed"
+      : importEvents.length > 0 || federatedEvents.length > 0
+        ? "pending-core-workflow"
+        : "awaiting-import");
+  const warnings = [
+    ...warningMessages(coreState),
+    ...(latestReconciliationAudit?.warnings ?? []),
+    ...(latestReconciliationAudit?.errors ?? []),
+    ...(input.federationReview?.readinessWarnings ?? [])
+  ];
+
+  return {
+    importedEnvelopeId,
+    reconciliationStatus,
+    acceptedEventCount,
+    quarantinedEventCount,
+    redactionStubWarnings,
+    localMappingCount,
+    warnings,
+    eventTrail: [...importEvents, ...federatedEvents, ...reconciliationEvents].map((event) => event.id).slice(0, 8)
+  };
+}
+
 function buildAdaptiveBranchReview(input: {
   readonly events: readonly CanopyEvent[];
   readonly refs: {
@@ -1312,6 +1426,165 @@ function payloadString(
   const value = payload?.[key];
 
   return typeof value === "string" ? value : undefined;
+}
+
+function payloadStringArray(
+  payload: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): readonly string[] {
+  const value = payload?.[key];
+
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function firstRecord(...values: readonly unknown[]): Readonly<Record<string, unknown>> | undefined {
+  return values.find(isRecord);
+}
+
+function stringField(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): string | undefined {
+  const field = value?.[key];
+
+  return typeof field === "string" ? field : undefined;
+}
+
+function numberField(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): number | undefined {
+  const field = value?.[key];
+
+  return typeof field === "number" ? field : undefined;
+}
+
+function arrayField(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): readonly unknown[] {
+  const field = value?.[key];
+
+  return Array.isArray(field) ? field : [];
+}
+
+function arrayCountField(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): number | undefined {
+  const field = value?.[key];
+
+  return Array.isArray(field) ? field.length : undefined;
+}
+
+function nonZeroCount(value: number): number | undefined {
+  return value === 0 ? undefined : value;
+}
+
+function isRedactionStubWarning(message: string): boolean {
+  return message.toLowerCase().includes("redaction stub");
+}
+
+function warningMessages(
+  value: Readonly<Record<string, unknown>> | undefined
+): readonly string[] {
+  return arrayField(value, "warnings").flatMap((warning) => {
+    if (typeof warning === "string") {
+      return [warning];
+    }
+
+    if (!isRecord(warning)) {
+      return [];
+    }
+
+    return [warningMessage(warning)];
+  });
+}
+
+function warningMessagesByCode(
+  value: Readonly<Record<string, unknown>> | undefined,
+  code: string
+): readonly string[] {
+  return arrayField(value, "warnings").flatMap((warning) => {
+    if (!isRecord(warning) || stringField(warning, "code") !== code) {
+      return [];
+    }
+
+    return [warningMessage(warning)];
+  });
+}
+
+function warningMessage(value: Readonly<Record<string, unknown>>): string {
+  const code = stringField(value, "code");
+  const message = stringField(value, "message") ?? "review required";
+
+  return code === undefined ? message : `${code}: ${message}`;
+}
+
+function dispositionForEvent(event: CanopyEvent): string | undefined {
+  return payloadString(event.payload, "disposition") ?? payloadString(payloadRecord(event.payload, "result"), "disposition");
+}
+
+function auditDispositionCount(
+  metadata: Readonly<Record<string, unknown>> | undefined,
+  disposition: string
+): number | undefined {
+  const dispositions = arrayField(metadata, "dispositions");
+
+  if (dispositions.length === 0) {
+    return undefined;
+  }
+
+  return dispositions.filter(
+    (item) => isRecord(item) && stringField(item, "disposition") === disposition
+  ).length;
+}
+
+function auditReconciliationStatus(status: string | undefined): string | undefined {
+  if (status === undefined) {
+    return undefined;
+  }
+
+  if (status === "succeeded") {
+    return "applied";
+  }
+
+  if (status === "failed") {
+    return "quarantined";
+  }
+
+  return status;
+}
+
+function firstFederatedEnvelopeId(events: readonly CanopyEvent[]): string | undefined {
+  for (const event of events) {
+    const envelopeId =
+      payloadString(event.payload, "importedFromFederationEnvelopeId") ??
+      event.provenance?.sourceEnvelopeId;
+
+    if (envelopeId !== undefined) {
+      return envelopeId;
+    }
+  }
+
+  return undefined;
+}
+
+function firstImportEnvelopeId(importEvents: readonly CanopyEvent[]): string | undefined {
+  for (const event of importEvents) {
+    const envelopeId =
+      payloadString(event.payload, "sourceEnvelopeId") ??
+      payloadString(event.payload, "importedEnvelopeId") ??
+      payloadString(event.payload, "envelopeId") ??
+      payloadString(payloadRecord(event.payload, "payload"), "envelopeId") ??
+      payloadString(event.payload, "messageId");
+
+    if (envelopeId !== undefined) {
+      return envelopeId;
+    }
+  }
+
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

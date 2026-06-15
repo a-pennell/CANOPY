@@ -96,6 +96,9 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
             <StatusPill label="Projection states" tone="toneInfo">
               {operations.projections.currentStateIds.length}/{operations.projections.expectedProjectionNames.length}
             </StatusPill>
+            <StatusPill label="Phase 9" tone={federationImportTone(model.federationImportReview.reconciliationStatus)}>
+              {model.federationImportReview.reconciliationStatus}
+            </StatusPill>
           </div>
         </header>
 
@@ -202,6 +205,10 @@ export function CanopyDashboard({ model }: { readonly model: CanopyWebModel }) {
 
           <Panel title="Data Stewardship" kicker="visibility, retention, redaction">
             <DataStewardshipReview model={model} />
+          </Panel>
+
+          <Panel title="Federation Import & Reconciliation" kicker="phase 9 readiness">
+            <FederationImportReview model={model} />
           </Panel>
 
           <Panel title="Adaptive Trust Review" kicker="appeal, consent, authority">
@@ -489,6 +496,10 @@ function renderWorkspaceSurface(model: CanopyWebModel, workspace: CanopyWebWorks
           <KeyValue label="Local mappings" value={String(review.localMappingCount)} />
           <KeyValue label="Data agreements" value={String(review.dataStewardshipAgreementCount)} />
           <KeyValue label="Redaction posture" value={review.redactionSummary} />
+          <KeyValue label="Import envelope" value={model.federationImportReview.importedEnvelopeId} />
+          <KeyValue label="Reconciliation" value={model.federationImportReview.reconciliationStatus} />
+          <KeyValue label="Accepted imports" value={String(model.federationImportReview.acceptedEventCount)} />
+          <KeyValue label="Quarantined imports" value={String(model.federationImportReview.quarantinedEventCount)} />
         </div>
         <div className="list">
           {(review.readinessWarnings.length === 0 ? ["ready: no export warnings"] : review.readinessWarnings).map((warning) => (
@@ -543,6 +554,27 @@ function DataStewardshipReview({ model }: { readonly model: CanopyWebModel }) {
         <KeyValue label="Retention" value={review.retentionPosture} />
         <KeyValue label="Restricted evidence" value={review.restrictedEvidence} />
         <KeyValue label="Export restriction" value={review.exportRestriction} />
+      </div>
+    </div>
+  );
+}
+
+function FederationImportReview({ model }: { readonly model: CanopyWebModel }) {
+  const review = model.federationImportReview;
+
+  return (
+    <div className="stack">
+      <div className="reviewGrid">
+        <KeyValue label="Imported envelope" value={review.importedEnvelopeId} />
+        <KeyValue label="Reconciliation status" value={review.reconciliationStatus} />
+        <KeyValue label="Accepted events" value={String(review.acceptedEventCount)} />
+        <KeyValue label="Quarantined events" value={String(review.quarantinedEventCount)} />
+        <KeyValue label="Local mappings" value={String(review.localMappingCount)} />
+        <KeyValue label="Redaction-stub warnings" value={formatList(review.redactionStubWarnings)} />
+      </div>
+      <div className="reviewGrid">
+        <KeyValue label="Warnings" value={formatList(review.warnings)} />
+        <KeyValue label="Import trail" value={formatList(review.eventTrail)} />
       </div>
     </div>
   );
@@ -611,6 +643,26 @@ function formatRows(rows: readonly { readonly label: string; readonly value: num
 
 function formatRefs(refs: readonly { readonly type: string; readonly id: string }[]): string {
   return refs.length === 0 ? "none" : refs.map(formatRef).join(", ");
+}
+
+function formatList(values: readonly string[]): string {
+  return values.length === 0 ? "none" : values.join(", ");
+}
+
+function federationImportTone(status: string): "toneGood" | "toneWarn" | "toneBad" | "toneInfo" {
+  if (status === "completed" || status === "accepted" || status === "applied") {
+    return "toneGood";
+  }
+
+  if (status.includes("quarantine") || status === "blocked" || status === "rejected") {
+    return "toneBad";
+  }
+
+  if (status.startsWith("pending") || status.includes("review")) {
+    return "toneWarn";
+  }
+
+  return "toneInfo";
 }
 
 function displayText(value: string): string {

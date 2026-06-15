@@ -123,17 +123,40 @@ describe("phase 7 Riverbend/Mill Creek acceptance", () => {
         "governance.policy.versioned"
       ])
     );
-    expect(
-      packet?.timeline
-        .filter((event) => event.type === "governance.policy.versioned")
-        .map((event) => event.objectRef.id)
-    ).toEqual(["policy.breach-window-food-flow"]);
+    expect([
+      ...new Set(
+        packet?.timeline
+          .filter((event) => event.type === "governance.policy.versioned")
+          .map((event) => event.objectRef.id)
+      )
+    ]).toEqual(["policy.breach-window-food-flow"]);
     expect(federationState?.redactionSummary?.redactionCount).toBeGreaterThan(0);
     expect(federationState?.redactionSummary?.removedFields).toEqual(
       expect.arrayContaining(["payload.schoolContact", "payload.pickupNotes"])
     );
     expect(model.dataStewardshipReview.redactionSummary).toContain("redaction");
     expect(model.federationReview?.redactionSummary).toContain("removed fields");
+  });
+
+  it("surfaces Phase 9 federation import and reconciliation readiness", () => {
+    const model = getCanopyWebModel({
+      routePath: "/federation"
+    });
+    const review = model.federationImportReview;
+    const dashboardText = collectElementStrings(CanopyDashboard({ model })).join("\n");
+
+    expect(review.importedEnvelopeId).toMatch(/^export-envelope\./);
+    expect(review.reconciliationStatus).toBe("applied");
+    expect(review.acceptedEventCount).toBeGreaterThan(10);
+    expect(review.quarantinedEventCount).toBe(0);
+    expect(review.localMappingCount).toBeGreaterThan(0);
+    expect(review.eventTrail.some((eventId) => eventId.startsWith("event.federation.import."))).toBe(true);
+    expect(review.redactionStubWarnings.length).toBeGreaterThan(0);
+    expect(dashboardText).toContain("Federation Import & Reconciliation");
+    expect(dashboardText).toContain("Imported envelope");
+    expect(dashboardText).toContain("applied");
+    expect(dashboardText).toContain("Quarantined events");
+    expect(dashboardText).toContain("Redaction-stub warnings");
   });
 
   it("surfaces the Phase 8 adaptive trust hardening trail in the web model and dashboard", () => {
@@ -314,4 +337,4 @@ function collectElementStrings(node: unknown): readonly string[] {
   ];
 }
 
-const renderableComponentNames = new Set(["TrustHardeningReview"]);
+const renderableComponentNames = new Set(["FederationImportReview", "TrustHardeningReview"]);
