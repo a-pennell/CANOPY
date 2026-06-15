@@ -59,11 +59,11 @@ Status: in progress, executable first gates added.
 - Added operations report readiness checks for replay freshness, projection lag, outbox backlog, adapter audit health, and federation health where the current runtime model exposes those signals.
 - Remaining Phase 8 work should deepen packet projections, add conflict/appeal lifecycle commands beyond open appeal, define validation report completion gates, and expose these traces in the web shell.
 
-## Checkpoint 3 Placeholder
+## Checkpoint 3
 
-Status: pending end-to-end appeal lifecycle acceptance.
+Status: complete at executable local-acceptance level. See `docs/plans/2026-06-15-phase-8-validation-report.md`.
 
-- Acceptance gate: the Riverbend contested adaptive decision has an appeal lifecycle trace that can advance through under-review, remedy, and closed outcomes without mutating the original decision event.
-- Acceptance gate: upheld and rejected appeal closures remain distinguishable in decision packets, authority projections, exports, and web trust review surfaces.
-- Acceptance gate: the web trust review derives lifecycle state from emitted `governance.appeal.*` events and appeal payload status only; it must not depend on web-only event constants.
-- Acceptance gate: remedy records preserve minority reports, unresolved objections, consent/redaction continuity, and provider audit refs in the same portable proof trail.
+- Acceptance gate: the Riverbend contested adaptive decision has appeal and conflict lifecycle traces that advance through review, remedy, and closure without mutating the original decision event.
+- Acceptance gate: upheld appeal closure and closed conflict resolution remain visible in decision packets, federation export, command runtime replay, and web trust review surfaces.
+- Acceptance gate: the web trust review derives lifecycle state from emitted `governance.appeal.*` and `governance.conflict.*` events and payload status only; it must not depend on web-only event constants.
+- Acceptance gate: remedy records preserve minority reports, unresolved objections, consent/redaction continuity, provider audit refs, and conflict closure in the same portable proof trail.

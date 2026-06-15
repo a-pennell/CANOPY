@@ -16,24 +16,32 @@ import {
 } from "@canopy/capabilities-claims-evidence";
 import {
   closeAppeal,
+  closeConflict,
   createProposal,
   completeGuardianReview,
   openAppeal,
+  openConflict,
   raiseObjection,
   recordAppealRemedy,
+  recordConflictRemedy,
   recordDecision,
   requestGuardianReview,
+  reviewConflict,
   reviewAppeal,
   submitAmendment,
   versionPolicy,
   type CloseAppealCommand,
+  type CloseConflictCommand,
   type CompleteGuardianReviewCommand,
   type CreateProposalCommand,
   type OpenAppealCommand,
+  type OpenConflictCommand,
   type RaiseObjectionCommand,
   type RecordAppealRemedyCommand,
+  type RecordConflictRemedyCommand,
   type RecordDecisionCommand,
   type RequestGuardianReviewCommand,
+  type ReviewConflictCommand,
   type ReviewAppealCommand,
   type SubmitAmendmentCommand,
   type VersionPolicyCommand
@@ -266,6 +274,30 @@ export function closeAppealCommandHandler(
   services: CanopyCommandServices
 ): CanopyCommandHandler<CloseAppealCommand> {
   return (command) => closeAppeal(services, command).appendResult.event;
+}
+
+export function openConflictCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<OpenConflictCommand> {
+  return (command) => openConflict(services, command).appendResult.event;
+}
+
+export function reviewConflictCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<ReviewConflictCommand> {
+  return (command) => reviewConflict(services, command).appendResult.event;
+}
+
+export function recordConflictRemedyCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<RecordConflictRemedyCommand> {
+  return (command) => recordConflictRemedy(services, command).appendResult.event;
+}
+
+export function closeConflictCommandHandler(
+  services: CanopyCommandServices
+): CanopyCommandHandler<CloseConflictCommand> {
+  return (command) => closeConflict(services, command).appendResult.event;
 }
 
 export function createThresholdCommandHandler(
@@ -533,6 +565,42 @@ export function executeCloseAppealCommand(
   return executeCanopyCommand({
     ...input,
     handle: closeAppealCommandHandler(input.services)
+  });
+}
+
+export function executeOpenConflictCommand(
+  input: ExecuteCanonicalCanopyCommandInput<OpenConflictCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: openConflictCommandHandler(input.services)
+  });
+}
+
+export function executeReviewConflictCommand(
+  input: ExecuteCanonicalCanopyCommandInput<ReviewConflictCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: reviewConflictCommandHandler(input.services)
+  });
+}
+
+export function executeRecordConflictRemedyCommand(
+  input: ExecuteCanonicalCanopyCommandInput<RecordConflictRemedyCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: recordConflictRemedyCommandHandler(input.services)
+  });
+}
+
+export function executeCloseConflictCommand(
+  input: ExecuteCanonicalCanopyCommandInput<CloseConflictCommand>
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: closeConflictCommandHandler(input.services)
   });
 }
 

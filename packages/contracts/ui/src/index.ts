@@ -256,6 +256,7 @@ export interface CanopyUiDecisionPacketViewModel {
   readonly unresolvedObjectionRefs: readonly ObjectRef[];
   readonly objectionRefs: readonly ObjectRef[];
   readonly appealRefs: readonly ObjectRef[];
+  readonly conflictRefs: readonly ObjectRef[];
   readonly policyVersionRefs: readonly ObjectRef[];
   readonly stewardshipOutcomes: readonly CanopyUiDecisionPacketOutcomeSummary[];
   readonly allocationAccountingOutcomeEventIds: readonly CanopyId[];

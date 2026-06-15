@@ -25,6 +25,7 @@ export type DecisionPacketEventRole =
   | "allocation-accounting-outcome"
   | "objection"
   | "appeal"
+  | "conflict"
   | "policy-version"
   | "redaction"
   | "supersession"
@@ -144,6 +145,7 @@ export interface DecisionPacketProjection {
   readonly unresolvedObjectionRefs: readonly ObjectRef[];
   readonly objectionRefs: readonly ObjectRef[];
   readonly appealRefs: readonly ObjectRef[];
+  readonly conflictRefs: readonly ObjectRef[];
   readonly policyVersionRefs: readonly ObjectRef[];
   readonly issues: readonly DecisionPacketRecordSummary[];
   readonly proposals: readonly DecisionPacketRecordSummary[];
@@ -152,6 +154,7 @@ export interface DecisionPacketProjection {
   readonly evidence: readonly DecisionPacketEvidenceSummary[];
   readonly objections: readonly DecisionPacketRecordSummary[];
   readonly appeals: readonly DecisionPacketRecordSummary[];
+  readonly conflicts: readonly DecisionPacketRecordSummary[];
   readonly policyVersions: readonly DecisionPacketRecordSummary[];
   readonly decision?: DecisionPacketDecisionSummary;
   readonly stewardshipOutcomes: readonly DecisionPacketStewardshipOutcome[];
@@ -189,6 +192,7 @@ export const buildDecisionPacketProjection = (
     ...recordRefs(packet, "unresolvedObjectionRefs"),
     ...recordRefs(packet, "policyRefs"),
     ...recordRefs(packet, "policyVersionRefs"),
+    ...recordRefs(packet, "conflictRefs"),
     recordRef(packet, "appealPathRef"),
     ...recordRefs(decision, "issueRefs"),
     ...recordRefs(decision, "proposalRefs"),
@@ -233,6 +237,9 @@ export const buildDecisionPacketProjection = (
     ])
   );
   const appealRefs = sortedRefs(refsByType(expandedRefs, "appeal"));
+  const conflictRefs = sortedRefs(
+    dedupeRefs([...refsByType(expandedRefs, "conflict"), ...recordRefs(packet, "conflictRefs")])
+  );
   const policyVersionRefs = sortedRefs(
     dedupeRefs([
       ...recordRefs(packet, "policyVersionRefs"),
@@ -266,6 +273,7 @@ export const buildDecisionPacketProjection = (
     unresolvedObjectionRefs,
     objectionRefs,
     appealRefs,
+    conflictRefs,
     policyVersionRefs,
     issues: summarizeRecords(relevantEvents, issueRefs, "issue"),
     proposals: summarizeRecords(relevantEvents, proposalRefs, "proposal"),
@@ -274,6 +282,7 @@ export const buildDecisionPacketProjection = (
     evidence: summarizeEvidence(relevantEvents, evidenceRefs),
     objections: summarizeRecords(relevantEvents, objectionRefs, "objection"),
     appeals: summarizeRecords(relevantEvents, appealRefs, "appeal"),
+    conflicts: summarizeRecords(relevantEvents, conflictRefs, "conflict"),
     policyVersions: summarizePolicyVersions(relevantEvents, policyVersionRefs),
     decision: summarizeDecision(decisionRef, decisionEvent),
     stewardshipOutcomes: summarizeStewardshipOutcomes(relevantEvents, decisionRef),
@@ -573,6 +582,10 @@ const eventRoles = (
 
   if (event.objectRef.type === "appeal") {
     roles.push("appeal");
+  }
+
+  if (event.objectRef.type === "conflict") {
+    roles.push("conflict");
   }
 
   if (event.type === "governance.policy.versioned") {

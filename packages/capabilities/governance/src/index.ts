@@ -11,6 +11,7 @@ import type {
 import type {
   Appeal,
   Amendment,
+  Conflict,
   ConsentSignal,
   Decision,
   DecisionMethodConfig,
@@ -52,6 +53,8 @@ export type GovernanceCommandErrorCode =
   | "delegation-revoked"
   | "appeal-missing-grounds"
   | "appeal-missing-reviewer"
+  | "conflict-missing-participant"
+  | "conflict-missing-facilitator"
   | "emergency-missing-authority"
   | "emergency-missing-constraints";
 
@@ -132,6 +135,22 @@ export interface RecordAppealRemedyCommand extends GovernanceCommandContext {
 
 export interface CloseAppealCommand extends GovernanceCommandContext {
   readonly appeal: Appeal;
+}
+
+export interface OpenConflictCommand extends GovernanceCommandContext {
+  readonly conflict: Conflict;
+}
+
+export interface ReviewConflictCommand extends GovernanceCommandContext {
+  readonly conflict: Conflict;
+}
+
+export interface RecordConflictRemedyCommand extends GovernanceCommandContext {
+  readonly conflict: Conflict;
+}
+
+export interface CloseConflictCommand extends GovernanceCommandContext {
+  readonly conflict: Conflict;
 }
 
 export interface RequestGuardianReviewCommand extends GovernanceCommandContext {
@@ -559,6 +578,54 @@ export function closeAppeal(
   return appendAppealLifecycleEvent(services, command, "governance.appeal.closed", "closeAppeal");
 }
 
+export function openConflict(
+  services: GovernanceCommandServices,
+  command: OpenConflictCommand
+): GovernanceCommandResult<Conflict> {
+  return appendConflictLifecycleEvent(
+    services,
+    command,
+    "governance.conflict.opened",
+    "openConflict"
+  );
+}
+
+export function reviewConflict(
+  services: GovernanceCommandServices,
+  command: ReviewConflictCommand
+): GovernanceCommandResult<Conflict> {
+  return appendConflictLifecycleEvent(
+    services,
+    command,
+    "governance.conflict.reviewed",
+    "reviewConflict"
+  );
+}
+
+export function recordConflictRemedy(
+  services: GovernanceCommandServices,
+  command: RecordConflictRemedyCommand
+): GovernanceCommandResult<Conflict> {
+  return appendConflictLifecycleEvent(
+    services,
+    command,
+    "governance.conflict.remedy_recorded",
+    "recordConflictRemedy"
+  );
+}
+
+export function closeConflict(
+  services: GovernanceCommandServices,
+  command: CloseConflictCommand
+): GovernanceCommandResult<Conflict> {
+  return appendConflictLifecycleEvent(
+    services,
+    command,
+    "governance.conflict.closed",
+    "closeConflict"
+  );
+}
+
 function appendAppealLifecycleEvent(
   services: GovernanceCommandServices,
   command:
@@ -590,6 +657,40 @@ function appendAppealLifecycleEvent(
       appeal: command.appeal
     },
     record: command.appeal
+  });
+}
+
+function appendConflictLifecycleEvent(
+  services: GovernanceCommandServices,
+  command:
+    | OpenConflictCommand
+    | ReviewConflictCommand
+    | RecordConflictRemedyCommand
+    | CloseConflictCommand,
+  type: CanopyEventType,
+  commandName: string
+): GovernanceCommandResult<Conflict> {
+  assertValidAuthority(validateConflictAuthority(command.conflict));
+  const ref = refFor(command.conflict, "conflict");
+  registerRefs(services.registry, [
+    ref,
+    ...refsForConflict(command.conflict),
+    command.actorRef
+  ]);
+
+  return appendGovernanceEvent(services, command, {
+    type,
+    objectRef: ref,
+    relatedRefs: refsForConflict(command.conflict),
+    authorityRefs: command.conflict.authorityRefs,
+    orgId: command.conflict.orgId,
+    visibility: command.conflict.visibility,
+    dataState: command.conflict.dataState,
+    payload: {
+      command: commandName,
+      conflict: command.conflict
+    },
+    record: command.conflict
   });
 }
 
@@ -740,6 +841,30 @@ export function validateAppealAuthority(
           issue(
             "appeal-missing-reviewer",
             "Appeals under review or later require at least one reviewerRef."
+          )
+        ]
+      : [])
+  ]);
+}
+
+export function validateConflictAuthority(
+  conflict: Conflict
+): GovernanceAuthorityValidationResult {
+  return result([
+    ...validateNonMembershipAuthority(conflict.authorityRefs),
+    ...(conflict.participantRefs.length === 0
+      ? [
+          issue(
+            "conflict-missing-participant",
+            "Conflicts require at least one participantRef."
+          )
+        ]
+      : []),
+    ...(conflict.status !== "open" && conflict.facilitatorRefs.length === 0
+      ? [
+          issue(
+            "conflict-missing-facilitator",
+            "Conflicts under review or later require at least one facilitatorRef."
           )
         ]
       : [])
@@ -1266,6 +1391,7 @@ function refsForDecisionPacket(packet: DecisionPacket): readonly ObjectRef[] {
     ...packet.modelRefs,
     ...packet.guardianReviewRefs,
     ...packet.unresolvedObjectionRefs,
+    ...(packet.conflictRefs ?? []),
     ...packet.obligationRefs,
     ...packet.agreementRefs,
     ...packet.policyRefs,
@@ -1293,6 +1419,21 @@ function refsForAppeal(appeal: Appeal): readonly ObjectRef[] {
     ...appeal.reviewerRefs,
     ...appeal.decisionRefs,
     ...appeal.evidenceRefs
+  ]);
+}
+
+function refsForConflict(conflict: Conflict): readonly ObjectRef[] {
+  return compactRefs([
+    conflict.createdByRef,
+    ...conflict.authorityRefs,
+    ...conflict.dataStewardshipAgreementRefs,
+    ...conflict.affectedRefs,
+    ...conflict.participantRefs,
+    ...conflict.facilitatorRefs,
+    ...conflict.relatedIssueRefs,
+    ...conflict.relatedDecisionRefs,
+    conflict.resolutionRef,
+    ...conflict.remedyRefs
   ]);
 }
 

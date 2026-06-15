@@ -206,6 +206,9 @@ export interface CanopyWebTrustHardeningReview {
   readonly phase8EventIds: readonly string[];
   readonly appealRefs: readonly ObjectRef[];
   readonly appealLifecycleRows: readonly CanopyWebAppealLifecycleRow[];
+  readonly conflictRefs: readonly ObjectRef[];
+  readonly conflictLifecycleRows: readonly CanopyWebConflictLifecycleRow[];
+  readonly contestedOutcomeRows: readonly CanopyWebContestedOutcomeRow[];
   readonly appealPathRef: ObjectRef;
   readonly consentRecordedRefs: readonly ObjectRef[];
   readonly consentRevokedRefs: readonly ObjectRef[];
@@ -215,6 +218,8 @@ export interface CanopyWebTrustHardeningReview {
 }
 
 export interface CanopyWebAppealLifecycleRow {
+  readonly kind: "appeal";
+  readonly subjectRef: ObjectRef;
   readonly appealRef: ObjectRef;
   readonly eventId: string;
   readonly eventType: string;
@@ -222,6 +227,29 @@ export interface CanopyWebAppealLifecycleRow {
   readonly targetRef: ObjectRef | undefined;
   readonly reviewerRefs: readonly ObjectRef[];
   readonly remedy: string | undefined;
+  readonly outcome: string | undefined;
+}
+
+export interface CanopyWebConflictLifecycleRow {
+  readonly kind: "conflict";
+  readonly subjectRef: ObjectRef;
+  readonly conflictRef: ObjectRef;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly state: string;
+  readonly targetRef: ObjectRef | undefined;
+  readonly reviewerRefs: readonly ObjectRef[];
+  readonly remedy: string | undefined;
+  readonly outcome: string | undefined;
+}
+
+export interface CanopyWebContestedOutcomeRow {
+  readonly kind: "appeal" | "conflict";
+  readonly subjectRef: ObjectRef;
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly disposition: string;
+  readonly detail: string;
 }
 
 export interface CanopyWebReviewRow {
@@ -1058,7 +1086,15 @@ function buildTrustHardeningReview(
   slice: RiverbendTrustHardeningSliceResult
 ): CanopyWebTrustHardeningReview {
   const phase8Events = slice.events.filter((event) => slice.phase8EventIds.includes(event.id));
-  const appealEvents = phase8Events.filter((event) => event.type === "governance.appeal.opened");
+  const appealEvents = phase8Events.filter((event) => eventType(event) === "governance.appeal.opened");
+  const conflictLifecycleRows = phase8Events
+    .filter(isConflictLifecycleEvent)
+    .map(conflictLifecycleRow)
+    .filter((row) => row !== undefined);
+  const appealLifecycleRows = phase8Events
+    .filter(isAppealLifecycleEvent)
+    .map(appealLifecycleRow)
+    .filter((row) => row !== undefined);
   const consentRecordedEvents = phase8Events.filter(
     (event) => event.type === "stewardship.consent.recorded"
   );
@@ -1071,10 +1107,13 @@ function buildTrustHardeningReview(
     title: "Phase 8 adaptive trust review",
     phase8EventIds: slice.phase8EventIds,
     appealRefs: dedupeRefs(appealEvents.map((event) => event.objectRef)),
-    appealLifecycleRows: phase8Events
-      .filter((event) => event.type.startsWith("governance.appeal."))
-      .map(appealLifecycleRow)
-      .filter((row) => row !== undefined),
+    appealLifecycleRows,
+    conflictRefs: dedupeRefs(conflictLifecycleRows.map((row) => row.conflictRef)),
+    conflictLifecycleRows,
+    contestedOutcomeRows: buildContestedOutcomeRows([
+      ...appealLifecycleRows,
+      ...conflictLifecycleRows
+    ]),
     appealPathRef: slice.refs.appealPathRef,
     consentRecordedRefs: dedupeRefs(consentRecordedEvents.map((event) => event.objectRef)),
     consentRevokedRefs: dedupeRefs(consentRevokedEvents.map((event) => event.objectRef)),
@@ -1092,51 +1131,130 @@ function appealLifecycleRow(event: CanopyEvent): CanopyWebAppealLifecycleRow | u
   const targetRef = payloadObjectRef(appeal, "targetRef");
   const reviewerRefs = payloadRefs(appeal, "reviewerRefs");
 
-  if (!event.type.startsWith("governance.appeal.")) {
+  if (!isAppealLifecycleEvent(event)) {
     return undefined;
   }
 
   return {
+    kind: "appeal",
+    subjectRef: event.objectRef,
     appealRef: event.objectRef,
     eventId: event.id,
-    eventType: event.type,
-    state: appealLifecycleState({
-      eventType: event.type,
+    eventType: eventType(event),
+    state: contestedLifecycleState({
+      eventType: eventType(event),
       status: payloadString(appeal, "status"),
-      reviewerCount: reviewerRefs.length
+      reviewerCount: reviewerRefs.length,
+      openedLabel: "opened",
+      reviewedLabel: "under review"
     }),
     targetRef,
     reviewerRefs,
-    remedy: payloadString(appeal, "requestedRemedy") ?? payloadString(appeal, "outcome")
+    remedy: payloadString(appeal, "requestedRemedy"),
+    outcome: payloadString(appeal, "outcome")
   };
 }
 
-function appealLifecycleState(input: {
+function conflictLifecycleRow(event: CanopyEvent): CanopyWebConflictLifecycleRow | undefined {
+  const conflict = payloadRecord(event.payload, "conflict");
+  const targetRef = payloadRefs(conflict, "relatedDecisionRefs")[0];
+  const reviewerRefs = payloadRefs(conflict, "facilitatorRefs");
+
+  if (!isConflictLifecycleEvent(event)) {
+    return undefined;
+  }
+
+  return {
+    kind: "conflict",
+    subjectRef: event.objectRef,
+    conflictRef: event.objectRef,
+    eventId: event.id,
+    eventType: eventType(event),
+    state: contestedLifecycleState({
+      eventType: eventType(event),
+      status: payloadString(conflict, "status"),
+      reviewerCount: reviewerRefs.length,
+      openedLabel: "opened",
+      reviewedLabel: "reviewed"
+    }),
+    targetRef,
+    reviewerRefs,
+    remedy:
+      payloadObjectRef(conflict, "resolutionRef")?.id ??
+      payloadRefs(conflict, "remedyRefs").map((ref) => ref.id).join(", ") ??
+      undefined,
+    outcome: payloadString(conflict, "outcome") ?? payloadString(conflict, "description")
+  };
+}
+
+function buildContestedOutcomeRows(
+  lifecycleRows: readonly (CanopyWebAppealLifecycleRow | CanopyWebConflictLifecycleRow)[]
+): readonly CanopyWebContestedOutcomeRow[] {
+  return lifecycleRows
+    .filter((row) =>
+      row.outcome !== undefined ||
+      row.eventType.endsWith(".remedy_recorded") ||
+      ["closed", "rejected", "remedied", "upheld", "withdrawn"].includes(row.state)
+    )
+    .map((row) => ({
+      kind: row.kind,
+      subjectRef: row.subjectRef,
+      eventId: row.eventId,
+      eventType: row.eventType,
+      disposition: row.state,
+      detail: row.outcome ?? row.remedy ?? "No outcome detail recorded."
+    }));
+}
+
+function contestedLifecycleState(input: {
   readonly eventType: string;
   readonly status: string | undefined;
   readonly reviewerCount: number;
+  readonly openedLabel: string;
+  readonly reviewedLabel: string;
 }): string {
-  if (input.eventType === "governance.appeal.remedy_recorded" || input.status === "remedied") {
-    return "remedy";
+  const status = normalizeLifecycleLabel(input.status);
+
+  if (status !== undefined && status !== "open") {
+    return status;
   }
 
-  if (input.status === "upheld" || input.status === "rejected" || input.status === "withdrawn") {
-    return input.status;
+  if (input.eventType.endsWith(".remedy_recorded")) {
+    return "remedied";
   }
 
-  if (input.eventType === "governance.appeal.closed" || input.status === "closed") {
+  if (input.eventType.endsWith(".closed")) {
     return "closed";
   }
 
   if (
-    input.eventType === "governance.appeal.reviewed" ||
-    input.status === "under_review" ||
-    (input.eventType === "governance.appeal.opened" && input.reviewerCount > 0)
+    input.eventType.endsWith(".reviewed") ||
+    (input.eventType.endsWith(".opened") && input.reviewerCount > 0)
   ) {
-    return "under review";
+    return input.reviewedLabel;
   }
 
-  return "opened";
+  return status ?? input.openedLabel;
+}
+
+function normalizeLifecycleLabel(value: string | undefined): string | undefined {
+  if (value === undefined || value.length === 0) {
+    return undefined;
+  }
+
+  return value.replaceAll("_", " ");
+}
+
+function isAppealLifecycleEvent(event: CanopyEvent): boolean {
+  return eventType(event).startsWith("governance.appeal.");
+}
+
+function isConflictLifecycleEvent(event: CanopyEvent): boolean {
+  return eventType(event).startsWith("governance.conflict.");
+}
+
+function eventType(event: CanopyEvent): string {
+  return String(event.type);
 }
 
 function reviewRows(values: readonly string[]): readonly CanopyWebReviewRow[] {

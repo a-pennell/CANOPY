@@ -768,7 +768,7 @@ function renderDecisionPacket(snapshot: CanopyShellSnapshot): readonly string[] 
     `Evidence: ${packet.evidenceRefs.map(formatRef).join(", ") || "none"}`,
     `Unresolved objections: ${packet.unresolvedObjectionRefs.map(formatRef).join(", ") || "none"}`,
     `Appeal refs: ${packet.appealRefs.map(formatRef).join(", ") || "none"}`,
-    `Conflict traces: ${conflictTraceRefs(packet.timeline).map(formatRef).join(", ") || "none"}`,
+    `Conflict refs: ${packet.conflictRefs.map(formatRef).join(", ") || "none"}`,
     `Redactions: ${packet.hasRedactions ? "present" : "clear"}`,
     `Redaction reasons: ${packet.redactionSummary.reasons.join(", ") || "none"}`,
     `Redaction continuity events: ${packet.redactionSummary.continuityEventIds.join(", ") || "none"}`,
@@ -863,16 +863,6 @@ function renderFederationExportState(snapshot: CanopyShellSnapshot): readonly st
       : `Redaction summary: ${state.redactionSummary.redactionCount} redactions, removed fields=${state.redactionSummary.removedFields.join(", ") || "none"}`,
     ...state.readinessWarnings.map((warning) => `- readiness ${warning.code}: ${warning.message}`)
   ]);
-}
-
-function conflictTraceRefs(
-  timeline: readonly CanopyUiTimelineEntry[]
-): readonly ObjectRef[] {
-  return dedupeRefs(
-    timeline
-      .filter((entry) => entry.type === "claim.contested")
-      .map((entry) => entry.objectRef)
-  );
 }
 
 function renderAuthorityTrace(snapshot: CanopyShellSnapshot): readonly string[] {
@@ -1677,6 +1667,7 @@ function buildDecisionPacketViewModel(
     unresolvedObjectionRefs: decisionPacket.unresolvedObjectionRefs,
     objectionRefs: decisionPacket.objectionRefs,
     appealRefs: decisionPacket.appealRefs,
+    conflictRefs: decisionPacket.conflictRefs,
     policyVersionRefs: decisionPacket.policyVersionRefs,
     stewardshipOutcomes: decisionPacket.stewardshipOutcomes.map(toDecisionPacketOutcomeSummary),
     allocationAccountingOutcomeEventIds: decisionPacket.allocationAccountingOutcomes.map(
@@ -2049,6 +2040,7 @@ const canopyObjectTypes = [
   "claim",
   "commitment",
   "commons",
+  "conflict",
   "decision",
   "decision-packet",
   "evidence",
@@ -2485,6 +2477,7 @@ function optionalDecisionPacketViewModel(
     unresolvedObjectionRefs: viewModel.unresolvedObjectionRefs,
     objectionRefs: viewModel.objectionRefs,
     appealRefs: viewModel.appealRefs,
+    conflictRefs: viewModel.conflictRefs,
     policyVersionRefs: viewModel.policyVersionRefs,
     stewardshipOutcomes: viewModel.stewardshipOutcomes,
     allocationAccountingOutcomeEventIds: viewModel.allocationAccountingOutcomeEventIds,

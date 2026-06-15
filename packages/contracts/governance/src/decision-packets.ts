@@ -84,6 +84,7 @@ export interface DecisionPacket extends VersionedContract {
   readonly modelRefs: readonly ObjectRef[];
   readonly guardianReviewRefs: readonly ObjectRef[];
   readonly unresolvedObjectionRefs: readonly ObjectRef[];
+  readonly conflictRefs?: readonly ObjectRef[];
   readonly unresolvedObjectionsSummary: string;
   readonly outcome: DecisionOutcome;
   readonly rationale: string;

@@ -1,6 +1,7 @@
 import type {
   Amendment,
   Appeal,
+  Conflict,
   Decision,
   DecisionPacket,
   Issue,
@@ -52,6 +53,7 @@ import {
 } from "@canopy/capabilities-ecological-modeling";
 import {
   closeAppeal,
+  closeConflict,
   createIssue,
   createProposal,
   completeGuardianReview,
@@ -59,8 +61,11 @@ import {
   recordDecision,
   recordDecisionPacket,
   recordAppealRemedy,
+  recordConflictRemedy,
   openAppeal,
+  openConflict,
   raiseObjection,
+  reviewConflict,
   reviewAppeal,
   submitAmendment,
   versionPolicy
@@ -164,6 +169,7 @@ export interface RiverbendCyberneticSliceRefs {
   readonly adaptiveDecisionPacketRef: ObjectRef;
   readonly adaptiveGuardianReviewRef: ObjectRef;
   readonly adaptiveAppealRef: ObjectRef;
+  readonly adaptiveConflictRef: ObjectRef;
   readonly schoolConsentRef: ObjectRef;
   readonly schoolConsentRevocationRef: ObjectRef;
   readonly policyRef: ObjectRef;
@@ -889,9 +895,10 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
       refs.adaptiveAmendmentRef,
       refs.adaptiveObjectionRef,
       refs.adaptiveDecisionRef,
-      refs.adaptiveDecisionPacketRef,
-      refs.policyRef,
-      refs.redactionRef
+    refs.adaptiveDecisionPacketRef,
+    refs.policyRef,
+    refs.adaptiveConflictRef,
+    refs.redactionRef
     ],
     format: "json",
     includeRedactionStubs: true,
@@ -910,6 +917,7 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
         "proposal",
         "amendment",
         "objection",
+        "conflict",
         "guardian-review",
         "decision",
         "decision-packet",
@@ -971,6 +979,21 @@ export function executeRiverbendTrustHardeningSlice(): RiverbendTrustHardeningSl
     appeal: makeAdaptiveAppeal(refs, {
       status: "under_review",
       outcome: "Guardian review accepts the appeal for remedy design."
+    })
+  });
+  openConflict(services, {
+    eventId: "event.governance.conflict.opened.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    conflict: makeAdaptiveConflict(refs)
+  });
+  reviewConflict(services, {
+    eventId: "event.governance.conflict.reviewed.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    conflict: makeAdaptiveConflict(refs, {
+      status: "in_process",
+      facilitatorRefs: [refs.watershedGuardianRef]
     })
   });
   recordConsent(services, {
@@ -1067,6 +1090,17 @@ export function executeRiverbendTrustHardeningSlice(): RiverbendTrustHardeningSl
       outcome: "Consent revocation remedy recorded with export-safe evidence continuity."
     })
   });
+  recordConflictRemedy(services, {
+    eventId: "event.governance.conflict.remedy_recorded.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    conflict: makeAdaptiveConflict(refs, {
+      status: "resolved",
+      facilitatorRefs: [refs.watershedGuardianRef],
+      resolutionRef: refs.adaptiveAppealRef,
+      remedyRefs: [refs.adaptiveAppealRef, refs.consentRedactionRef]
+    })
+  });
   closeAppeal(services, {
     eventId: "event.governance.appeal.closed.food-flow-pause",
     occurredAt,
@@ -1074,6 +1108,18 @@ export function executeRiverbendTrustHardeningSlice(): RiverbendTrustHardeningSl
     appeal: makeAdaptiveAppeal(refs, {
       status: "upheld",
       outcome: "Appeal upheld after remedy preserved the decision and strengthened redaction continuity.",
+      closedAt: occurredAt
+    })
+  });
+  closeConflict(services, {
+    eventId: "event.governance.conflict.closed.food-flow-pause",
+    occurredAt,
+    actorRef: refs.actorRef,
+    conflict: makeAdaptiveConflict(refs, {
+      status: "closed",
+      facilitatorRefs: [refs.watershedGuardianRef],
+      resolutionRef: refs.adaptiveAppealRef,
+      remedyRefs: [refs.adaptiveAppealRef, refs.consentRedactionRef],
       closedAt: occurredAt
     })
   });
@@ -1260,6 +1306,11 @@ function riverbendRefs(): RiverbendCyberneticSliceRefs {
     adaptiveAppealRef: ref(
       "appeal.food-flow-pause-data-stewardship",
       "appeal",
+      "governance"
+    ),
+    adaptiveConflictRef: ref(
+      "conflict.food-flow-pause-data-stewardship",
+      "conflict",
       "governance"
     ),
     schoolConsentRef: ref(
@@ -1661,6 +1712,7 @@ function makeAdaptiveDecisionPacket(refs: RiverbendCyberneticSliceRefs): Decisio
     modelRefs: [refs.scenarioRef],
     guardianReviewRefs: [refs.adaptiveGuardianReviewRef],
     unresolvedObjectionRefs: [refs.adaptiveObjectionRef],
+    conflictRefs: [refs.adaptiveConflictRef],
     unresolvedObjectionsSummary: "A data-stewardship objection is preserved as a minority report; the decision proceeds only with redaction continuity.",
     outcome: "passed",
     rationale: "The adaptive branch must pause the route and version policy, while export must protect sensitive school evidence detail.",
@@ -1709,6 +1761,7 @@ function makeAdaptiveDecisionPacket(refs: RiverbendCyberneticSliceRefs): Decisio
       refs.adaptiveProposalRef,
       refs.adaptiveAmendmentRef,
       refs.adaptiveObjectionRef,
+      refs.adaptiveConflictRef,
       refs.adaptiveDecisionRef,
       refs.redactionRef
     ],
@@ -1754,6 +1807,40 @@ function makeAdaptiveAppeal(
     reviewerRefs: [refs.watershedGuardianRef],
     decisionRefs: [refs.adaptiveDecisionRef],
     evidenceRefs: [refs.evidenceRef, refs.redactionRef],
+    ...overrides
+  };
+}
+
+function makeAdaptiveConflict(
+  refs: RiverbendCyberneticSliceRefs,
+  overrides: Partial<Conflict> = {}
+): Conflict {
+  return {
+    schemaVersion: "0.0.0",
+    id: refs.adaptiveConflictRef.id,
+    type: "conflict",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: refs.actorRef,
+    authorityRefs: [refs.mandateRef, refs.watershedGuardianRef],
+    dataState: "contested",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [refs.dataStewardshipAgreementRef],
+    conflictType: "data",
+    title: "Food-flow pause export remedy conflict",
+    description: "Resolve how the upheld appeal, consent revocation, preserved objection, and export redaction continuity stay in one proof trail.",
+    affectedRefs: [
+      refs.adaptiveDecisionRef,
+      refs.adaptiveObjectionRef,
+      refs.adaptiveAppealRef,
+      refs.evidenceRef
+    ],
+    participantRefs: [refs.actorRef, refs.watershedGuardianRef],
+    facilitatorRefs: [],
+    relatedIssueRefs: [refs.adaptiveIssueRef],
+    relatedDecisionRefs: [refs.adaptiveDecisionRef],
+    remedyRefs: [],
     ...overrides
   };
 }

@@ -8,6 +8,7 @@ import type {
 import type {
   Appeal,
   Amendment,
+  Conflict,
   Decision,
   DecisionPacket,
   Issue,
@@ -23,13 +24,17 @@ import {
   createProposal,
   completeGuardianReview,
   closeAppeal,
+  closeConflict,
   openAppeal,
+  openConflict,
   openProposal,
   raiseObjection,
   recordAppealRemedy,
+  recordConflictRemedy,
   requestGuardianReview,
   recordDecision,
   recordDecisionPacket,
+  reviewConflict,
   reviewAppeal,
   submitAmendment,
   versionPolicy,
@@ -64,6 +69,7 @@ const packetRef = ref(
 const policyRef = ref("canopy:policy:dry-season-water", "policy", "governance");
 const policyVersionRef = ref("canopy:policy-version:dry-season-water-v2", "policy", "governance");
 const appealRef = ref("canopy:appeal:water-plan", "appeal", "governance");
+const conflictRef = ref("canopy:conflict:water-plan-export", "conflict", "governance");
 const mandateRef = ref("canopy:mandate:watershed", "mandate", "authority");
 const guardianReviewRef = ref("canopy:guardian-review:water-plan", "guardian-review", "governance");
 const thresholdRef = ref("canopy:threshold:flow", "threshold", "ecology");
@@ -641,6 +647,82 @@ describe("governance capability commands", () => {
       })
     ).toThrow("Appeals under review or later require at least one reviewerRef.");
   });
+
+  it("reviews, remedies, and closes conflicts without mutating the related decision", () => {
+    const services = servicesForTest();
+    const opened = openConflict(services, {
+      conflict: makeConflict(),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:conflict-opened"
+    });
+    const reviewed = reviewConflict(services, {
+      conflict: makeConflict({
+        status: "in_process",
+        facilitatorRefs: [roleAuthorityRef]
+      }),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:conflict-reviewed"
+    });
+    const remedied = recordConflictRemedy(services, {
+      conflict: makeConflict({
+        status: "resolved",
+        facilitatorRefs: [roleAuthorityRef],
+        resolutionRef: appealRef,
+        remedyRefs: [appealRef]
+      }),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:conflict-remedy-recorded"
+    });
+    const closed = closeConflict(services, {
+      conflict: makeConflict({
+        status: "closed",
+        facilitatorRefs: [roleAuthorityRef],
+        resolutionRef: appealRef,
+        remedyRefs: [appealRef],
+        closedAt: occurredAt
+      }),
+      occurredAt,
+      actorRef,
+      eventId: "canopy:event:conflict-closed"
+    });
+
+    expect(services.memory.replay().events.map((event) => event.type)).toEqual([
+      "governance.conflict.opened",
+      "governance.conflict.reviewed",
+      "governance.conflict.remedy_recorded",
+      "governance.conflict.closed"
+    ]);
+    expect(
+      services.memory.replay().events
+        .filter((event) => event.objectRef.id === decisionRef.id)
+        .map((event) => event.type)
+    ).toEqual([]);
+    expect(reviewed.appendResult.event.relatedRefs).toEqual(
+      expect.arrayContaining([decisionRef, roleAuthorityRef, objectionRef])
+    );
+    expect(remedied.record).toMatchObject({
+      status: "resolved",
+      remedyRefs: [appealRef]
+    });
+    expect(closed.record).toMatchObject({
+      status: "closed",
+      closedAt: occurredAt
+    });
+    expect(opened.ref).toEqual(conflictRef);
+  });
+
+  it("rejects conflict lifecycle events under review or later without facilitators", () => {
+    expect(() =>
+      reviewConflict(servicesForTest(), {
+        conflict: makeConflict({ status: "in_process" }),
+        occurredAt,
+        actorRef
+      })
+    ).toThrow("Conflicts under review or later require at least one facilitatorRef.");
+  });
 });
 
 function servicesForTest() {
@@ -911,6 +993,32 @@ function makeAppeal(overrides: Partial<Appeal> = {}): Appeal {
     reviewerRefs: [],
     decisionRefs: [decisionRef],
     evidenceRefs: [evidenceRef],
+    ...overrides
+  };
+}
+
+function makeConflict(overrides: Partial<Conflict> = {}): Conflict {
+  return {
+    schemaVersion: "0.0.0",
+    id: conflictRef.id,
+    type: "conflict",
+    orgId: "canopy:org:watershed",
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    authorityRefs: [roleAuthorityRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    conflictType: "data",
+    title: "Export remedy conflict",
+    description: "Resolve how contested school evidence should be exported.",
+    affectedRefs: [decisionRef, objectionRef],
+    participantRefs: [actorRef],
+    facilitatorRefs: [],
+    relatedIssueRefs: [issueRef],
+    relatedDecisionRefs: [decisionRef],
+    remedyRefs: [],
     ...overrides
   };
 }

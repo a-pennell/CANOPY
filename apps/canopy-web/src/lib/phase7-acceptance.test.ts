@@ -158,34 +158,91 @@ describe("phase 7 Riverbend/Mill Creek acceptance", () => {
     expect(review.appealRefs.map((ref) => ref.id)).toEqual([
       "appeal.food-flow-pause-data-stewardship"
     ]);
-    expect(review.appealLifecycleRows).toEqual([
-      expect.objectContaining({
-        eventId: "event.governance.appeal.opened.food-flow-pause",
-        eventType: "governance.appeal.opened",
-        state: "under review",
-        appealRef: expect.objectContaining({
-          id: "appeal.food-flow-pause-data-stewardship"
+    expect(review.appealLifecycleRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventId: "event.governance.appeal.opened.food-flow-pause",
+          eventType: "governance.appeal.opened",
+          kind: "appeal",
+          state: "under review",
+          subjectRef: expect.objectContaining({
+            id: "appeal.food-flow-pause-data-stewardship"
+          }),
+          appealRef: expect.objectContaining({
+            id: "appeal.food-flow-pause-data-stewardship"
+          }),
+          targetRef: expect.objectContaining({
+            id: "decision.pause-and-revise-food-flow-policy"
+          })
         }),
-        targetRef: expect.objectContaining({
-          id: "decision.pause-and-revise-food-flow-policy"
+        expect.objectContaining({
+          eventId: "event.governance.appeal.reviewed.food-flow-pause",
+          eventType: "governance.appeal.reviewed",
+          state: "under review"
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.appeal.remedy_recorded.food-flow-pause",
+          eventType: "governance.appeal.remedy_recorded",
+          state: "remedied"
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.appeal.closed.food-flow-pause",
+          eventType: "governance.appeal.closed",
+          state: "upheld"
         })
-      }),
-      expect.objectContaining({
-        eventId: "event.governance.appeal.reviewed.food-flow-pause",
-        eventType: "governance.appeal.reviewed",
-        state: "under review"
-      }),
-      expect.objectContaining({
-        eventId: "event.governance.appeal.remedy_recorded.food-flow-pause",
-        eventType: "governance.appeal.remedy_recorded",
-        state: "remedy"
-      }),
-      expect.objectContaining({
-        eventId: "event.governance.appeal.closed.food-flow-pause",
-        eventType: "governance.appeal.closed",
-        state: "upheld"
-      })
+      ])
+    );
+    expect(review.conflictRefs.map((ref) => ref.id)).toEqual([
+      "conflict.food-flow-pause-data-stewardship"
     ]);
+    expect(review.conflictLifecycleRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventId: "event.governance.conflict.opened.food-flow-pause",
+          eventType: "governance.conflict.opened",
+          kind: "conflict",
+          state: "open",
+          subjectRef: expect.objectContaining({
+            id: "conflict.food-flow-pause-data-stewardship"
+          })
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.conflict.reviewed.food-flow-pause",
+          eventType: "governance.conflict.reviewed",
+          state: "in process"
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.conflict.remedy_recorded.food-flow-pause",
+          eventType: "governance.conflict.remedy_recorded",
+          state: "resolved"
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.conflict.closed.food-flow-pause",
+          eventType: "governance.conflict.closed",
+          state: "closed"
+        })
+      ])
+    );
+    expect(review.contestedOutcomeRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventId: "event.governance.appeal.reviewed.food-flow-pause",
+          disposition: "under review"
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.appeal.remedy_recorded.food-flow-pause",
+          disposition: "remedied"
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.appeal.closed.food-flow-pause",
+          disposition: "upheld"
+        }),
+        expect.objectContaining({
+          eventId: "event.governance.conflict.closed.food-flow-pause",
+          disposition: "closed"
+        })
+      ])
+    );
     expect(review.consentRecordedRefs.map((ref) => ref.id)).toEqual([
       "agreement.consent.school-kitchen-intake-export"
     ]);
@@ -213,8 +270,12 @@ describe("phase 7 Riverbend/Mill Creek acceptance", () => {
     expect(dashboardText).toContain("Adaptive Trust Review");
     expect(dashboardText).toContain("appeal:food-flow-pause-data-stewardship");
     expect(dashboardText).toContain("under review via governance.appeal.opened");
-    expect(dashboardText).toContain("remedy via governance.appeal.remedy_recorded");
+    expect(dashboardText).toContain("remedied via governance.appeal.remedy_recorded");
     expect(dashboardText).toContain("upheld via governance.appeal.closed");
+    expect(dashboardText).toContain("Conflict lifecycle");
+    expect(dashboardText).toContain("conflict:food-flow-pause-data-stewardship");
+    expect(dashboardText).toContain("Contested outcomes");
+    expect(dashboardText).toContain("remedied: Consent revocation remedy recorded");
     expect(dashboardText).toContain("Consent revoked");
     expect(dashboardText).toContain("consent_revoked");
   });

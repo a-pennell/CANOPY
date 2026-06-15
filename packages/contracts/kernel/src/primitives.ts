@@ -26,6 +26,7 @@ export type CanopyObjectType =
   | "claim"
   | "commitment"
   | "commons"
+  | "conflict"
   | "decision"
   | "decision-packet"
   | "evidence"

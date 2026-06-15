@@ -555,12 +555,15 @@ function TrustHardeningReview({ model }: { readonly model: CanopyWebModel }) {
     <div className="stack">
       <div className="reviewGrid">
         <KeyValue label="Appeal refs" value={formatRefs(review.appealRefs)} />
-        <KeyValue label="Appeal lifecycle" value={formatAppealLifecycle(review.appealLifecycleRows)} />
+        <KeyValue label="Appeal lifecycle" value={formatContestedLifecycle(review.appealLifecycleRows)} />
+        <KeyValue label="Conflict refs" value={formatRefs(review.conflictRefs)} />
+        <KeyValue label="Conflict lifecycle" value={formatContestedLifecycle(review.conflictLifecycleRows)} />
         <KeyValue label="Appeal path" value={formatRef(review.appealPathRef)} />
         <KeyValue label="Consent recorded" value={formatRefs(review.consentRecordedRefs)} />
         <KeyValue label="Consent revoked" value={formatRefs(review.consentRevokedRefs)} />
       </div>
       <div className="reviewGrid">
+        <KeyValue label="Contested outcomes" value={formatContestedOutcomes(review.contestedOutcomeRows)} />
         <KeyValue label="Redaction reasons" value={review.redactionReasons.join(", ")} />
         <KeyValue label="Redaction posture" value={review.redactionSummary} />
         <KeyValue label="Authority refs" value={formatRefs(review.authorityRefs.slice(0, 6))} />
@@ -570,15 +573,35 @@ function TrustHardeningReview({ model }: { readonly model: CanopyWebModel }) {
   );
 }
 
-function formatAppealLifecycle(
+function formatContestedLifecycle(
   rows: readonly {
-    readonly appealRef: { readonly type: string; readonly id: string };
+    readonly subjectRef: { readonly type: string; readonly id: string };
     readonly eventType: string;
     readonly state: string;
   }[]
 ): string {
+  if (rows.length === 0) {
+    return "none";
+  }
+
   return rows
-    .map((row) => `${formatRef(row.appealRef)} ${row.state} via ${row.eventType}`)
+    .map((row) => `${formatRef(row.subjectRef)} ${row.state} via ${row.eventType}`)
+    .join(", ");
+}
+
+function formatContestedOutcomes(
+  rows: readonly {
+    readonly subjectRef: { readonly type: string; readonly id: string };
+    readonly disposition: string;
+    readonly detail: string;
+  }[]
+): string {
+  if (rows.length === 0) {
+    return "none";
+  }
+
+  return rows
+    .map((row) => `${formatRef(row.subjectRef)} ${row.disposition}: ${row.detail}`)
     .join(", ");
 }
 
@@ -587,7 +610,7 @@ function formatRows(rows: readonly { readonly label: string; readonly value: num
 }
 
 function formatRefs(refs: readonly { readonly type: string; readonly id: string }[]): string {
-  return refs.map(formatRef).join(", ");
+  return refs.length === 0 ? "none" : refs.map(formatRef).join(", ");
 }
 
 function displayText(value: string): string {

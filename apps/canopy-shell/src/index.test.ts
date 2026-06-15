@@ -25,6 +25,7 @@ const resourceRef = ref("resource.cooling-center", "resource");
 const useRightRef = ref("use-right.cooling-center-shelter", "use-right");
 const objectionRef = ref("objection.school-data-stewardship", "objection");
 const appealRef = ref("appeal.school-data-stewardship", "appeal");
+const conflictRef = ref("conflict.school-data-stewardship", "conflict");
 const decisionPacketRef = ref("decision-packet.adaptive-school-need", "decision-packet");
 const evidenceRef = ref("evidence.school-contact", "evidence");
 const agreementRef = ref(
@@ -366,7 +367,7 @@ describe("canopy shell snapshot", () => {
       "Appeal refs: appeal:appeal.school-data-stewardship"
     );
     expect(session.screen.text).toContain(
-      "Conflict traces: claim:claim.school-need"
+      "Conflict refs: conflict:conflict.school-data-stewardship"
     );
     expect(session.screen.text).toContain("Redactions: present");
     expect(session.screen.text).toContain(
@@ -681,7 +682,7 @@ const adaptiveGovernanceEvents = [
     occurredAt,
     actorRef: ref("person.mira", "person"),
     objectRef: decisionPacketRef,
-    relatedRefs: [decisionRef, claimRef, evidenceRef, objectionRef, agreementRef],
+    relatedRefs: [decisionRef, claimRef, evidenceRef, objectionRef, conflictRef, agreementRef],
     authorityRefs: [decisionRef, mandateRef],
     orgId,
     sourceCapability: "governance",
@@ -693,6 +694,7 @@ const adaptiveGovernanceEvents = [
         evidenceRefs: [evidenceRef],
         authorityRefs: [decisionRef, mandateRef],
         unresolvedObjectionRefs: [objectionRef],
+        conflictRefs: [conflictRef],
         unresolvedObjectionsSummary: "A data-stewardship objection is preserved as a minority report.",
         conditions: [
           "Preserve the objection in the packet.",
@@ -723,6 +725,30 @@ const adaptiveGovernanceEvents = [
     sourceCapability: "claims-evidence",
     payload: {
       reason: "School contact evidence is disputed until redaction continuity is reviewed."
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "contested"
+  },
+  {
+    id: "event.governance.conflict.closed.school-data-stewardship",
+    type: "governance.conflict.closed",
+    occurredAt,
+    actorRef: ref("person.mira", "person"),
+    objectRef: conflictRef,
+    relatedRefs: [decisionRef, objectionRef, appealRef, evidenceRef],
+    authorityRefs: [mandateRef],
+    orgId,
+    sourceCapability: "governance",
+    payload: {
+      conflict: {
+        id: conflictRef.id,
+        type: "conflict",
+        title: "School data stewardship conflict",
+        status: "closed",
+        relatedDecisionRefs: [decisionRef],
+        remedyRefs: [appealRef]
+      }
     },
     schemaVersion: 1,
     visibility: "commons",

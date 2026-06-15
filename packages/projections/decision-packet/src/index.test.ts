@@ -303,6 +303,7 @@ describe("buildDecisionPacketProjection", () => {
     const amendmentRef = ref("amendment", "amendment-1");
     const objectionRef = ref("objection", "objection-1");
     const appealRef = ref("appeal", "appeal-1");
+    const conflictRef = ref("conflict", "conflict-1");
     const policyRef = ref("policy", "policy-1");
     const policyVersionRef = ref("policy", "policy-version-1");
     const evidenceRef = ref("evidence", "evidence-1", "evidence");
@@ -369,6 +370,21 @@ describe("buildDecisionPacketProjection", () => {
         }
       }),
       event({
+        id: "conflict-event",
+        type: "governance.conflict.closed",
+        objectRef: conflictRef,
+        relatedRefs: [decisionRef, objectionRef, appealRef, evidenceRef],
+        payload: {
+          conflict: {
+            id: conflictRef.id,
+            type: "conflict",
+            status: "closed",
+            title: "Export remedy conflict",
+            description: "Conflict closed after appeal remedy preserved redaction continuity."
+          }
+        }
+      }),
+      event({
         id: "policy-version-event",
         type: "governance.policy.versioned",
         objectRef: policyRef,
@@ -407,7 +423,15 @@ describe("buildDecisionPacketProjection", () => {
         id: "packet-event",
         type: "governance.decision_packet.recorded",
         objectRef: packetRef,
-        relatedRefs: [decisionRef, amendmentRef, objectionRef, appealRef, policyVersionRef, redactionRef],
+        relatedRefs: [
+          decisionRef,
+          amendmentRef,
+          objectionRef,
+          appealRef,
+          conflictRef,
+          policyVersionRef,
+          redactionRef
+        ],
         payload: {
           decisionPacket: {
             id: packetRef.id,
@@ -417,6 +441,7 @@ describe("buildDecisionPacketProjection", () => {
             amendmentRefs: [amendmentRef],
             evidenceRefs: [evidenceRef],
             unresolvedObjectionRefs: [objectionRef],
+            conflictRefs: [conflictRef],
             policyVersionRefs: [policyVersionRef],
             redactionSummary: {
               hasRedactions: true,
@@ -431,10 +456,12 @@ describe("buildDecisionPacketProjection", () => {
     expect(projection.amendmentRefs).toEqual([amendmentRef]);
     expect(projection.objectionRefs).toEqual([objectionRef]);
     expect(projection.appealRefs).toEqual([appealRef]);
+    expect(projection.conflictRefs).toEqual([conflictRef]);
     expect(projection.policyVersionRefs).toEqual([policyVersionRef]);
     expect(projection.amendments).toMatchObject([{ ref: amendmentRef, title: "Add appeal review condition" }]);
     expect(projection.objections).toMatchObject([{ ref: objectionRef, summary: "Minority report is preserved." }]);
     expect(projection.appeals).toMatchObject([{ ref: appealRef, summary: "Review redaction continuity before export." }]);
+    expect(projection.conflicts).toMatchObject([{ ref: conflictRef, title: "Export remedy conflict" }]);
     expect(projection.policyVersions).toMatchObject([{ ref: policyVersionRef, title: "Policy v2" }]);
     expect(projection.redaction).toMatchObject({
       reasons: ["consent_revoked"],
@@ -442,6 +469,7 @@ describe("buildDecisionPacketProjection", () => {
       continuityEventIds: ["redaction-event"]
     });
     expect(projection.eventTrail.find((entry) => entry.id === "appeal-event")?.roles).toContain("appeal");
+    expect(projection.eventTrail.find((entry) => entry.id === "conflict-event")?.roles).toContain("conflict");
     expect(projection.eventTrail.find((entry) => entry.id === "policy-version-event")?.roles).toContain("policy-version");
   });
 });

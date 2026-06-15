@@ -3,6 +3,7 @@ import type { ObjectRef } from "@canopy/contracts-kernel";
 import type {
   Appeal,
   Amendment,
+  Conflict,
   Decision,
   Objection,
   PolicyVersion,
@@ -30,11 +31,15 @@ import type {
 } from "@canopy/capabilities-ecological-modeling";
 import type {
   CloseAppealCommand,
+  CloseConflictCommand,
   CompleteGuardianReviewCommand,
   OpenAppealCommand,
+  OpenConflictCommand,
   RaiseObjectionCommand,
   RecordAppealRemedyCommand,
+  RecordConflictRemedyCommand,
   RequestGuardianReviewCommand,
+  ReviewConflictCommand,
   ReviewAppealCommand,
   SubmitAmendmentCommand,
   VersionPolicyCommand
@@ -73,20 +78,24 @@ import {
   executeCreateTaskCommand,
   executeCreateThresholdCommand,
   executeCloseAppealCommand,
+  executeCloseConflictCommand,
   executeApplyRedactionCommand,
   executeGrantUseRightCommand,
   executeLinkEvidenceToClaimCommand,
   executeOpenAppealCommand,
+  executeOpenConflictCommand,
   executeOpenProposalCommand,
   executePostLedgerEntryCommand,
   executeRaiseObjectionCommand,
   executeRecordAppealRemedyCommand,
+  executeRecordConflictRemedyCommand,
   executeRecordDecisionCommand,
   executeRecordFoodFlowCommand,
   executeRecordLearningOutcomeCommand,
   executeRecordThresholdBreachCommand,
   executeRequestRedactionCommand,
   executeRequestGuardianReviewCommand,
+  executeReviewConflictCommand,
   executeReviewAppealCommand,
   executeReverseLedgerEntryCommand,
   executeRevokeUseRightCommand,
@@ -122,6 +131,7 @@ const policyVersionRef = refIn(
   "governance"
 );
 const appealRef = refIn("appeal.water-rotation", "appeal", "governance");
+const conflictRef = refIn("conflict.water-rotation-export", "conflict", "governance");
 const roleAuthorityRef = ref("role.watershed-council", "role");
 const resourceRef = ref("resource.north-pasture", "resource");
 const holderRef = ref("person.eli", "person");
@@ -518,6 +528,65 @@ describe("command runtime", () => {
     ]);
   });
 
+  it("persists governance conflict lifecycle commands through outbox and projection rebuilds", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+    const services = servicesForTest();
+
+    const opened = await executeOpenConflictCommand({
+      command: openConflictCommand("event.helper.conflict.opened"),
+      services,
+      runtime
+    });
+    const reviewed = await executeReviewConflictCommand({
+      command: reviewConflictCommand("event.helper.conflict.reviewed"),
+      services,
+      runtime
+    });
+    const remedied = await executeRecordConflictRemedyCommand({
+      command: recordConflictRemedyCommand("event.helper.conflict.remedy-recorded"),
+      services,
+      runtime
+    });
+    const closed = await executeCloseConflictCommand({
+      command: closeConflictCommand("event.helper.conflict.closed"),
+      services,
+      runtime
+    });
+
+    expect([opened.event.type, reviewed.event.type, remedied.event.type, closed.event.type]).toEqual([
+      "governance.conflict.opened",
+      "governance.conflict.reviewed",
+      "governance.conflict.remedy_recorded",
+      "governance.conflict.closed"
+    ]);
+    expect(closed.event.objectRef).toEqual(conflictRef);
+    expect(closed.event.payload).toMatchObject({
+      conflict: {
+        status: "closed",
+        remedyRefs: [appealRef]
+      }
+    });
+    expect(runtime.getEvent(decisionRef.id)).toBeUndefined();
+    expect(
+      runtime
+        .listOutbox()
+        .filter((record) =>
+          [opened.event.id, reviewed.event.id, remedied.event.id, closed.event.id].includes(
+            record.eventId
+          )
+        )
+    ).toHaveLength(4);
+    expect(closed.projectionRebuild?.persistedStates.map((state) => state.id)).toContain(
+      "projection-state.authority"
+    );
+    expect(services.memory.replay().events.map((event) => event.type)).toEqual([
+      "governance.conflict.opened",
+      "governance.conflict.reviewed",
+      "governance.conflict.remedy_recorded",
+      "governance.conflict.closed"
+    ]);
+  });
+
   it("keeps open proposal as the create proposal runtime alias", () => {
     expect(executeOpenProposalCommand).toBe(executeCreateProposalCommand);
   });
@@ -858,6 +927,32 @@ function makeAppeal(overrides: Partial<Appeal> = {}): Appeal {
   };
 }
 
+function makeConflict(overrides: Partial<Conflict> = {}): Conflict {
+  return {
+    schemaVersion: "0.0.0",
+    id: conflictRef.id,
+    type: "conflict",
+    orgId,
+    status: "open",
+    createdAt: occurredAt,
+    createdByRef: actorRef,
+    authorityRefs: [roleAuthorityRef],
+    dataState: "locally_verified",
+    visibility: "commons",
+    dataStewardshipAgreementRefs: [],
+    conflictType: "data",
+    title: "Water rotation export conflict",
+    description: "Resolve contested export treatment for the water rotation decision.",
+    affectedRefs: [decisionRef, objectionRef],
+    participantRefs: [actorRef],
+    facilitatorRefs: [],
+    relatedIssueRefs: [issueRef],
+    relatedDecisionRefs: [decisionRef],
+    remedyRefs: [],
+    ...overrides
+  };
+}
+
 function submitAmendmentCommand(eventId: string): SubmitAmendmentCommand {
   return {
     eventId,
@@ -920,6 +1015,56 @@ function closeAppealCommand(eventId: string): CloseAppealCommand {
       status: "upheld",
       reviewerRefs: [roleAuthorityRef],
       outcome: "Appeal upheld after remedy.",
+      closedAt: occurredAt
+    })
+  };
+}
+
+function openConflictCommand(eventId: string): OpenConflictCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    conflict: makeConflict()
+  };
+}
+
+function reviewConflictCommand(eventId: string): ReviewConflictCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    conflict: makeConflict({
+      status: "in_process",
+      facilitatorRefs: [roleAuthorityRef]
+    })
+  };
+}
+
+function recordConflictRemedyCommand(eventId: string): RecordConflictRemedyCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    conflict: makeConflict({
+      status: "resolved",
+      facilitatorRefs: [roleAuthorityRef],
+      resolutionRef: appealRef,
+      remedyRefs: [appealRef]
+    })
+  };
+}
+
+function closeConflictCommand(eventId: string): CloseConflictCommand {
+  return {
+    eventId,
+    occurredAt,
+    actorRef,
+    conflict: makeConflict({
+      status: "closed",
+      facilitatorRefs: [roleAuthorityRef],
+      resolutionRef: appealRef,
+      remedyRefs: [appealRef],
       closedAt: occurredAt
     })
   };
