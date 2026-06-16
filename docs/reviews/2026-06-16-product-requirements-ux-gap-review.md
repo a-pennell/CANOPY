@@ -55,3 +55,7 @@ Inputs reviewed:
 ## Recommended Next Product Phase
 
 The next product phase should be an operator-ready Canopy shell: onboarding, daily work queues, command lifecycle, stewardship workbench, federation resolution, release-readiness dashboard, and observability drill-downs.
+
+Follow-up product framing:
+
+- `docs/product/2026-06-16-citizen-friendly-canopy-jtbd-workflows.md` reframes the shell around citizen-friendly jobs, workflows, plain-language navigation, and holonic UX rules.
