@@ -1,20 +1,29 @@
 import { describe, expect, it } from "vitest";
-import type { FederationTransportMessage } from "@canopy/contracts-adapters";
+import type {
+  FederationTransportAdapter,
+  FederationTransportMessage
+} from "@canopy/contracts-adapters";
 import type {
   CanopyEvent,
   CanopyExportEnvelope,
   CanopyId,
   ObjectRef
 } from "@canopy/contracts-kernel";
-import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
+import {
+  createCanonicalSqlExecutionPlan,
+  createInMemoryCanonicalPersistence
+} from "@canopy/database-runtime";
 import { createInMemoryMaterializedProjectionStore } from "@canopy/workflows-projection-rebuild";
 import {
   FederationReconciliationError,
   materializeFederatedEvent,
+  receiveAndReconcileFederationImports,
   reconcileFederationImport
 } from "./index.js";
 
 const receivedAt = "2026-06-15T09:30:00.000Z";
+const federationRuleRef = ref("agreement.upriver-data-sharing", "agreement");
+const exporterRef = ref("org.upriver-food-commons", "organization");
 
 describe("federation reconciliation workflow", () => {
   it("accepts a governed export envelope into canonical runtime state", () => {
@@ -48,6 +57,7 @@ describe("federation reconciliation workflow", () => {
     });
 
     expect(result.status).toBe("applied");
+    expect(result.trustAssessment.status).toBe("trusted");
     expect(result.decisions.map((decision) => decision.disposition)).toEqual([
       "accepted",
       "accepted"
@@ -64,6 +74,17 @@ describe("federation reconciliation workflow", () => {
       "claim.upriver-nitrate",
       "evidence.sensor-reading"
     ]);
+    expect(result.lifecycleEventRecords.map((record) => record.eventType)).toEqual([
+      "federation.import.received",
+      "federation.reconciliation.completed"
+    ]);
+    expect(result.lifecycleEventRecords[1]?.event.payload).toMatchObject({
+      status: "applied",
+      sourceEnvelopeId: envelope.id,
+      acceptedEventIds: result.eventRecords.map((record) => record.eventId),
+      quarantinedEventIds: [],
+      localMappingCount: 2
+    });
     expect(result.eventRecords).toHaveLength(2);
     expect(result.eventRecords[0]?.eventId).toBe(
       "event.federation.import.envelope-upriver-nitrate.event-claim-created-upriver-nitrate"
@@ -81,16 +102,18 @@ describe("federation reconciliation workflow", () => {
       importedFromFederationEventId: "event.claim.created.upriver-nitrate",
       importedAt: receivedAt
     });
-    expect(result.outboxRecords.map((record) => record.destination)).toEqual([
-      { kind: "workflow", name: "projection-rebuild" },
-      { kind: "workflow", name: "projection-rebuild" }
-    ]);
+    expect(result.outboxRecords.map((record) => record.destination)).toEqual(
+      Array.from({ length: 4 }, () => ({ kind: "workflow", name: "projection-rebuild" }))
+    );
     expect(result.adapterAuditRecords[0]).toMatchObject({
       adapterName: "workflow.federation-reconciliation",
       direction: "reconciliation",
       operation: "federation.import.reconcile",
       status: "succeeded",
-      eventIds: result.eventRecords.map((record) => record.eventId),
+      eventIds: [
+        ...result.lifecycleEventRecords.map((record) => record.eventId),
+        ...result.eventRecords.map((record) => record.eventId)
+      ],
       outboxIds: result.outboxRecords.map((record) => record.id)
     });
     expect(result.projectionRebuild?.persistedStates.map((state) => state.id)).toEqual([
@@ -104,11 +127,25 @@ describe("federation reconciliation workflow", () => {
     ]);
     expect(runtime.counts()).toMatchObject({
       mappings: 2,
-      events: 2,
-      outbox: 2,
+      events: 4,
+      outbox: 4,
       projectionStates: 7,
       adapterAudits: 1
     });
+    expect(
+      new Set(createCanonicalSqlExecutionPlan(runtime.listRecords()).statements.map(
+        (statement) => statement.tableName
+      ))
+    ).toEqual(
+      new Set([
+        "canopy_adapter_audit",
+        "canopy_canonical_mappings",
+        "canopy_events",
+        "canopy_object_refs",
+        "canopy_outbox",
+        "canopy_projection_state"
+      ])
+    );
   });
 
   it("treats a repeated federation message as duplicate-only and does not append events twice", () => {
@@ -122,12 +159,16 @@ describe("federation reconciliation workflow", () => {
 
     expect(result.status).toBe("duplicates-only");
     expect(result.eventRecords).toEqual([]);
-    expect(result.outboxRecords).toEqual([]);
+    expect(result.lifecycleEventRecords.map((record) => record.eventType)).toEqual([
+      "federation.import.received",
+      "federation.reconciliation.completed"
+    ]);
+    expect(result.outboxRecords).toHaveLength(2);
     expect(result.importReport.acceptedEventIds).toEqual([]);
     expect(result.adapterAuditRecords[0]?.status).toBe("skipped");
     expect(runtime.counts()).toMatchObject({
-      events: 1,
-      outbox: 1,
+      events: 4,
+      outbox: 4,
       adapterAudits: 1
     });
   });
@@ -161,9 +202,22 @@ describe("federation reconciliation workflow", () => {
     );
     expect(result.mappingRecords).toEqual([]);
     expect(result.eventRecords).toEqual([]);
-    expect(result.outboxRecords).toEqual([]);
+    expect(result.lifecycleEventRecords).toHaveLength(2);
+    expect(result.lifecycleEventRecords[1]?.event.payload).toMatchObject({
+      status: "quarantined",
+      quarantinedEventIds: expect.arrayContaining([
+        "event.federation.import.envelope-upriver-nitrate.event-claim-created-conflict",
+        "event.federation.import.envelope-upriver-nitrate.event-claim-created-private"
+      ]),
+      quarantineReview: expect.arrayContaining([
+        expect.objectContaining({
+          sourceEventId: "event.claim.created.private",
+          nextAction: "remediate"
+        })
+      ])
+    });
     expect(result.adapterAuditRecords[0]?.status).toBe("failed");
-    expect(runtime.counts()).toMatchObject({ events: 1, outbox: 0 });
+    expect(runtime.counts()).toMatchObject({ events: 3, outbox: 2 });
   });
 
   it("fails closed when the transport hash does not match the envelope", () => {
@@ -182,6 +236,151 @@ describe("federation reconciliation workflow", () => {
     expect(runtime.counts()).toMatchObject({ events: 0, mappings: 0 });
   });
 
+  it("receives ActivityPub-shaped transport pages into reconciliation and acknowledgement", async () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => receivedAt });
+    const events = [canopyEvent({ id: "event.claim.created.transport" })];
+    const envelope = exportEnvelope(events, { includeDataStewardshipAgreement: true });
+    const message = transportMessage({ envelope, events });
+    const acknowledgedMessageIds: string[] = [];
+    const transport: FederationTransportAdapter = {
+      descriptor: {
+        id: "adapter.activitypub.test",
+        kind: "federation-transport",
+        name: "ActivityPub test bridge",
+        provider: "activitypub",
+        sourceProject: "canopy",
+        version: "0.0.0",
+        schemaVersion: 1,
+        capabilities: ["import", "export"],
+        supportedObjectTypes: ["claim", "evidence"],
+        supportedEventTypes: ["claim.created"]
+      },
+      async health() {
+        return {
+          adapterId: "adapter.activitypub.test",
+          status: "healthy",
+          checkedAt: receivedAt,
+          warnings: []
+        };
+      },
+      async send(sentMessage) {
+        return { ok: true, value: sentMessage, errors: [] };
+      },
+      async receive() {
+        return {
+          ok: true,
+          value: {
+            items: [message],
+            hasMore: false
+          },
+          errors: []
+        };
+      },
+      async acknowledge(messageId) {
+        acknowledgedMessageIds.push(messageId);
+        return { ok: true, errors: [] };
+      }
+    };
+
+    const result = await receiveAndReconcileFederationImports({
+      transport,
+      runtime,
+      receivedAt,
+      trustPolicy: {
+        allowedSenderRefs: [envelope.exportedByRef],
+        allowedSchemaVersions: [1],
+        expectedFederationRuleRefs: [federationRuleRef],
+        requireDataStewardshipAgreement: true
+      }
+    });
+
+    expect(result.receivedMessageCount).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(result.acknowledgedMessageIds).toEqual([message.id]);
+    expect(acknowledgedMessageIds).toEqual([message.id]);
+    expect(result.reconciliations[0]).toMatchObject({
+      status: "applied",
+      trustAssessment: {
+        status: "trusted",
+        issues: []
+      }
+    });
+    expect(runtime.counts()).toMatchObject({
+      events: 3,
+      outbox: 3,
+      adapterAudits: 1
+    });
+  });
+
+  it("quarantines before append when pre-import trust checks fail", () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => receivedAt });
+    const event = canopyEvent({
+      id: "event.claim.created.untrusted",
+      requiresFederationSignature: true
+    });
+    const mismatchedRuleRef = ref("agreement.other-route", "agreement");
+    const envelope = exportEnvelope([event], {
+      exportedByRef: ref("org.untrusted-sender", "organization"),
+      federationRuleRef: mismatchedRuleRef,
+      includeDataStewardshipAgreement: false,
+      schemaVersion: 2
+    });
+    const message = transportMessage({
+      envelope,
+      events: [event],
+      federationRuleRef,
+      schemaVersion: 2
+    });
+
+    const result = reconcileFederationImport({
+      message,
+      runtime,
+      receivedAt,
+      trustPolicy: {
+        allowedSenderRefs: [ref("org.allowed-sender", "organization")],
+        allowedSchemaVersions: [1],
+        expectedFederationRuleRefs: [federationRuleRef],
+        requireDataStewardshipAgreement: true
+      }
+    });
+
+    expect(result.status).toBe("quarantined");
+    expect(result.trustAssessment).toMatchObject({
+      status: "rejected"
+    });
+    expect(result.trustAssessment.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "sender_authority_missing",
+        "schema_incompatible",
+        "federation_rule_mismatch",
+        "stewardship_agreement_missing",
+        "signature_required"
+      ])
+    );
+    expect(result.importReport.warnings.map((item) => item.code)).toEqual(
+      expect.arrayContaining([
+        "authority_refs_missing",
+        "schema_version_mismatch",
+        "federation_rule_conflict",
+        "stewardship_rule_conflict"
+      ])
+    );
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0]?.disposition).toBe("quarantined");
+    expect(result.eventRecords).toEqual([]);
+    expect(result.lifecycleEventRecords.map((record) => record.eventType)).toEqual([
+      "federation.import.received",
+      "federation.reconciliation.completed"
+    ]);
+    expect(result.outboxRecords).toHaveLength(2);
+    expect(result.adapterAuditRecords[0]?.status).toBe("failed");
+    expect(runtime.counts()).toMatchObject({
+      events: 2,
+      outbox: 2,
+      adapterAudits: 1
+    });
+  });
+
   it("materializes deterministic local ids for federated events", () => {
     const event = canopyEvent({ id: "event.claim.created.local-id" });
     const envelope = exportEnvelope([event]);
@@ -197,10 +396,12 @@ function transportMessage(input: {
   readonly envelope: CanopyExportEnvelope;
   readonly events: readonly CanopyEvent[];
   readonly contentHash?: string;
+  readonly federationRuleRef?: ObjectRef;
+  readonly schemaVersion?: number;
 }): FederationTransportMessage {
   return optionalTransportMessage({
     id: "message.upriver-nitrate",
-    federationRuleRef: ref("agreement.upriver-data-sharing", "agreement"),
+    federationRuleRef: input.federationRuleRef ?? federationRuleRef,
     sentAt: "2026-06-15T09:00:00.000Z",
     receivedAt,
     eventIds: input.events.map((event) => event.id),
@@ -210,22 +411,47 @@ function transportMessage(input: {
       events: input.events
     },
     contentHash: input.contentHash ?? input.envelope.contentHash,
-    schemaVersion: 1
+    schemaVersion: input.schemaVersion ?? 1
   });
 }
 
-function exportEnvelope(events: readonly CanopyEvent[]): CanopyExportEnvelope {
+function exportEnvelope(
+  events: readonly CanopyEvent[],
+  options: {
+    readonly exportedByRef?: ObjectRef;
+    readonly federationRuleRef?: ObjectRef;
+    readonly includeDataStewardshipAgreement?: boolean;
+    readonly schemaVersion?: number;
+  } = {}
+): CanopyExportEnvelope {
+  const schemaVersion = options.schemaVersion ?? 1;
+  const ruleRef = options.federationRuleRef ?? federationRuleRef;
   return {
     id: "envelope.upriver-nitrate",
     exportedAt: "2026-06-15T09:00:00.000Z",
-    exportedByRef: ref("org.upriver-food-commons", "organization"),
+    exportedByRef: options.exportedByRef ?? exporterRef,
     scopeRef: ref("commons.upriver-foodshed", "commons"),
     format: "json",
-    schemaVersion: 1,
+    schemaVersion,
     includes: [...new Set(events.map((event) => event.objectRef.type))].sort(),
-    authorityRefs: [ref("agreement.upriver-data-sharing", "agreement")],
-    federationRuleRef: ref("agreement.upriver-data-sharing", "agreement"),
-    dataStewardshipAgreements: [],
+    authorityRefs: [ruleRef],
+    federationRuleRef: ruleRef,
+    dataStewardshipAgreements:
+      options.includeDataStewardshipAgreement === true
+        ? [
+            {
+              id: "agreement.upriver-data-stewardship",
+              governedRef: ref("commons.upriver-foodshed", "commons"),
+              stewardRefs: [exporterRef],
+              visibility: "federation",
+              allowedUses: ["federation.import"],
+              prohibitedUses: ["reidentification"],
+              consentRequired: false,
+              federationRuleRef: ruleRef,
+              schemaVersion
+            }
+          ]
+        : [],
     localMappings: [],
     contentHash: "sha256:upriver-nitrate-export",
     contentHashFields: {
@@ -243,8 +469,9 @@ function canopyEvent(input: {
   readonly relatedRefs?: readonly ObjectRef[];
   readonly visibility?: CanopyEvent["visibility"];
   readonly redacted?: boolean;
+  readonly requiresFederationSignature?: boolean;
 }): CanopyEvent {
-  const authorityRef = ref("agreement.upriver-data-sharing", "agreement");
+  const authorityRef = federationRuleRef;
   const objectRef = input.objectRef ?? ref("claim.upriver-nitrate", "claim");
   return optionalEvent({
     id: input.id,
@@ -265,6 +492,17 @@ function canopyEvent(input: {
     schemaVersion: 1,
     visibility: input.visibility ?? "commons",
     contentHash: `sha256:${input.id}`,
+    ...(input.requiresFederationSignature === true
+      ? {
+          signingIntent: {
+            status: "required" as const,
+            requiredForFederation: true,
+            requiredForBindingAuthority: false,
+            signerRefs: [authorityRef],
+            reason: "Federation route requires a sender signature."
+          }
+        }
+      : {}),
     ...(input.redacted === true
       ? {
           redaction: {

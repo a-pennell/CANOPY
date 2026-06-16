@@ -1562,6 +1562,22 @@ function collectInvariantDriftAlerts(input: {
     });
   }
 
+  const federationImportItems = input.failedImportRemediation.items.filter(
+    (item) => item.operation === "federation.import.reconcile"
+  );
+  if (federationImportItems.length > 0) {
+    alerts.push({
+      id: "drift.federation-import.quarantine-open",
+      level: federationImportItems.some((item) => item.severity === "blocked")
+        ? "critical"
+        : "warning",
+      invariant: "federation imports resolve through explicit reconciliation",
+      message: "Federation import reconciliation has quarantined or partial records.",
+      evidenceIds: federationImportItems.map((item) => item.id),
+      action: "Open the federation quarantine review, then accept, reject, or remediate each remote record."
+    });
+  }
+
   return alerts;
 }
 

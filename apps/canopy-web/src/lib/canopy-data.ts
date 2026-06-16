@@ -203,6 +203,8 @@ export interface CanopyWebFederationImportReview {
   readonly localMappingCount: number;
   readonly warnings: readonly string[];
   readonly eventTrail: readonly string[];
+  readonly quarantineReview: readonly string[];
+  readonly learningOutputs: readonly string[];
 }
 
 export interface CanopyWebAdaptiveBranchReview {
@@ -290,6 +292,9 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   }
   for (const mapping of phase9Slice.federationReconciliation.mappingRecords) {
     runtime.putMapping(mapping);
+  }
+  for (const record of phase9Slice.federationReconciliation.lifecycleEventRecords) {
+    runtime.appendEvent(record.event, { recordedAt: generatedAt });
   }
   for (const record of phase9Slice.federationReconciliation.eventRecords) {
     runtime.appendEvent(record.event, { recordedAt: generatedAt });
@@ -1091,6 +1096,10 @@ function buildFederationImportReview(input: {
   const reconciliationEvents = events.filter(
     (event) => event.type === "federation.reconciliation.completed"
   );
+  const latestReconciliationEvent = reconciliationEvents.at(-1);
+  const latestReconciliationPayload = isRecord(latestReconciliationEvent?.payload)
+    ? latestReconciliationEvent.payload
+    : undefined;
   const federatedEvents = events.filter((event) => event.provenance?.kind === "federated");
   const reconciliationAudits = input.runtime.listAdapterAudits().filter(
     (audit) => audit.operation === "federation.import.reconcile"
@@ -1107,11 +1116,13 @@ function buildFederationImportReview(input: {
   );
   const localMappingCount =
     numberField(coreState, "localMappingCount") ??
+    numberField(latestReconciliationPayload, "localMappingCount") ??
     arrayCountField(coreState, "localMappings") ??
     arrayCountField(coreState, "localMappingIds") ??
     input.runtime.listMappings().length;
   const acceptedEventCount =
     numberField(coreState, "acceptedEventCount") ??
+    arrayCountField(latestReconciliationPayload, "acceptedEventIds") ??
     arrayCountField(coreState, "acceptedEventIds") ??
     arrayCountField(auditMetadata, "acceptedEventIds") ??
     nonZeroCount(federatedEvents.length) ??
@@ -1119,24 +1130,32 @@ function buildFederationImportReview(input: {
     importEvents.length;
   const quarantinedEventCount =
     numberField(coreState, "quarantinedEventCount") ??
+    arrayCountField(latestReconciliationPayload, "quarantinedEventIds") ??
     arrayCountField(coreState, "quarantinedEventIds") ??
     auditDispositionCount(auditMetadata, "quarantined") ??
     events.filter((event) => dispositionForEvent(event) === "quarantined").length;
-  const redactionStubWarnings = [
+  const redactionStubWarnings = uniqueStrings([
     ...warningMessagesByCode(coreState, "redaction_stub_only"),
+    ...warningMessagesByCode(latestReconciliationPayload, "redaction_stub_only"),
     ...(latestReconciliationAudit?.warnings ?? []).filter(isRedactionStubWarning),
     ...events
       .filter((event) => event.redaction?.isRedactedStub === true)
       .map((event) => `redaction_stub_only: ${event.id}`)
-  ];
+  ]);
   const importedEnvelopeId =
     stringField(coreState, "importedEnvelopeId") ??
     stringField(coreState, "sourceEnvelopeId") ??
     stringField(coreState, "envelopeId") ??
+    stringField(latestReconciliationPayload, "sourceEnvelopeId") ??
+    stringField(latestReconciliationPayload, "importedEnvelopeId") ??
+    stringField(latestReconciliationPayload, "envelopeId") ??
     firstFederatedEnvelopeId(federatedEvents) ??
     firstImportEnvelopeId(importEvents) ??
     "awaiting-federation-import-envelope";
-  const coreStatus = stringField(coreState, "reconciliationStatus") ?? stringField(coreState, "status");
+  const coreStatus =
+    stringField(coreState, "reconciliationStatus") ??
+    stringField(coreState, "status") ??
+    stringField(latestReconciliationPayload, "status");
   const reconciliationStatus =
     coreStatus ??
     auditReconciliationStatus(latestReconciliationAudit?.status) ??
@@ -1145,12 +1164,21 @@ function buildFederationImportReview(input: {
       : importEvents.length > 0 || federatedEvents.length > 0
         ? "pending-core-workflow"
         : "awaiting-import");
-  const warnings = [
+  const warnings = uniqueStrings([
     ...warningMessages(coreState),
+    ...warningMessages(latestReconciliationPayload),
     ...(latestReconciliationAudit?.warnings ?? []),
     ...(latestReconciliationAudit?.errors ?? []),
     ...(input.federationReview?.readinessWarnings ?? [])
-  ];
+  ]);
+  const quarantineReview = firstNonEmpty(
+    federationQuarantineReview(coreState),
+    federationQuarantineReview(latestReconciliationPayload)
+  );
+  const learningOutputs = firstNonEmpty(
+    federationLearningOutputs(coreState),
+    federationLearningOutputs(latestReconciliationPayload)
+  );
 
   return {
     importedEnvelopeId,
@@ -1160,7 +1188,9 @@ function buildFederationImportReview(input: {
     redactionStubWarnings,
     localMappingCount,
     warnings,
-    eventTrail: [...importEvents, ...federatedEvents, ...reconciliationEvents].map((event) => event.id).slice(0, 8)
+    eventTrail: [...importEvents, ...federatedEvents, ...reconciliationEvents].map((event) => event.id).slice(0, 8),
+    quarantineReview,
+    learningOutputs
   };
 }
 
@@ -1481,8 +1511,49 @@ function nonZeroCount(value: number): number | undefined {
   return value === 0 ? undefined : value;
 }
 
+function firstNonEmpty<T>(primary: readonly T[], fallback: readonly T[]): readonly T[] {
+  return primary.length > 0 ? primary : fallback;
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
+}
+
 function isRedactionStubWarning(message: string): boolean {
   return message.toLowerCase().includes("redaction stub");
+}
+
+function federationQuarantineReview(
+  value: Readonly<Record<string, unknown>> | undefined
+): readonly string[] {
+  return arrayField(value, "quarantineReview").flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+
+    const sourceEventId = stringField(item, "sourceEventId");
+    const nextAction = stringField(item, "nextAction");
+    const recommendedAction = stringField(item, "recommendedAction");
+
+    return sourceEventId === undefined || nextAction === undefined
+      ? []
+      : [`${nextAction}: ${sourceEventId}${recommendedAction === undefined ? "" : ` - ${recommendedAction}`}`];
+  });
+}
+
+function federationLearningOutputs(
+  value: Readonly<Record<string, unknown>> | undefined
+): readonly string[] {
+  return arrayField(value, "learningOutputs").flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+
+    const label = stringField(item, "label");
+    const outputValue = stringField(item, "value");
+
+    return label === undefined || outputValue === undefined ? [] : [`${label}: ${outputValue}`];
+  });
 }
 
 function warningMessages(

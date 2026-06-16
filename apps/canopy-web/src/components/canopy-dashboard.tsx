@@ -575,6 +575,8 @@ function FederationImportReview({ model }: { readonly model: CanopyWebModel }) {
       <div className="reviewGrid">
         <KeyValue label="Warnings" value={formatList(review.warnings)} />
         <KeyValue label="Import trail" value={formatList(review.eventTrail)} />
+        <KeyValue label="Quarantine review" value={formatList(review.quarantineReview)} />
+        <KeyValue label="Learning outputs" value={formatList(review.learningOutputs)} />
       </div>
     </div>
   );

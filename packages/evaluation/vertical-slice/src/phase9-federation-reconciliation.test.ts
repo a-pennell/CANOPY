@@ -4,6 +4,7 @@ import {
   executeRiverbendTrustHardeningSlice
 } from "./index.js";
 import { reconcileFederationImport } from "@canopy/workflows-federation-reconciliation";
+import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
 
 describe("Phase 9 Riverbend federation reconciliation", () => {
   it("imports the Phase 8 export envelope into a receiving canonical runtime", () => {
@@ -17,6 +18,16 @@ describe("Phase 9 Riverbend federation reconciliation", () => {
       phase8.federationExport.preview.eventIds
     );
     expect(phase9.federationReconciliation.status).toBe("applied");
+    expect(phase9.federationReconciliation.trustAssessment.status).toBe("trusted");
+    expect(phase9.federationReconciliation.lifecycleEventRecords.map((record) => record.eventType)).toEqual([
+      "federation.import.received",
+      "federation.reconciliation.completed"
+    ]);
+    expect(phase9.federationReconciliation.lifecycleEventRecords[1]?.event.payload).toMatchObject({
+      status: "applied",
+      trustStatus: "trusted",
+      sourceEnvelopeId: phase9.federationExport.envelope.id
+    });
     expect(phase9.phase9EventIds).toHaveLength(phase9.federationTransportMessage.eventIds.length);
     expect(phase9.phase9EventIds.every((eventId) =>
       eventId.startsWith("event.federation.import.")
@@ -26,8 +37,8 @@ describe("Phase 9 Riverbend federation reconciliation", () => {
     );
     expect(phase9.federationReceivingRuntime.counts()).toMatchObject({
       mappings: phase9.federationReconciliation.mappingRecords.length,
-      events: phase9.phase9EventIds.length,
-      outbox: phase9.phase9EventIds.length,
+      events: phase9.phase9EventIds.length + phase9.federationReconciliation.lifecycleEventRecords.length,
+      outbox: phase9.phase9EventIds.length + phase9.federationReconciliation.lifecycleEventRecords.length,
       projectionStates: 7,
       adapterAudits: 1
     });
@@ -79,10 +90,45 @@ describe("Phase 9 Riverbend federation reconciliation", () => {
 
     expect(duplicate.status).toBe("duplicates-only");
     expect(duplicate.eventRecords).toEqual([]);
-    expect(duplicate.outboxRecords).toEqual([]);
+    expect(duplicate.lifecycleEventRecords.map((record) => record.eventType)).toEqual([
+      "federation.import.received",
+      "federation.reconciliation.completed"
+    ]);
+    expect(duplicate.outboxRecords).toHaveLength(2);
     expect(duplicate.adapterAuditRecords[0]?.status).toBe("skipped");
     expect(phase9.federationReceivingRuntime.counts().events).toBe(
-      phase9.phase9EventIds.length
+      phase9.phase9EventIds.length + 3
     );
+  });
+
+  it("quarantines the Riverbend export when strict stewardship agreement presence is required", () => {
+    const phase9 = executeRiverbendFederationReconciliationSlice();
+    const runtime = createInMemoryCanonicalPersistence({
+      now: () => "2026-06-14T12:00:00.000Z"
+    });
+
+    expect(phase9.federationExport.envelope.dataStewardshipAgreements).toEqual([]);
+
+    const strict = reconcileFederationImport({
+      message: phase9.federationTransportMessage,
+      runtime,
+      receivedAt: "2026-06-14T12:00:00.000Z",
+      trustPolicy: {
+        allowedSenderRefs: [phase9.federationExport.envelope.exportedByRef],
+        allowedSchemaVersions: [phase9.federationExport.envelope.schemaVersion],
+        expectedFederationRuleRefs: [phase9.refs.dataStewardshipAgreementRef],
+        requireDataStewardshipAgreement: true
+      }
+    });
+
+    expect(strict.status).toBe("quarantined");
+    expect(strict.trustAssessment.issues.map((issue) => issue.code)).toEqual([
+      "stewardship_agreement_missing"
+    ]);
+    expect(strict.eventRecords).toEqual([]);
+    expect(strict.lifecycleEventRecords[1]?.event.payload).toMatchObject({
+      trustStatus: "rejected",
+      trustIssueCodes: ["stewardship_agreement_missing"]
+    });
   });
 });

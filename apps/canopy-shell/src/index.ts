@@ -20,6 +20,9 @@ import type {
   CanopyUiDecisionPacketOutcomeSummary,
   CanopyUiDecisionPacketViewModel,
   CanopyUiFederationExportStateViewModel,
+  CanopyUiFederationImportReconciliationViewModel,
+  CanopyUiFederationLearningOutput,
+  CanopyUiFederationQuarantineReviewItem,
   CanopyUiImportReviewCandidate,
   CanopyUiImportReviewViewModel,
   CanopyUiObjectPageViewModel,
@@ -676,6 +679,8 @@ function renderRouteLines(
       return renderImportReview(snapshot);
     case "federation-export-state":
       return renderFederationExportState(snapshot);
+    case "federation-import-reconciliation":
+      return renderFederationExportState(snapshot);
     case "authority-trace":
       return renderAuthorityTrace(snapshot);
     case "source-provenance-panel":
@@ -836,6 +841,7 @@ function renderImportReview(snapshot: CanopyShellSnapshot): readonly string[] {
 
 function renderFederationExportState(snapshot: CanopyShellSnapshot): readonly string[] {
   const state = snapshot.surfaces.federationExportState;
+  const importState = snapshot.surfaces.federationImportReconciliationState;
 
   if (state === undefined) {
     return renderUnavailableRoute(
@@ -861,6 +867,18 @@ function renderFederationExportState(snapshot: CanopyShellSnapshot): readonly st
     state.redactionSummary === undefined
       ? "Redaction summary: none"
       : `Redaction summary: ${state.redactionSummary.redactionCount} redactions, removed fields=${state.redactionSummary.removedFields.join(", ") || "none"}`,
+    importState === undefined
+      ? "Federation import: none"
+      : `Federation import: ${importState.reconciliationStatus}; accepted=${importState.acceptedEventCount}; quarantined=${importState.quarantinedEventCount}`,
+    importState === undefined
+      ? undefined
+      : `Imported envelope: ${importState.importedEnvelopeId}`,
+    importState === undefined || importState.quarantineReview.length === 0
+      ? undefined
+      : `Quarantine review: ${importState.quarantineReview.map((item) => `${item.nextAction}:${item.sourceEventId}`).join(", ")}`,
+    importState === undefined || importState.learningOutputs.length === 0
+      ? undefined
+      : `Learning outputs: ${importState.learningOutputs.map((item) => `${item.label}=${item.value}`).join(", ")}`,
     ...state.readinessWarnings.map((warning) => `- readiness ${warning.code}: ${warning.message}`)
   ]);
 }
@@ -1476,6 +1494,7 @@ function buildShellSurfaces(input: {
             input.federationExport,
             projectionReadFor(input.projectionReads, "federation-export")
           ),
+    federationImportReconciliationState: buildFederationImportReconciliationViewModel(input.events),
     importReview
   });
 }
@@ -1775,6 +1794,123 @@ function buildFederationExportStateViewModel(
     readinessWarnings: federationExport.preview.federationReadinessWarnings,
     projectionRead
   });
+}
+
+function buildFederationImportReconciliationViewModel(
+  events: readonly CanopyEvent[]
+): CanopyUiFederationImportReconciliationViewModel | undefined {
+  const federatedEvents = events.filter((event) => event.provenance?.kind === "federated");
+  const importEvents = events.filter((event) => event.type === "federation.import.received");
+  const reconciliationEvents = events.filter(
+    (event) => event.type === "federation.reconciliation.completed"
+  );
+  const latestReconciliation = reconciliationEvents.at(-1);
+
+  if (federatedEvents.length === 0 && importEvents.length === 0 && latestReconciliation === undefined) {
+    return undefined;
+  }
+
+  const acceptedEventIds =
+    payloadStringArray(latestReconciliation?.payload, "acceptedEventIds") ??
+    federatedEvents.map((event) => event.id);
+  const duplicateEventIds =
+    payloadStringArray(latestReconciliation?.payload, "duplicateEventIds") ?? [];
+  const quarantinedEventIds =
+    payloadStringArray(latestReconciliation?.payload, "quarantinedEventIds") ?? [];
+  const warnings = payloadStringArray(latestReconciliation?.payload, "warnings") ?? [];
+  const importedEnvelopeId =
+    payloadString(latestReconciliation?.payload, "sourceEnvelopeId") ??
+    firstFederationEnvelopeId(federatedEvents) ??
+    payloadString(importEvents[0]?.payload, "sourceEnvelopeId") ??
+    "unknown-federation-envelope";
+  const status =
+    payloadString(latestReconciliation?.payload, "status") ??
+    (federatedEvents.length > 0 ? "applied" : "received");
+  const localMappingCount =
+    payloadNumber(latestReconciliation?.payload, "localMappingCount") ??
+    dedupeRefs(federatedEvents.map((event) => event.objectRef)).length;
+  const redactionStubWarnings = warnings.filter((message) =>
+    message.toLowerCase().includes("redaction stub")
+  );
+  const quarantineReview = payloadRecords(latestReconciliation?.payload, "quarantineReview")
+    .map(toFederationQuarantineReviewItem)
+    .filter(isDefined);
+  const learningOutputs = payloadRecords(latestReconciliation?.payload, "learningOutputs")
+    .map(toFederationLearningOutput)
+    .filter(isDefined);
+
+  return {
+    kind: "federation-import-reconciliation",
+    importedEnvelopeId,
+    reconciliationStatus: status,
+    acceptedEventIds,
+    duplicateEventIds,
+    quarantinedEventIds,
+    acceptedEventCount: acceptedEventIds.length,
+    duplicateEventCount: duplicateEventIds.length,
+    quarantinedEventCount: quarantinedEventIds.length,
+    localMappingCount,
+    warnings,
+    redactionStubWarnings,
+    eventTrail: [...importEvents, ...federatedEvents, ...reconciliationEvents].map((event) => event.id),
+    quarantineReview,
+    learningOutputs
+  };
+}
+
+function firstFederationEnvelopeId(events: readonly CanopyEvent[]): string | undefined {
+  for (const event of events) {
+    const envelopeId =
+      payloadString(event.payload, "importedFromFederationEnvelopeId") ??
+      event.provenance?.sourceEnvelopeId;
+
+    if (envelopeId !== undefined) {
+      return envelopeId;
+    }
+  }
+
+  return undefined;
+}
+
+function toFederationQuarantineReviewItem(
+  value: Readonly<Record<string, unknown>>
+): CanopyUiFederationQuarantineReviewItem | undefined {
+  const sourceEventId = payloadString(value, "sourceEventId");
+  const localEventId = payloadString(value, "localEventId");
+  const objectRef = payloadObjectRef(value, "objectRef");
+  const severity = payloadString(value, "severity");
+  const nextAction = payloadString(value, "nextAction");
+
+  if (
+    sourceEventId === undefined ||
+    localEventId === undefined ||
+    objectRef === undefined ||
+    !isFederationWarningSeverity(severity) ||
+    !isFederationQuarantineNextAction(nextAction)
+  ) {
+    return undefined;
+  }
+
+  return {
+    sourceEventId,
+    localEventId,
+    objectRef,
+    warningCodes: payloadStringArray(value, "warningCodes") ?? [],
+    severity,
+    recommendedAction: payloadString(value, "recommendedAction") ?? "Review before import.",
+    nextAction
+  };
+}
+
+function toFederationLearningOutput(
+  value: Readonly<Record<string, unknown>>
+): CanopyUiFederationLearningOutput | undefined {
+  const label = payloadString(value, "label");
+  const outputValue = payloadString(value, "value");
+
+  return label === undefined || outputValue === undefined
+    ? undefined
+    : { label, value: outputValue };
 }
 
 function toClaimEvidenceClaimSummary(
@@ -2118,6 +2254,9 @@ function optionalShellSurfaces(surfaces: {
   readonly decisionPacket: CanopyUiDecisionPacketViewModel | undefined;
   readonly resourceStewardship: CanopyUiResourceStewardshipViewModel | undefined;
   readonly federationExportState: CanopyUiFederationExportStateViewModel | undefined;
+  readonly federationImportReconciliationState:
+    | CanopyUiFederationImportReconciliationViewModel
+    | undefined;
   readonly importReview: CanopyUiImportReviewViewModel | undefined;
 }): CanopyUiShellSurfaces {
   const optionalFields: {
@@ -2125,6 +2264,7 @@ function optionalShellSurfaces(surfaces: {
     decisionPacket?: CanopyUiDecisionPacketViewModel;
     resourceStewardship?: CanopyUiResourceStewardshipViewModel;
     federationExportState?: CanopyUiFederationExportStateViewModel;
+    federationImportReconciliationState?: CanopyUiFederationImportReconciliationViewModel;
     importReview?: CanopyUiImportReviewViewModel;
   } = {};
 
@@ -2142,6 +2282,11 @@ function optionalShellSurfaces(surfaces: {
 
   if (surfaces.federationExportState !== undefined) {
     optionalFields.federationExportState = surfaces.federationExportState;
+  }
+
+  if (surfaces.federationImportReconciliationState !== undefined) {
+    optionalFields.federationImportReconciliationState =
+      surfaces.federationImportReconciliationState;
   }
 
   if (surfaces.importReview !== undefined) {
@@ -2687,6 +2832,78 @@ function eventNamespace(eventType: CanopyEvent["type"]): CanopyEventNamespace {
 
 function sortedStrings<T extends string>(values: readonly T[]): readonly T[] {
   return [...new Set(values)].sort();
+}
+
+function payloadString(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): string | undefined {
+  const field = value?.[key];
+
+  return typeof field === "string" ? field : undefined;
+}
+
+function payloadNumber(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): number | undefined {
+  const field = value?.[key];
+
+  return typeof field === "number" ? field : undefined;
+}
+
+function payloadStringArray(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): readonly string[] | undefined {
+  const field = value?.[key];
+
+  return Array.isArray(field) ? field.filter((item): item is string => typeof item === "string") : undefined;
+}
+
+function payloadRecords(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): readonly Readonly<Record<string, unknown>>[] {
+  const field = value?.[key];
+
+  return Array.isArray(field) ? field.filter(isRecord) : [];
+}
+
+function payloadObjectRef(
+  value: Readonly<Record<string, unknown>> | undefined,
+  key: string
+): ObjectRef | undefined {
+  const field = value?.[key];
+
+  return isObjectRef(field) ? field : undefined;
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isObjectRef(value: unknown): value is ObjectRef {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.type === "string" &&
+    isCanopyObjectType(value.type) &&
+    typeof value.namespace === "string" &&
+    typeof value.lifecycleStatus === "string"
+  );
+}
+
+function isFederationWarningSeverity(
+  value: string | undefined
+): value is CanopyUiFederationQuarantineReviewItem["severity"] {
+  return value === "info" || value === "warning" || value === "error";
+}
+
+function isFederationQuarantineNextAction(
+  value: string | undefined
+): value is CanopyUiFederationQuarantineReviewItem["nextAction"] {
+  return value === "accept" || value === "reject" || value === "remediate";
 }
 
 function isDefined<T>(value: T | undefined): value is T {

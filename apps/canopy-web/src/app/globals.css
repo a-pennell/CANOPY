@@ -256,6 +256,7 @@ a {
   display: grid;
   align-content: start;
   gap: calc(var(--canopy-grid) * 6);
+  min-width: 0;
   padding: calc(var(--canopy-grid) * 8);
 }
 
@@ -332,6 +333,7 @@ a {
   align-content: start;
   gap: calc(var(--canopy-grid) * 4);
   min-height: 220px;
+  min-width: 0;
   padding: calc(var(--canopy-grid) * 5);
 }
 
@@ -342,6 +344,13 @@ a {
 .panelHeader {
   display: grid;
   gap: var(--canopy-grid);
+  min-width: 0;
+}
+
+.panelHeader h3,
+.panelHeader .eyebrow {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .metric {
@@ -394,6 +403,7 @@ a {
 .eventTrail {
   display: grid;
   gap: calc(var(--canopy-grid) * 3);
+  min-width: 0;
 }
 
 .ledgerRow,
@@ -409,6 +419,7 @@ a {
   justify-content: space-between;
   gap: calc(var(--canopy-grid) * 3);
   min-height: 56px;
+  min-width: 0;
   padding: calc(var(--canopy-grid) * 3);
   border: 1px solid var(--canopy-line);
   border-radius: var(--canopy-radius);
@@ -552,6 +563,8 @@ a {
   align-items: flex-start;
   justify-content: space-between;
   gap: calc(var(--canopy-grid) * 4);
+  min-width: 0;
+  width: 100%;
   padding: calc(var(--canopy-grid) * 4);
   border: 1px solid var(--canopy-line);
   border-radius: var(--canopy-radius);
@@ -580,6 +593,8 @@ a {
 
 .objectHeader span,
 .mutationHeader span {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--canopy-lake);
   font-size: 11px;
   font-weight: 650;
@@ -588,6 +603,9 @@ a {
 
 .objectHeader strong,
 .mutationHeader strong {
+  min-width: 0;
+  max-height: 78px;
+  overflow: auto;
   overflow-wrap: anywhere;
   color: var(--canopy-text);
   font-size: 18px;
@@ -595,6 +613,10 @@ a {
 
 .objectHeader small,
 .mutationHeader small {
+  min-width: 0;
+  max-height: 64px;
+  overflow: auto;
+  overflow-wrap: anywhere;
   color: var(--canopy-text-soft);
   font-size: 12px;
   line-height: 1.45;
@@ -612,12 +634,18 @@ a {
   display: grid;
   justify-content: stretch;
   min-height: 64px;
+  min-width: 0;
 }
 
 .keyValue strong {
+  min-width: 0;
+  max-height: 88px;
+  overflow: auto;
+  overflow-wrap: anywhere;
   color: var(--canopy-text-soft);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
+  line-height: 1.45;
 }
 
 .timelineRow {

@@ -23,6 +23,7 @@ export type CanopyUiSurfaceKind =
   | "decision-packet"
   | "resource-stewardship"
   | "federation-export-state"
+  | "federation-import-reconciliation"
   | "import-review";
 
 export type CanopyUiProjectionReadKind = "live" | "materialized";
@@ -337,6 +338,39 @@ export interface CanopyUiFederationExportStateViewModel {
   readonly projectionRead: CanopyUiProjectionRead;
 }
 
+export interface CanopyUiFederationQuarantineReviewItem {
+  readonly sourceEventId: CanopyId;
+  readonly localEventId: CanopyId;
+  readonly objectRef: ObjectRef;
+  readonly warningCodes: readonly string[];
+  readonly severity: "info" | "warning" | "error";
+  readonly recommendedAction: string;
+  readonly nextAction: "accept" | "reject" | "remediate";
+}
+
+export interface CanopyUiFederationLearningOutput {
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface CanopyUiFederationImportReconciliationViewModel {
+  readonly kind: "federation-import-reconciliation";
+  readonly importedEnvelopeId: CanopyId;
+  readonly reconciliationStatus: string;
+  readonly acceptedEventIds: readonly CanopyId[];
+  readonly duplicateEventIds: readonly CanopyId[];
+  readonly quarantinedEventIds: readonly CanopyId[];
+  readonly acceptedEventCount: number;
+  readonly duplicateEventCount: number;
+  readonly quarantinedEventCount: number;
+  readonly localMappingCount: number;
+  readonly warnings: readonly string[];
+  readonly redactionStubWarnings: readonly string[];
+  readonly eventTrail: readonly CanopyId[];
+  readonly quarantineReview: readonly CanopyUiFederationQuarantineReviewItem[];
+  readonly learningOutputs: readonly CanopyUiFederationLearningOutput[];
+}
+
 export interface CanopyUiImportReviewCandidate {
   readonly id: CanopyId;
   readonly source: LocalSourcePointer;
@@ -387,6 +421,7 @@ export interface CanopyUiShellSurfaces {
   readonly decisionPacket?: CanopyUiDecisionPacketViewModel;
   readonly resourceStewardship?: CanopyUiResourceStewardshipViewModel;
   readonly federationExportState?: CanopyUiFederationExportStateViewModel;
+  readonly federationImportReconciliationState?: CanopyUiFederationImportReconciliationViewModel;
   readonly importReview?: CanopyUiImportReviewViewModel;
 }
 

@@ -152,10 +152,20 @@ describe("phase 7 Riverbend/Mill Creek acceptance", () => {
     expect(review.localMappingCount).toBeGreaterThan(0);
     expect(review.eventTrail.some((eventId) => eventId.startsWith("event.federation.import."))).toBe(true);
     expect(review.redactionStubWarnings.length).toBeGreaterThan(0);
+    expect(review.learningOutputs).toEqual(
+      expect.arrayContaining([
+        "import_status: applied",
+        expect.stringMatching(/^accepted_events: /),
+        "quarantined_events: 0",
+        "trust_status: trusted"
+      ])
+    );
     expect(dashboardText).toContain("Federation Import & Reconciliation");
     expect(dashboardText).toContain("Imported envelope");
     expect(dashboardText).toContain("applied");
     expect(dashboardText).toContain("Quarantined events");
+    expect(dashboardText).toContain("Learning outputs");
+    expect(dashboardText).toContain("trust_status: trusted");
     expect(dashboardText).toContain("Redaction-stub warnings");
   });
 

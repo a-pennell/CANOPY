@@ -318,6 +318,37 @@ describe("canopy operations workflow", () => {
     );
   });
 
+  it("raises a federation-specific drift alert for quarantined import reconciliation", () => {
+    const runtime = createInMemoryCanonicalPersistence({ now: () => now });
+    runtime.putAdapterAudit(failedFederationImportAuditRecord());
+
+    const report = buildCanopyOperationsReport({
+      runtime,
+      generatedAt: "2026-06-13T19:35:00.000Z",
+      expectedProjectionNames: []
+    });
+
+    expect(report.failedImportRemediation.items).toEqual([
+      expect.objectContaining({
+        id: "adapter-audit.federation-import.failed",
+        operation: "federation.import.reconcile",
+        severity: "blocked"
+      })
+    ]);
+    expect(report.invariantDriftAlerts.map((alert) => alert.id)).toEqual(
+      expect.arrayContaining([
+        "drift.import-remediation.open",
+        "drift.federation-import.quarantine-open"
+      ])
+    );
+    expect(report.invariantDriftAlerts.find(
+      (alert) => alert.id === "drift.federation-import.quarantine-open"
+    )).toMatchObject({
+      level: "critical",
+      action: "Open the federation quarantine review, then accept, reject, or remediate each remote record."
+    });
+  });
+
   it("turns operations reports into operator remediation commands", () => {
     const runtime = createInMemoryCanonicalPersistence({ now: () => now });
     runtime.putProjectionState(failedProjectionState());
@@ -632,5 +663,35 @@ function failedFederationAuditRecord(): AdapterAuditRecord {
     warnings: [],
     errors: ["ActivityPub peer rejected redacted export envelope"],
     metadata: { peer: "riverbend-peer" }
+  };
+}
+
+function failedFederationImportAuditRecord(): AdapterAuditRecord {
+  return {
+    id: "adapter-audit.federation-import.failed",
+    kind: "adapter-audit",
+    schemaVersion: 1,
+    createdAt: now,
+    adapterName: "workflow.federation-reconciliation",
+    direction: "reconciliation",
+    operation: "federation.import.reconcile",
+    status: "failed",
+    startedAt: now,
+    completedAt: now,
+    eventIds: ["event.federation.reconciliation.completed.peer.quarantined"],
+    outboxIds: [],
+    warnings: ["Remote event is private."],
+    errors: ["Quarantined event.remote.private."],
+    metadata: {
+      importReportId: "import-report.federation.peer",
+      acceptedEventIds: [],
+      dispositions: [
+        {
+          sourceEventId: "event.remote.private",
+          localEventId: "event.federation.import.peer.event-remote-private",
+          disposition: "quarantined"
+        }
+      ]
+    }
   };
 }

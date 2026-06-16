@@ -314,6 +314,43 @@ describe("canopy shell snapshot", () => {
     ]);
   });
 
+  it("exposes federation import reconciliation as a native shell surface", () => {
+    const session = buildCanopyShellSession({
+      events: federationImportEvents,
+      scope: {
+        label: "Riverbend Foodshed Commons",
+        scope: { orgRef: orgId }
+      },
+      selectedObjectRef: decisionRef,
+      activeMode: "federation",
+      route: "/federation"
+    });
+    const state = session.snapshot.surfaces.federationImportReconciliationState;
+
+    expect(state).toMatchObject({
+      kind: "federation-import-reconciliation",
+      importedEnvelopeId: "envelope.peer-foodshed",
+      reconciliationStatus: "partial",
+      acceptedEventCount: 1,
+      quarantinedEventCount: 1,
+      localMappingCount: 1,
+      redactionStubWarnings: ["Event remote-private is a redaction stub."]
+    });
+    expect(state?.quarantineReview).toEqual([
+      expect.objectContaining({
+        sourceEventId: "event.remote.private",
+        nextAction: "remediate"
+      })
+    ]);
+    expect(state?.learningOutputs).toEqual([
+      { label: "import_status", value: "partial" },
+      { label: "quarantined_events", value: "1" }
+    ]);
+    expect(session.screen.text).toContain("Federation import: partial; accepted=1; quarantined=1");
+    expect(session.screen.text).toContain("Quarantine review: remediate:event.remote.private");
+    expect(session.screen.text).toContain("Learning outputs: import_status=partial, quarantined_events=1");
+  });
+
   it("builds a runnable session with routes and a text renderer", () => {
     const session = buildCanopyShellSession({
       events: shellEvents,
@@ -601,6 +638,93 @@ const shellEvents = [
     },
     schemaVersion: 1,
     visibility: "federation",
+    dataState: "institutionally_certified"
+  }
+] as const satisfies readonly CanopyEvent[];
+
+const federationImportEvents = [
+  ...shellEvents,
+  {
+    id: "event.federation.import.received.peer-foodshed",
+    type: "federation.import.received",
+    occurredAt,
+    systemActor: "federation_peer",
+    objectRef: exportRef,
+    relatedRefs: [policyRef],
+    authorityRefs: [policyRef],
+    orgId,
+    sourceCapability: "federation",
+    payload: {
+      messageId: "message.peer-foodshed",
+      sourceEnvelopeId: "envelope.peer-foodshed",
+      sourceContentHash: "sha256:peer-foodshed"
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "institutionally_certified"
+  },
+  {
+    id: "event.federation.import.envelope-peer-foodshed.event-remote-claim",
+    type: "claim.created",
+    occurredAt,
+    systemActor: "federation_peer",
+    objectRef: claimRef,
+    relatedRefs: [exportRef],
+    authorityRefs: [policyRef],
+    orgId,
+    sourceCapability: "claims-evidence",
+    payload: {
+      importedFromFederationEnvelopeId: "envelope.peer-foodshed",
+      importedFromFederationMessageId: "message.peer-foodshed",
+      importedFromFederationEventId: "event.remote.claim"
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: "institutionally_certified",
+    provenance: {
+      kind: "federated",
+      sourceEventId: "event.remote.claim",
+      sourceEnvelopeId: "envelope.peer-foodshed",
+      sourceContentHash: "sha256:peer-foodshed",
+      importedAt: occurredAt
+    }
+  },
+  {
+    id: "event.federation.reconciliation.completed.peer-foodshed.partial",
+    type: "federation.reconciliation.completed",
+    occurredAt,
+    systemActor: "federation_peer",
+    objectRef: exportRef,
+    relatedRefs: [claimRef, policyRef],
+    authorityRefs: [policyRef],
+    orgId,
+    sourceCapability: "federation",
+    payload: {
+      status: "partial",
+      sourceEnvelopeId: "envelope.peer-foodshed",
+      acceptedEventIds: ["event.federation.import.envelope-peer-foodshed.event-remote-claim"],
+      duplicateEventIds: [],
+      quarantinedEventIds: ["event.federation.import.envelope-peer-foodshed.event-remote-private"],
+      localMappingCount: 1,
+      warnings: ["Event remote-private is a redaction stub."],
+      quarantineReview: [
+        {
+          sourceEventId: "event.remote.private",
+          localEventId: "event.federation.import.envelope-peer-foodshed.event-remote-private",
+          objectRef: claimRef,
+          warningCodes: ["stewardship_rule_conflict"],
+          severity: "error",
+          recommendedAction: "Review the data stewardship agreement.",
+          nextAction: "remediate"
+        }
+      ],
+      learningOutputs: [
+        { label: "import_status", value: "partial" },
+        { label: "quarantined_events", value: "1" }
+      ]
+    },
+    schemaVersion: 1,
+    visibility: "commons",
     dataState: "institutionally_certified"
   }
 ] as const satisfies readonly CanopyEvent[];

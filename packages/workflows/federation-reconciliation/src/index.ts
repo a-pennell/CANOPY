@@ -1,4 +1,9 @@
-import type { FederationTransportMessage } from "@canopy/contracts-adapters";
+import type {
+  AdapterError,
+  AdapterPageRequest,
+  FederationTransportAdapter,
+  FederationTransportMessage
+} from "@canopy/contracts-adapters";
 import type {
   AdapterAuditRecord,
   CanonicalMappingRecord,
@@ -44,6 +49,41 @@ export type FederationReconciliationErrorCode =
   | "missing-events"
   | "content-hash-mismatch";
 
+export type FederationImportTrustStatus = "trusted" | "warning" | "rejected";
+
+export type FederationImportTrustIssueCode =
+  | "sender_authority_missing"
+  | "schema_incompatible"
+  | "federation_rule_mismatch"
+  | "stewardship_agreement_missing"
+  | "signature_required";
+
+export interface FederationImportTrustPolicy {
+  readonly allowedSenderRefs?: readonly ObjectRef[];
+  readonly allowedSchemaVersions?: readonly number[];
+  readonly expectedFederationRuleRefs?: readonly ObjectRef[];
+  readonly requireEnvelopeFederationRule?: boolean;
+  readonly requireDataStewardshipAgreement?: boolean;
+  readonly requireSignedRequiredEvents?: boolean;
+}
+
+export interface FederationImportTrustIssue {
+  readonly code: FederationImportTrustIssueCode;
+  readonly severity: "warning" | "error";
+  readonly message: string;
+  readonly path: readonly string[];
+  readonly affectedRef?: ObjectRef;
+  readonly eventId?: CanopyId;
+  readonly recommendedAction: string;
+}
+
+export interface FederationImportTrustAssessment {
+  readonly status: FederationImportTrustStatus;
+  readonly checkedAt: IsoDateTime;
+  readonly issues: readonly FederationImportTrustIssue[];
+  readonly warnings: readonly ImportWarning[];
+}
+
 export class FederationReconciliationError extends Error {
   readonly code: FederationReconciliationErrorCode;
 
@@ -59,6 +99,7 @@ export interface FederationReconciliationInput {
   readonly runtime: CanonicalPersistenceRuntime;
   readonly receivedAt?: IsoDateTime;
   readonly importedByRef?: ObjectRef;
+  readonly trustPolicy?: FederationImportTrustPolicy;
   readonly outbox?: OutboxRuntime;
   readonly enqueueProjectionRebuild?: boolean;
   readonly outboxDestination?: OutboxDestination;
@@ -77,14 +118,33 @@ export interface FederationReconciliationEventDecision {
 
 export interface FederationReconciliationResult {
   readonly status: FederationReconciliationStatus;
+  readonly trustAssessment: FederationImportTrustAssessment;
   readonly importReport: CanopyImportReport;
   readonly envelope: CanopyExportEnvelope;
   readonly decisions: readonly FederationReconciliationEventDecision[];
   readonly mappingRecords: readonly CanonicalMappingRecord[];
+  readonly lifecycleEventRecords: readonly EventRecord[];
   readonly eventRecords: readonly EventRecord[];
   readonly outboxRecords: readonly OutboxRecord[];
   readonly adapterAuditRecords: readonly AdapterAuditRecord[];
   readonly projectionRebuild?: PersistentProjectionRebuildResult;
+}
+
+export interface ReceiveAndReconcileFederationImportsInput
+  extends Omit<FederationReconciliationInput, "message"> {
+  readonly transport: FederationTransportAdapter;
+  readonly page?: AdapterPageRequest;
+  readonly acknowledgeMessages?: boolean;
+  readonly acknowledgementAuthorityRefs?: readonly ObjectRef[];
+}
+
+export interface ReceiveAndReconcileFederationImportsResult {
+  readonly receivedMessageCount: number;
+  readonly reconciliations: readonly FederationReconciliationResult[];
+  readonly acknowledgedMessageIds: readonly CanopyId[];
+  readonly errors: readonly AdapterError[];
+  readonly hasMore: boolean;
+  readonly nextCursor?: string;
 }
 
 interface FederationPayload {
@@ -111,6 +171,13 @@ export function reconcileFederationImport(
     );
   }
 
+  const trustAssessment = assessFederationImportTrust({
+    message: input.message,
+    envelope: payload.envelope,
+    events: payload.events,
+    checkedAt: receivedAt,
+    ...optionalTrustPolicy(input.trustPolicy)
+  });
   const acceptedEvents: CanopyEvent[] = [];
   const decisions = payload.events.map((event) => {
     const localEvent = materializeFederatedEvent(event, {
@@ -118,10 +185,23 @@ export function reconcileFederationImport(
       message: input.message,
       receivedAt
     });
-    const warnings = warningsForFederatedEvent(event, payload.envelope, input.message);
+    const warnings = [
+      ...trustWarningsForEvent(trustAssessment, event),
+      ...warningsForFederatedEvent(event, payload.envelope, input.message)
+    ];
     const existing = input.runtime.getEvent(localEvent.id);
     const conflictingSource = input.runtime.getEvent(event.id);
     const blockingWarnings = warnings.filter((item) => item.severity === "error");
+
+    if (trustAssessment.status === "rejected") {
+      return eventDecision({
+        sourceEventId: event.id,
+        localEventId: localEvent.id,
+        disposition: "quarantined",
+        objectRef: event.objectRef,
+        warnings
+      });
+    }
 
     if (existing !== undefined) {
       return eventDecision({
@@ -201,26 +281,18 @@ export function reconcileFederationImport(
     receivedAt,
     ...optionalImportedByRef(input.importedByRef)
   });
+  const receivedEventRecord = input.runtime.appendEvent(
+    buildFederationImportReceivedEvent({
+      message: input.message,
+      envelope: payload.envelope,
+      events: payload.events,
+      receivedAt
+    }),
+    { recordedAt: receivedAt }
+  );
   const eventRecords = acceptedEvents.map((event) =>
     input.runtime.appendEvent(event, { recordedAt: receivedAt })
   );
-  const outboxRecords =
-    input.enqueueProjectionRebuild === false
-      ? []
-      : enqueueProjectionRebuilds({
-          runtime: input.runtime,
-          eventRecords,
-          destination: input.outboxDestination ?? defaultProjectionRebuildDestination,
-          receivedAt,
-          ...optionalOutbox(input.outbox)
-        });
-  const projectionRebuild =
-    input.rebuildProjections === false || eventRecords.length === 0
-      ? undefined
-      : rebuildAndPersistAllProjections(input.runtime, {
-          rebuiltAt: receivedAt,
-          ...input.projectionRebuildOptions
-        });
   const importReport = buildImportReport({
     message: input.message,
     envelope: payload.envelope,
@@ -229,12 +301,43 @@ export function reconcileFederationImport(
     ...optionalImportedByRef(input.importedByRef),
     sourceContentHash: envelopeHash
   });
+  const completedEventRecord = input.runtime.appendEvent(
+    buildFederationReconciliationCompletedEvent({
+      message: input.message,
+      envelope: payload.envelope,
+      trustAssessment,
+      decisions,
+      importReport,
+      mappingRecords,
+      receivedAt
+    }),
+    { recordedAt: receivedAt }
+  );
+  const lifecycleEventRecords = [receivedEventRecord, completedEventRecord];
+  const projectionEventRecords = [...lifecycleEventRecords, ...eventRecords];
+  const outboxRecords =
+    input.enqueueProjectionRebuild === false
+      ? []
+      : enqueueProjectionRebuilds({
+          runtime: input.runtime,
+          eventRecords: projectionEventRecords,
+          destination: input.outboxDestination ?? defaultProjectionRebuildDestination,
+          receivedAt,
+          ...optionalOutbox(input.outbox)
+        });
+  const projectionRebuild =
+    input.rebuildProjections === false || projectionEventRecords.length === 0
+      ? undefined
+      : rebuildAndPersistAllProjections(input.runtime, {
+          rebuiltAt: receivedAt,
+          ...input.projectionRebuildOptions
+        });
   const adapterAuditRecords = writeAuditRecord({
     runtime: input.runtime,
     message: input.message,
     report: importReport,
     decisions,
-    eventRecords,
+    eventRecords: projectionEventRecords,
     outboxRecords,
     receivedAt,
     writeAudit: input.writeAudit ?? true
@@ -242,14 +345,78 @@ export function reconcileFederationImport(
 
   return optionalResult({
     status: reconciliationStatus(decisions),
+    trustAssessment,
     importReport,
     envelope: payload.envelope,
     decisions,
     mappingRecords,
+    lifecycleEventRecords,
     eventRecords,
     outboxRecords,
     adapterAuditRecords,
     ...optionalProjectionRebuild(projectionRebuild)
+  });
+}
+
+export async function receiveAndReconcileFederationImports(
+  input: ReceiveAndReconcileFederationImportsInput
+): Promise<ReceiveAndReconcileFederationImportsResult> {
+  const received = await input.transport.receive(input.page);
+
+  if (!received.ok || received.value === undefined) {
+    return optionalReceiveResult({
+      receivedMessageCount: 0,
+      reconciliations: [],
+      acknowledgedMessageIds: [],
+      errors: received.errors,
+      hasMore: false
+    });
+  }
+
+  const reconciliations: FederationReconciliationResult[] = [];
+  const acknowledgedMessageIds: CanopyId[] = [];
+  const errors: AdapterError[] = [];
+
+  for (const message of received.value.items) {
+    try {
+      const reconciliation = reconcileFederationImport({
+        message,
+        runtime: input.runtime,
+        ...optionalReceivedAt(input.receivedAt),
+        ...optionalImportedByRef(input.importedByRef),
+        ...optionalTrustPolicy(input.trustPolicy),
+        ...optionalOutbox(input.outbox),
+        ...optionalBoolean("enqueueProjectionRebuild", input.enqueueProjectionRebuild),
+        ...optionalOutboxDestination(input.outboxDestination),
+        ...optionalBoolean("writeAudit", input.writeAudit),
+        ...optionalBoolean("rebuildProjections", input.rebuildProjections),
+        ...optionalProjectionRebuildOptions(input.projectionRebuildOptions)
+      });
+      reconciliations.push(reconciliation);
+
+      if (input.acknowledgeMessages !== false && reconciliation.status !== "quarantined") {
+        const acknowledgement = await input.transport.acknowledge(
+          message.id,
+          input.acknowledgementAuthorityRefs ?? reconciliation.envelope.authorityRefs
+        );
+        if (acknowledgement.ok) {
+          acknowledgedMessageIds.push(message.id);
+        } else {
+          errors.push(...acknowledgement.errors);
+        }
+      }
+    } catch (error) {
+      errors.push(adapterErrorFromReconciliation(message, error));
+    }
+  }
+
+  return optionalReceiveResult({
+    receivedMessageCount: received.value.items.length,
+    reconciliations,
+    acknowledgedMessageIds,
+    errors,
+    hasMore: received.value.hasMore,
+    ...optionalNextCursor(received.value.nextCursor)
   });
 }
 
@@ -284,6 +451,363 @@ export function materializeFederatedEvent(
       sourceContentHash: input.envelope.contentHash,
       importedAt: input.receivedAt
     }
+  });
+}
+
+export function buildFederationImportReceivedEvent(input: {
+  readonly message: FederationTransportMessage;
+  readonly envelope: CanopyExportEnvelope;
+  readonly events: readonly CanopyEvent[];
+  readonly receivedAt: IsoDateTime;
+}): CanopyEvent {
+  return optionalEvent({
+    id: `event.federation.import.received.${idToken(input.message.id)}`,
+    type: "federation.import.received",
+    occurredAt: input.receivedAt,
+    systemActor: "federation_peer",
+    objectRef: input.envelope.scopeRef,
+    relatedRefs: dedupeRefs([
+      input.message.federationRuleRef,
+      input.envelope.exportedByRef,
+      ...input.message.objectRefs
+    ]),
+    authorityRefs: input.envelope.authorityRefs,
+    sourceCapability: "federation",
+    payload: {
+      messageId: input.message.id,
+      sourceEnvelopeId: input.envelope.id,
+      sourceContentHash: input.envelope.contentHash,
+      eventIds: input.events.map((event) => event.id),
+      objectRefs: input.message.objectRefs,
+      schemaVersion: input.envelope.schemaVersion,
+      receivedAt: input.receivedAt
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    provenance: {
+      kind: "federated",
+      sourceEnvelopeId: input.envelope.id,
+      sourceContentHash: input.envelope.contentHash,
+      importedAt: input.receivedAt
+    }
+  });
+}
+
+export function buildFederationReconciliationCompletedEvent(input: {
+  readonly message: FederationTransportMessage;
+  readonly envelope: CanopyExportEnvelope;
+  readonly trustAssessment: FederationImportTrustAssessment;
+  readonly decisions: readonly FederationReconciliationEventDecision[];
+  readonly importReport: CanopyImportReport;
+  readonly mappingRecords: readonly CanonicalMappingRecord[];
+  readonly receivedAt: IsoDateTime;
+}): CanopyEvent {
+  const status = reconciliationStatus(input.decisions);
+  const acceptedEventIds = input.decisions
+    .filter((decision) => decision.disposition === "accepted")
+    .map((decision) => decision.localEventId);
+  const duplicateEventIds = input.decisions
+    .filter((decision) => decision.disposition === "duplicate")
+    .map((decision) => decision.localEventId);
+  const quarantinedDecisions = input.decisions.filter(
+    (decision) => decision.disposition === "quarantined"
+  );
+  const quarantinedEventIds = quarantinedDecisions.map((decision) => decision.localEventId);
+  const warnings = input.importReport.warnings.map((item) => item.message);
+
+  return optionalEvent({
+    id: `event.federation.reconciliation.completed.${idToken(input.message.id)}.${status}`,
+    type: "federation.reconciliation.completed",
+    occurredAt: input.receivedAt,
+    systemActor: "federation_peer",
+    objectRef: input.envelope.scopeRef,
+    relatedRefs: dedupeRefs([
+      input.message.federationRuleRef,
+      input.envelope.exportedByRef,
+      ...input.decisions.map((decision) => decision.objectRef)
+    ]),
+    authorityRefs: input.envelope.authorityRefs,
+    sourceCapability: "federation",
+    payload: {
+      status,
+      messageId: input.message.id,
+      importReportId: input.importReport.id,
+      sourceEnvelopeId: input.envelope.id,
+      sourceContentHash: input.envelope.contentHash,
+      trustStatus: input.trustAssessment.status,
+      trustIssueCodes: input.trustAssessment.issues.map((issue) => issue.code),
+      acceptedEventIds,
+      duplicateEventIds,
+      quarantinedEventIds,
+      localMappingCount: input.mappingRecords.length,
+      warnings,
+      quarantineReview: quarantinedDecisions.map(toQuarantineReviewPayload),
+      learningOutputs: federationLearningOutputs({
+        status,
+        acceptedEventIds,
+        duplicateEventIds,
+        quarantinedEventIds,
+        warnings,
+        trustAssessment: input.trustAssessment
+      })
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    provenance: {
+      kind: "system_generated",
+      generatedAt: input.receivedAt,
+      notes: "Generated by the federation reconciliation workflow."
+    }
+  });
+}
+
+function toQuarantineReviewPayload(
+  decision: FederationReconciliationEventDecision
+): JsonValue {
+  const highestSeverity = decision.warnings.some((item) => item.severity === "error")
+    ? "error"
+    : decision.warnings.some((item) => item.severity === "warning")
+      ? "warning"
+      : "info";
+
+  return {
+    sourceEventId: decision.sourceEventId,
+    localEventId: decision.localEventId,
+    objectRef: objectRefJson(decision.objectRef),
+    warningCodes: decision.warnings.map((item) => item.code),
+    severity: highestSeverity,
+    recommendedAction:
+      decision.warnings.find((item) => item.recommendedAction !== undefined)?.recommendedAction ??
+      "Review this quarantined import before accepting it into local projections.",
+    nextAction: quarantineNextAction(decision.warnings)
+  };
+}
+
+function objectRefJson(ref: ObjectRef): JsonValue {
+  return {
+    id: ref.id,
+    type: ref.type,
+    namespace: ref.namespace,
+    lifecycleStatus: ref.lifecycleStatus,
+    supersedes: ref.supersedes ?? []
+  };
+}
+
+function quarantineNextAction(
+  warnings: readonly ImportWarning[]
+): "accept" | "reject" | "remediate" {
+  if (warnings.some((item) => item.code === "unsupported_event_type")) {
+    return "reject";
+  }
+
+  if (warnings.some((item) => item.severity === "error")) {
+    return "remediate";
+  }
+
+  return "accept";
+}
+
+function federationLearningOutputs(input: {
+  readonly status: FederationReconciliationStatus;
+  readonly acceptedEventIds: readonly CanopyId[];
+  readonly duplicateEventIds: readonly CanopyId[];
+  readonly quarantinedEventIds: readonly CanopyId[];
+  readonly warnings: readonly string[];
+  readonly trustAssessment: FederationImportTrustAssessment;
+}): readonly JsonValue[] {
+  return [
+    {
+      label: "import_status",
+      value: input.status
+    },
+    {
+      label: "accepted_events",
+      value: String(input.acceptedEventIds.length)
+    },
+    {
+      label: "duplicate_events",
+      value: String(input.duplicateEventIds.length)
+    },
+    {
+      label: "quarantined_events",
+      value: String(input.quarantinedEventIds.length)
+    },
+    {
+      label: "trust_status",
+      value: input.trustAssessment.status
+    },
+    {
+      label: "warning_count",
+      value: String(input.warnings.length)
+    }
+  ];
+}
+
+export function assessFederationImportTrust(input: {
+  readonly message: FederationTransportMessage;
+  readonly envelope: CanopyExportEnvelope;
+  readonly events: readonly CanopyEvent[];
+  readonly checkedAt: IsoDateTime;
+  readonly trustPolicy?: FederationImportTrustPolicy;
+}): FederationImportTrustAssessment {
+  const policy = input.trustPolicy ?? {};
+  const issues: FederationImportTrustIssue[] = [];
+
+  if (
+    policy.allowedSenderRefs !== undefined &&
+    policy.allowedSenderRefs.length > 0 &&
+    !hasRef(policy.allowedSenderRefs, input.envelope.exportedByRef)
+  ) {
+    issues.push(
+      trustIssue({
+        code: "sender_authority_missing",
+        severity: "error",
+        message: `Envelope ${input.envelope.id} was exported by ${input.envelope.exportedByRef.id}, which is not an allowed sender.`,
+        path: ["envelope", "exportedByRef"],
+        affectedRef: input.envelope.exportedByRef,
+        recommendedAction: "Reject the import until the sender is authorized for this federation route."
+      })
+    );
+  }
+
+  if (input.envelope.authorityRefs.length === 0) {
+    issues.push(
+      trustIssue({
+        code: "sender_authority_missing",
+        severity: "error",
+        message: `Envelope ${input.envelope.id} does not declare authority refs for import.`,
+        path: ["envelope", "authorityRefs"],
+        affectedRef: input.envelope.scopeRef,
+        recommendedAction: "Require the sending commons to attach mandate, agreement, or policy authority."
+      })
+    );
+  }
+
+  if (input.message.schemaVersion !== input.envelope.schemaVersion) {
+    issues.push(
+      trustIssue({
+        code: "schema_incompatible",
+        severity: "error",
+        message: `Message schema version ${input.message.schemaVersion} does not match envelope schema version ${input.envelope.schemaVersion}.`,
+        path: ["message", "schemaVersion"],
+        affectedRef: input.envelope.scopeRef,
+        recommendedAction: "Quarantine the import and request a compatible export envelope."
+      })
+    );
+  }
+
+  if (
+    policy.allowedSchemaVersions !== undefined &&
+    !policy.allowedSchemaVersions.includes(input.envelope.schemaVersion)
+  ) {
+    issues.push(
+      trustIssue({
+        code: "schema_incompatible",
+        severity: "error",
+        message: `Envelope schema version ${input.envelope.schemaVersion} is not allowed by local import policy.`,
+        path: ["envelope", "schemaVersion"],
+        affectedRef: input.envelope.scopeRef,
+        recommendedAction: "Run a schema compatibility review before accepting the import."
+      })
+    );
+  }
+
+  if (policy.requireEnvelopeFederationRule !== false && input.envelope.federationRuleRef === undefined) {
+    issues.push(
+      trustIssue({
+        code: "federation_rule_mismatch",
+        severity: "error",
+        message: `Envelope ${input.envelope.id} does not declare a federation rule ref.`,
+        path: ["envelope", "federationRuleRef"],
+        affectedRef: input.envelope.scopeRef,
+        recommendedAction: "Require the sender to bind the export to a federation rule."
+      })
+    );
+  }
+
+  if (
+    input.envelope.federationRuleRef !== undefined &&
+    !sameRef(input.message.federationRuleRef, input.envelope.federationRuleRef)
+  ) {
+    issues.push(
+      trustIssue({
+        code: "federation_rule_mismatch",
+        severity: "error",
+        message: `Message ${input.message.id} uses federation rule ${input.message.federationRuleRef.id}, but envelope ${input.envelope.id} uses ${input.envelope.federationRuleRef.id}.`,
+        path: ["message", "federationRuleRef"],
+        affectedRef: input.message.federationRuleRef,
+        recommendedAction: "Reject the import until message and envelope federation rules agree."
+      })
+    );
+  }
+
+  if (
+    policy.expectedFederationRuleRefs !== undefined &&
+    policy.expectedFederationRuleRefs.length > 0 &&
+    !hasRef(policy.expectedFederationRuleRefs, input.message.federationRuleRef)
+  ) {
+    issues.push(
+      trustIssue({
+        code: "federation_rule_mismatch",
+        severity: "error",
+        message: `Message ${input.message.id} is not bound to an expected local federation rule.`,
+        path: ["message", "federationRuleRef"],
+        affectedRef: input.message.federationRuleRef,
+        recommendedAction: "Route this message through the correct federation agreement or quarantine it."
+      })
+    );
+  }
+
+  if (
+    policy.requireDataStewardshipAgreement === true &&
+    input.envelope.dataStewardshipAgreements.length === 0
+  ) {
+    issues.push(
+      trustIssue({
+        code: "stewardship_agreement_missing",
+        severity: "error",
+        message: `Envelope ${input.envelope.id} does not include a data stewardship agreement.`,
+        path: ["envelope", "dataStewardshipAgreements"],
+        affectedRef: input.envelope.scopeRef,
+        recommendedAction: "Require a data stewardship agreement before importing governed records."
+      })
+    );
+  }
+
+  if (policy.requireSignedRequiredEvents !== false) {
+    for (const event of input.events) {
+      if (
+        event.signingIntent?.requiredForFederation === true &&
+        (event.signingIntent.status !== "signed" || event.signingIntent.signature === undefined)
+      ) {
+        issues.push(
+          trustIssue({
+            code: "signature_required",
+            severity: "error",
+            message: `Event ${event.id} requires a federation signature but is not signed.`,
+            path: ["events", event.id, "signingIntent"],
+            affectedRef: event.objectRef,
+            eventId: event.id,
+            recommendedAction: "Quarantine the event until the sender supplies a verifiable signature."
+          })
+        );
+      }
+    }
+  }
+
+  const warnings = issues.map((issue) => importWarningFromTrustIssue(issue, input.envelope.scopeRef));
+  const status =
+    issues.some((issue) => issue.severity === "error")
+      ? "rejected"
+      : issues.length > 0
+        ? "warning"
+        : "trusted";
+
+  return optionalTrustAssessment({
+    status,
+    checkedAt: input.checkedAt,
+    issues,
+    warnings
   });
 }
 
@@ -622,16 +1146,114 @@ function warning(input: ImportWarning): ImportWarning {
   };
 }
 
+function trustIssue(input: FederationImportTrustIssue): FederationImportTrustIssue {
+  const optionalFields: {
+    affectedRef?: ObjectRef;
+    eventId?: CanopyId;
+  } = {};
+
+  if (input.affectedRef !== undefined) {
+    optionalFields.affectedRef = input.affectedRef;
+  }
+  if (input.eventId !== undefined) {
+    optionalFields.eventId = input.eventId;
+  }
+
+  return {
+    code: input.code,
+    severity: input.severity,
+    message: input.message,
+    path: input.path,
+    recommendedAction: input.recommendedAction,
+    ...optionalFields
+  };
+}
+
+function importWarningFromTrustIssue(
+  issue: FederationImportTrustIssue,
+  fallbackRef: ObjectRef
+): ImportWarning {
+  return warning({
+    code: importWarningCodeForTrustIssue(issue.code),
+    severity: issue.severity,
+    message: issue.message,
+    path: issue.path,
+    affectedRef: issue.affectedRef ?? fallbackRef,
+    recommendedAction: issue.recommendedAction
+  });
+}
+
+function importWarningCodeForTrustIssue(
+  code: FederationImportTrustIssueCode
+): ImportWarning["code"] {
+  switch (code) {
+    case "sender_authority_missing":
+    case "signature_required":
+      return "authority_refs_missing";
+    case "schema_incompatible":
+      return "schema_version_mismatch";
+    case "federation_rule_mismatch":
+      return "federation_rule_conflict";
+    case "stewardship_agreement_missing":
+      return "stewardship_rule_conflict";
+  }
+}
+
+function trustWarningsForEvent(
+  assessment: FederationImportTrustAssessment,
+  event: CanopyEvent
+): readonly ImportWarning[] {
+  return assessment.warnings.filter(
+    (item) =>
+      item.path.length < 2 ||
+      item.path[0] !== "events" ||
+      item.path[1] === event.id
+  );
+}
+
 function optionalImportedByRef(
   importedByRef: ObjectRef | undefined
 ): { readonly importedByRef?: ObjectRef } {
   return importedByRef === undefined ? {} : { importedByRef };
 }
 
+function optionalReceivedAt(
+  receivedAt: IsoDateTime | undefined
+): { readonly receivedAt?: IsoDateTime } {
+  return receivedAt === undefined ? {} : { receivedAt };
+}
+
+function optionalTrustPolicy(
+  trustPolicy: FederationImportTrustPolicy | undefined
+): { readonly trustPolicy?: FederationImportTrustPolicy } {
+  return trustPolicy === undefined ? {} : { trustPolicy };
+}
+
 function optionalOutbox(
   outbox: OutboxRuntime | undefined
 ): { readonly outbox?: OutboxRuntime } {
   return outbox === undefined ? {} : { outbox };
+}
+
+function optionalOutboxDestination(
+  outboxDestination: OutboxDestination | undefined
+): { readonly outboxDestination?: OutboxDestination } {
+  return outboxDestination === undefined ? {} : { outboxDestination };
+}
+
+function optionalBoolean<TKey extends "enqueueProjectionRebuild" | "writeAudit" | "rebuildProjections">(
+  key: TKey,
+  value: boolean | undefined
+): { readonly [K in TKey]?: boolean } {
+  return value === undefined ? {} : ({ [key]: value } as { readonly [K in TKey]?: boolean });
+}
+
+function optionalProjectionRebuildOptions(
+  projectionRebuildOptions:
+    | Omit<PersistentProjectionRebuildOptions, "events">
+    | undefined
+): { readonly projectionRebuildOptions?: Omit<PersistentProjectionRebuildOptions, "events"> } {
+  return projectionRebuildOptions === undefined ? {} : { projectionRebuildOptions };
 }
 
 function optionalProjectionRebuild(
@@ -707,8 +1329,45 @@ function optionalImportReport(report: CanopyImportReport): CanopyImportReport {
   return JSON.parse(JSON.stringify(report)) as CanopyImportReport;
 }
 
+function optionalTrustAssessment(
+  assessment: FederationImportTrustAssessment
+): FederationImportTrustAssessment {
+  return JSON.parse(JSON.stringify(assessment)) as FederationImportTrustAssessment;
+}
+
 function optionalResult(result: FederationReconciliationResult): FederationReconciliationResult {
   return JSON.parse(JSON.stringify(result)) as FederationReconciliationResult;
+}
+
+function optionalReceiveResult(
+  result: ReceiveAndReconcileFederationImportsResult
+): ReceiveAndReconcileFederationImportsResult {
+  return JSON.parse(JSON.stringify(result)) as ReceiveAndReconcileFederationImportsResult;
+}
+
+function optionalNextCursor(nextCursor: string | undefined): { readonly nextCursor?: string } {
+  return nextCursor === undefined ? {} : { nextCursor };
+}
+
+function adapterErrorFromReconciliation(
+  message: FederationTransportMessage,
+  error: unknown
+): AdapterError {
+  if (error instanceof FederationReconciliationError) {
+    return {
+      code: error.code === "content-hash-mismatch" ? "validation_failed" : "schema_mismatch",
+      message: error.message,
+      retryable: false,
+      path: ["message", message.id]
+    };
+  }
+
+  return {
+    code: "unknown",
+    message: error instanceof Error ? error.message : `Failed to reconcile ${message.id}.`,
+    retryable: false,
+    path: ["message", message.id]
+  };
 }
 
 function idToken(value: string): string {
@@ -717,6 +1376,14 @@ function idToken(value: string): string {
 
 function refKey(ref: ObjectRef): string {
   return `${ref.namespace}:${ref.type}:${ref.id}`;
+}
+
+function sameRef(left: ObjectRef, right: ObjectRef): boolean {
+  return refKey(left) === refKey(right);
+}
+
+function hasRef(refs: readonly ObjectRef[], target: ObjectRef): boolean {
+  return refs.some((ref) => sameRef(ref, target));
 }
 
 function dedupeRefs(refs: readonly ObjectRef[]): readonly ObjectRef[] {
