@@ -20,8 +20,10 @@ import {
   adapterProviderTargets,
   adapterProviderTargetsByKind,
   candidateProviderTargets,
+  createPhase10ProviderDeploymentReadinessReport,
   getAdapterProviderTargets,
   legacyProviderTargets,
+  phase10ProviderDeploymentRequirements,
   referenceProviderTargets
 } from "./provider-targets.js";
 
@@ -61,7 +63,7 @@ describe("adapter provider targets", () => {
 
   it("points candidate provider targets at real package anchors", () => {
     for (const target of candidateProviderTargets) {
-      const packagePath = join(process.cwd(), target.plannedPackage);
+      const packagePath = packageAnchorPath(target.plannedPackage);
       const packageJsonPath = join(packagePath, "package.json");
       const indexPath = join(packagePath, "src", "index.ts");
       const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
@@ -167,6 +169,91 @@ describe("adapter provider targets", () => {
       legacyProviderTargets.every((target) => target.role === "legacy-fold-in-source")
     ).toBe(true);
   });
+
+  it("creates a machine-readable Phase 10 deployment readiness report", () => {
+    const report = createPhase10ProviderDeploymentReadinessReport({
+      generatedAt: NOW
+    });
+
+    expect(report).toMatchObject({
+      id: "phase-10.provider-deployment-readiness",
+      generatedAt: NOW,
+      status: "blocked",
+      summary: {
+        candidateProviderTargetCount: candidateProviderTargets.length,
+        deploymentGateCount: phase10ProviderDeploymentRequirements.length,
+        blockedDeploymentGateCount: phase10ProviderDeploymentRequirements.length
+      },
+      migrationReadiness: {
+        status: "unknown",
+        providerTracks: []
+      }
+    });
+    expect(report.releaseBlockers).toContain(
+      "phase-10.deployment.postgres-runtime.provider-target-not-implemented"
+    );
+    expect(report.releaseBlockers).toContain(
+      "phase-10.deployment.postgres-runtime.production-gate-evidence-missing"
+    );
+    expect(report.releaseBlockers).toContain(
+      "phase-10.deployment.postgres-runtime.deployment-environment-missing"
+    );
+    expect(report.releaseBlockers).toContain(
+      "phase-10.deployment.timescaledb-time-series.migration-track-missing"
+    );
+    expect(report.nextActions).toContain(
+      "Promote provider targets from planned/prototype to implemented only after executable provider packages pass conformance."
+    );
+  });
+
+  it("marks Phase 10 deployment ready when providers, env, gates, and migrations are satisfied", () => {
+    const implementedTargets = adapterProviderTargets.map((target) =>
+      target.role === "candidate-provider" ||
+      target.role === "legacy-fold-in-source"
+        ? { ...target, status: "implemented" as const }
+        : target
+    );
+    const allProductionGateIds = [
+      ...new Set(
+        implementedTargets.flatMap((target) => target.requiredBeforeProductionUse)
+      )
+    ];
+    const allEnvironmentBindings = [
+      ...new Set(
+        phase10ProviderDeploymentRequirements.flatMap(
+          (requirement) => requirement.requiredEnvironment
+        )
+      )
+    ];
+    const allMigrationTracks = [
+      ...new Set(
+        phase10ProviderDeploymentRequirements.flatMap(
+          (requirement) => requirement.requiredMigrationTracks
+        )
+      )
+    ];
+    const report = createPhase10ProviderDeploymentReadinessReport({
+      generatedAt: NOW,
+      providerTargets: implementedTargets,
+      satisfiedProductionGateIds: allProductionGateIds,
+      availableEnvironment: allEnvironmentBindings,
+      migrationReadiness: {
+        status: "ready",
+        providerTracks: allMigrationTracks,
+        missingTables: [],
+        issueCodes: []
+      }
+    });
+
+    expect(report.status).toBe("ready");
+    expect(report.releaseBlockers).toEqual([]);
+    expect(report.deploymentGates.every((gate) => gate.status === "ready")).toBe(
+      true
+    );
+    expect(report.summary.implementedProductionProviderTargetCount).toBe(
+      candidateProviderTargets.length + legacyProviderTargets.length
+    );
+  });
 });
 
 function failureSummary(results: readonly AdapterSuiteResult[]): string {
@@ -187,4 +274,14 @@ function failureSummary(results: readonly AdapterSuiteResult[]): string {
   );
 
   return `prototype provider conformance should pass\n${failures.join("\n")}`;
+}
+
+function packageAnchorPath(plannedPackage: string): string {
+  const rootRelativePath = join(process.cwd(), plannedPackage);
+
+  if (existsSync(rootRelativePath)) {
+    return rootRelativePath;
+  }
+
+  return join(process.cwd(), "..", "..", "..", plannedPackage);
 }

@@ -11,6 +11,7 @@ import {
   checkMigrationReadiness,
   createCanonicalSqlMigrationArtifact,
   createMigrationRunnerPlan,
+  createProviderMigrationReadinessEvidence,
   findForbiddenProviderSdkCoupling,
   forbiddenProviderSdkSpecifiers,
   migrationArtifacts,
@@ -63,6 +64,7 @@ describe("database migration manifest", () => {
         "postgres",
         "postgis",
         "pgvector",
+        "timescaledb",
         "s3-compatible",
       ],
     );
@@ -80,7 +82,7 @@ describe("database migration manifest", () => {
       providerMigrationTracks
         .filter((track) => track.status === "ready-for-prototype")
         .map((track) => track.id),
-    ).toEqual(["postgres", "postgis", "pgvector"]);
+    ).toEqual(["postgres", "postgis", "pgvector", "timescaledb"]);
     expect(
       providerMigrationTracks.find((track) => track.id === "s3-compatible")
         ?.status,
@@ -91,7 +93,7 @@ describe("database migration manifest", () => {
     expect(createMigrationHealthReport()).toMatchObject({
       status: "pass",
       canonicalHomeCount: 7,
-      providerTrackCount: 7,
+      providerTrackCount: 8,
       issues: [],
     });
 
@@ -104,6 +106,35 @@ describe("database migration manifest", () => {
     ).toContainEqual({
       code: "missing-provider-track",
       message: "Missing provider migration track postgres.",
+    });
+  });
+
+  it("creates machine-readable provider migration readiness evidence", () => {
+    expect(createProviderMigrationReadinessEvidence()).toMatchObject({
+      id: "migration.provider-readiness",
+      status: "ready",
+      providerTracks: requiredProviderMigrationTracks,
+      readinessTables: canonicalSqlReadinessTables,
+      missingTables: [],
+      issueCodes: [],
+    });
+
+    expect(
+      createProviderMigrationReadinessEvidence({
+        healthReport: createMigrationHealthReport({
+          providerTracks: providerMigrationTracks.filter(
+            (track) => track.id !== "timescaledb",
+          ),
+        }),
+        providerTracks: providerMigrationTracks.filter(
+          (track) => track.id !== "timescaledb",
+        ),
+        missingTables: ["canopy_events"],
+      }),
+    ).toMatchObject({
+      status: "not-ready",
+      missingTables: ["canopy_events"],
+      issueCodes: ["missing-provider-track"],
     });
   });
 
@@ -143,6 +174,7 @@ describe("database migration manifest", () => {
       "postgres",
       "postgis",
       "pgvector",
+      "timescaledb",
       "s3-compatible",
     ]) {
       expect(sqlIntent).toContain(providerTrack);

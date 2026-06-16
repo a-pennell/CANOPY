@@ -39,6 +39,7 @@ The migration manifest currently declares these provider tracks:
 - `postgres`: ready for prototype canonical runtime tables, indexes, constraints, and append-only trigger templates.
 - `postgis`: ready for prototype geospatial extension tables in a provider package, keyed by canonical object refs.
 - `pgvector`: ready for prototype semantic index tables in a provider package, keyed by canonical object refs and projection names.
+- `timescaledb`: ready for prototype time-series extension tables in a provider package, keyed by canonical object refs, event ordering, and projection checkpoints.
 - `s3-compatible`: external-provider intent for bucket/key/version mappings, content hashes, retention state, and adapter audit evidence.
 
 The SQL artifact includes provider-track intent, not a directly runnable production migration. Provider packages should translate this intent into executable migrations and then pass adapter conformance and migration health checks.

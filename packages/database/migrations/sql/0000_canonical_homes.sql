@@ -145,6 +145,13 @@ INSERT INTO canopy_provider_track_status (
     'MIGRATION_TIMESTAMP'
   ),
   (
+    'timescaledb',
+    'ready-for-prototype',
+    'objectRefs,events,projectionState,adapterAudit',
+    'sql/0000_canonical_homes.sql',
+    'MIGRATION_TIMESTAMP'
+  ),
+  (
     's3-compatible',
     'external-provider-intent',
     'objectRefs,canonicalMappings,adapterAudit',
@@ -200,6 +207,15 @@ CREATE TRIGGER canopy_outbox_acknowledged_append_only
 -- - Record embedding model, source event, and rebuild evidence in
 --   canopy_adapter_audit.
 -- - Keep semantic index cursors in canopy_projection_state.
+--
+-- TimescaleDB provider-track intent:
+-- - Keep observed entities anchored in canopy_object_refs.
+-- - Store ordered time-series observations in provider package hypertables keyed
+--   by object_ref and observation stream.
+-- - Preserve observation ordering and window projection checkpoints in
+--   canopy_events and canopy_projection_state.
+-- - Record source stream imports and window rebuild evidence in
+--   canopy_adapter_audit.
 --
 -- S3-compatible provider-track intent:
 -- - Keep document/object identity in canopy_object_refs.

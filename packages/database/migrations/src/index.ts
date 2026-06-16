@@ -14,6 +14,7 @@ export type ProviderMigrationTrackId =
   | "postgres"
   | "postgis"
   | "pgvector"
+  | "timescaledb"
   | "s3-compatible";
 
 export type ProviderMigrationTrackStatus =
@@ -60,6 +61,15 @@ export type MigrationHealthReport = {
   readonly appendOnlySubjects: readonly MigrationSubject[];
   readonly issues: readonly MigrationHealthIssue[];
 };
+
+export interface ProviderMigrationReadinessEvidence {
+  readonly id: string;
+  readonly status: "ready" | "not-ready";
+  readonly providerTracks: readonly ProviderMigrationTrackId[];
+  readonly readinessTables: readonly string[];
+  readonly missingTables: readonly string[];
+  readonly issueCodes: readonly string[];
+}
 
 export interface MigrationRunnerClient {
   query(text: string, params?: readonly unknown[]): Promise<unknown>;
@@ -180,6 +190,11 @@ export const migrationArtifacts: readonly MigrationArtifact[] = [
     role: "pgvector provider-track intent for vector projection metadata and adapter audit evidence.",
   },
   {
+    providerTrack: "timescaledb",
+    path: "sql/0000_canonical_homes.sql",
+    role: "TimescaleDB provider-track intent for time-series projections, event ordering, and adapter audit evidence.",
+  },
+  {
     providerTrack: "s3-compatible",
     path: "sql/0000_canonical_homes.sql",
     role: "S3-compatible object storage intent through canonical refs, mappings, and adapter audit rows.",
@@ -267,6 +282,21 @@ export const providerMigrationTracks: readonly ProviderMigrationTrackDescriptor[
       providerSdkCoupling: "forbidden-in-this-package",
     },
     {
+      id: "timescaledb",
+      title: "TimescaleDB time-series runtime",
+      status: "ready-for-prototype",
+      description:
+        "Time-series extension track for ordered observations, window projections, and adapter audit evidence.",
+      canonicalSubjects: [
+        "objectRefs",
+        "events",
+        "projectionState",
+        "adapterAudit",
+      ],
+      artifactPaths: ["sql/0000_canonical_homes.sql"],
+      providerSdkCoupling: "forbidden-in-this-package",
+    },
+    {
       id: "s3-compatible",
       title: "S3-compatible document and object storage",
       status: "external-provider-intent",
@@ -279,7 +309,16 @@ export const providerMigrationTracks: readonly ProviderMigrationTrackDescriptor[
   ] as const;
 
 export const requiredProviderMigrationTracks: readonly ProviderMigrationTrackId[] =
-  ["sql", "prisma", "drizzle", "postgres", "postgis", "pgvector", "s3-compatible"];
+  [
+    "sql",
+    "prisma",
+    "drizzle",
+    "postgres",
+    "postgis",
+    "pgvector",
+    "timescaledb",
+    "s3-compatible",
+  ];
 
 export const forbiddenProviderSdkSpecifiers = [
   "pg",
@@ -366,6 +405,32 @@ export const createMigrationHealthReport = (input?: {
     providerTrackCount: providerTracks.length,
     appendOnlySubjects,
     issues,
+  };
+};
+
+export const createProviderMigrationReadinessEvidence = (input?: {
+  readonly healthReport?: MigrationHealthReport;
+  readonly providerTracks?: readonly ProviderMigrationTrackDescriptor[];
+  readonly readinessTables?: readonly string[];
+  readonly missingTables?: readonly string[];
+}): ProviderMigrationReadinessEvidence => {
+  const healthReport = input?.healthReport ?? createMigrationHealthReport();
+  const providerTracks = input?.providerTracks ?? providerMigrationTracks;
+  const missingTables = input?.missingTables ?? [];
+  const issueCodes = healthReport.issues.map((issue) => issue.code);
+
+  return {
+    id: "migration.provider-readiness",
+    status:
+      healthReport.status === "pass" &&
+      missingTables.length === 0 &&
+      issueCodes.length === 0
+        ? "ready"
+        : "not-ready",
+    providerTracks: providerTracks.map((track) => track.id),
+    readinessTables: input?.readinessTables ?? canonicalSqlReadinessTables,
+    missingTables,
+    issueCodes,
   };
 };
 
