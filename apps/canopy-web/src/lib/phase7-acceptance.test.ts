@@ -160,6 +160,38 @@ describe("phase 7 Riverbend/Mill Creek acceptance", () => {
         "trust_status: trusted"
       ])
     );
+    expect(review.peerComparisons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "downstream-claim-divergence",
+          domain: "claim",
+          peerSource: "Downstream School Commons",
+          localRef: expect.objectContaining({
+            id: "claim.school-meal-produce-need"
+          }),
+          remoteRef: expect.objectContaining({
+            id: "claim.school-meal-produce-need"
+          }),
+          remoteEventId: "event.claim.created.school-meal-need.downstream",
+          trustStatus: "warning",
+          conflictReason: expect.stringContaining("same claim ref diverges")
+        }),
+        expect.objectContaining({
+          id: "downstream-evidence-divergence",
+          domain: "evidence",
+          peerSource: "Downstream School Commons",
+          remoteEventId: "event.evidence.created.school-kitchen-intake.downstream",
+          conflictReason: expect.stringContaining("same evidence ref")
+        }),
+        expect.objectContaining({
+          id: "hilltown-stewardship-divergence",
+          domain: "stewardship",
+          peerSource: "Hilltown Stewardship Circle",
+          remoteEventId: "event.stewardship.use_right.granted.school-crop-share.hilltown",
+          proposedAction: expect.stringContaining("stewardship obligations")
+        })
+      ])
+    );
     expect(dashboardText).toContain("Federation Import & Reconciliation");
     expect(dashboardText).toContain("Imported envelope");
     expect(dashboardText).toContain("applied");
@@ -167,6 +199,9 @@ describe("phase 7 Riverbend/Mill Creek acceptance", () => {
     expect(dashboardText).toContain("Learning outputs");
     expect(dashboardText).toContain("trust_status: trusted");
     expect(dashboardText).toContain("Redaction-stub warnings");
+    expect(dashboardText).toContain("Downstream School Commons");
+    expect(dashboardText).toContain("Hilltown Stewardship Circle");
+    expect(dashboardText).toContain("same use-right ref diverges");
   });
 
   it("surfaces the Phase 8 adaptive trust hardening trail in the web model and dashboard", () => {

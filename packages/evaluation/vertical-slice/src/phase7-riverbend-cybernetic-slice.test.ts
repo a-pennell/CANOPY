@@ -246,6 +246,13 @@ describe("Phase 7 Riverbend cybernetic slice", () => {
     expect(slice.federationExport.envelope).toMatchObject({
       scopeRef: slice.refs.commonsRef,
       federationRuleRef: slice.refs.dataStewardshipAgreementRef,
+      dataStewardshipAgreements: [
+        expect.objectContaining({
+          governedRef: slice.refs.retrospectiveRef,
+          federationRuleRef: slice.refs.dataStewardshipAgreementRef,
+          visibility: "federation"
+        })
+      ],
       format: "json"
     });
     expect(preview.contentHash).toMatch(/^sha256:/);

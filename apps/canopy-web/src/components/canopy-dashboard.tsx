@@ -578,6 +578,21 @@ function FederationImportReview({ model }: { readonly model: CanopyWebModel }) {
         <KeyValue label="Quarantine review" value={formatList(review.quarantineReview)} />
         <KeyValue label="Learning outputs" value={formatList(review.learningOutputs)} />
       </div>
+      <div className="list" aria-label="Multi-peer federation comparisons">
+        {review.peerComparisons.map((comparison) => (
+          <div className="listRow" key={comparison.id}>
+            <div>
+              <strong>{comparison.peerSource} / {comparison.domain}</strong>
+              <span>{formatRef(comparison.localRef)}: {comparison.localRecord}</span>
+              <span>{formatRef(comparison.remoteRef)}: {comparison.remoteRecord}</span>
+              <span>{comparison.conflictReason}; {comparison.proposedAction}</span>
+            </div>
+            <StatusPill label="trust" tone={federationImportTone(comparison.trustStatus)}>
+              {comparison.trustStatus}
+            </StatusPill>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

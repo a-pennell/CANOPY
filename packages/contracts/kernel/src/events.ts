@@ -132,6 +132,9 @@ export const CANOPY_MINIMUM_EVENT_TYPES = [
   "federation.export.created",
   "federation.import.received",
   "federation.reconciliation.completed",
+  "federation.quarantine.accepted",
+  "federation.quarantine.rejected",
+  "federation.quarantine.remediation_requested",
   "system.redaction.applied",
 ] as const;
 
@@ -317,6 +320,9 @@ export const EVENT_TYPES_REQUIRING_AUTHORITY = [
   "federation.export.created",
   "federation.import.received",
   "federation.reconciliation.completed",
+  "federation.quarantine.accepted",
+  "federation.quarantine.rejected",
+  "federation.quarantine.remediation_requested",
   "system.redaction.applied",
 ] as const satisfies readonly CanopyEventType[];
 

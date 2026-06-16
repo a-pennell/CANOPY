@@ -5,6 +5,8 @@ import {
 } from "./index.js";
 import { reconcileFederationImport } from "@canopy/workflows-federation-reconciliation";
 import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
+import type { FederationTransportMessage } from "@canopy/contracts-adapters";
+import type { CanopyEvent } from "@canopy/contracts-kernel";
 
 describe("Phase 9 Riverbend federation reconciliation", () => {
   it("imports the Phase 8 export envelope into a receiving canonical runtime", () => {
@@ -101,13 +103,20 @@ describe("Phase 9 Riverbend federation reconciliation", () => {
     );
   });
 
-  it("quarantines the Riverbend export when strict stewardship agreement presence is required", () => {
+  it("imports the Riverbend export when strict stewardship agreement presence is required", () => {
     const phase9 = executeRiverbendFederationReconciliationSlice();
     const runtime = createInMemoryCanonicalPersistence({
       now: () => "2026-06-14T12:00:00.000Z"
     });
 
-    expect(phase9.federationExport.envelope.dataStewardshipAgreements).toEqual([]);
+    expect(phase9.federationExport.envelope.dataStewardshipAgreements).toEqual([
+      expect.objectContaining({
+        governedRef: phase9.refs.retrospectiveRef,
+        federationRuleRef: phase9.refs.dataStewardshipAgreementRef,
+        visibility: "federation",
+        allowedUses: expect.arrayContaining(["export", "federate"])
+      })
+    ]);
 
     const strict = reconcileFederationImport({
       message: phase9.federationTransportMessage,
@@ -121,14 +130,202 @@ describe("Phase 9 Riverbend federation reconciliation", () => {
       }
     });
 
-    expect(strict.status).toBe("quarantined");
-    expect(strict.trustAssessment.issues.map((issue) => issue.code)).toEqual([
-      "stewardship_agreement_missing"
-    ]);
-    expect(strict.eventRecords).toEqual([]);
+    expect(strict.status).toBe("applied");
+    expect(strict.trustAssessment.status).toBe("trusted");
+    expect(strict.trustAssessment.issues).toEqual([]);
+    expect(strict.eventRecords.length).toBeGreaterThan(10);
     expect(strict.lifecycleEventRecords[1]?.event.payload).toMatchObject({
-      trustStatus: "rejected",
-      trustIssueCodes: ["stewardship_agreement_missing"]
+      trustStatus: "trusted",
+      trustIssueCodes: []
     });
   });
+
+  it("reconciles multi-peer duplicate object-ref conflicts into quarantine review", () => {
+    const phase9 = executeRiverbendFederationReconciliationSlice();
+    const runtime = createInMemoryCanonicalPersistence({
+      now: () => "2026-06-14T12:00:00.000Z"
+    });
+    const localEvents = [
+      requiredEvent(phase9.events, "event.claim.created.school-meal-need"),
+      requiredEvent(phase9.events, "event.evidence.created.school-kitchen-intake"),
+      requiredEvent(phase9.events, "event.stewardship.use_right.granted.school-crop-share")
+    ];
+    for (const event of localEvents) {
+      runtime.appendEvent(event, { recordedAt: "2026-06-14T12:00:00.000Z" });
+    }
+
+    const messages = buildPeerConflictMessages(phase9);
+    const reconciliations = messages.map((message) =>
+      reconcileFederationImport({
+        message,
+        runtime,
+        receivedAt: "2026-06-14T12:00:00.000Z",
+        importedByRef: phase9.refs.federationPeerRef
+      })
+    );
+
+    expect(messages.map((message) => message.id)).toEqual([
+      "message.federation.downstream.phase-9-conflicts",
+      "message.federation.hilltown.phase-9-conflicts"
+    ]);
+    expect(reconciliations.map((result) => result.status)).toEqual([
+      "quarantined",
+      "quarantined"
+    ]);
+    expect(reconciliations.flatMap((result) =>
+      result.decisions.map((decision) => ({
+        sourceEventId: decision.sourceEventId,
+        objectRefId: decision.objectRef.id,
+        disposition: decision.disposition,
+        warningCodes: decision.warnings.map((warning) => warning.code)
+      }))
+    )).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceEventId: "event.claim.created.school-meal-need",
+          objectRefId: "claim.school-meal-produce-need",
+          disposition: "quarantined",
+          warningCodes: expect.arrayContaining(["federation_rule_conflict"])
+        }),
+        expect.objectContaining({
+          sourceEventId: "event.evidence.created.school-kitchen-intake",
+          objectRefId: "evidence.school-kitchen-intake",
+          disposition: "quarantined",
+          warningCodes: expect.arrayContaining(["federation_rule_conflict"])
+        }),
+        expect.objectContaining({
+          sourceEventId: "event.stewardship.use_right.granted.school-crop-share",
+          objectRefId: "use-right.school-crop-share",
+          disposition: "quarantined",
+          warningCodes: expect.arrayContaining(["federation_rule_conflict"])
+        })
+      ])
+    );
+    expect(reconciliations.flatMap((result) =>
+      result.lifecycleEventRecords.map((record) => record.event.payload)
+    )).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "quarantined",
+          quarantineReview: expect.arrayContaining([
+            expect.objectContaining({
+              sourceEventId: "event.claim.created.school-meal-need",
+              nextAction: "remediate"
+            })
+          ])
+        }),
+        expect.objectContaining({
+          status: "quarantined",
+          quarantineReview: expect.arrayContaining([
+            expect.objectContaining({
+              sourceEventId: "event.stewardship.use_right.granted.school-crop-share",
+              nextAction: "remediate"
+            })
+          ])
+        })
+      ])
+    );
+  });
 });
+
+function buildPeerConflictMessages(
+  phase9: ReturnType<typeof executeRiverbendFederationReconciliationSlice>
+): readonly FederationTransportMessage[] {
+  return [
+    peerConflictMessage(phase9, {
+      peerToken: "downstream",
+      peerLabel: "Downstream School Commons",
+      events: [
+        peerConflictEvent(requiredEvent(phase9.events, "event.claim.created.school-meal-need"), {
+          summary: "Downstream peer reports only twelve produce boxes can be absorbed before the next meal cycle.",
+          dataState: "testimony_derived"
+        }),
+        peerConflictEvent(requiredEvent(phase9.events, "event.evidence.created.school-kitchen-intake"), {
+          summary: "Downstream kitchen note confirms twelve boxes and flags cold-storage uncertainty.",
+          dataState: "unverified",
+          visibility: "role_restricted"
+        })
+      ]
+    }),
+    peerConflictMessage(phase9, {
+      peerToken: "hilltown",
+      peerLabel: "Hilltown Stewardship Circle",
+      events: [
+        peerConflictEvent(requiredEvent(phase9.events, "event.stewardship.use_right.granted.school-crop-share"), {
+          summary: "Hilltown steward proposes a ten-box cap until watershed follow-up is complete.",
+          dataState: "contested"
+        })
+      ]
+    })
+  ];
+}
+
+function peerConflictMessage(
+  phase9: ReturnType<typeof executeRiverbendFederationReconciliationSlice>,
+  input: {
+    readonly peerToken: string;
+    readonly peerLabel: string;
+    readonly events: readonly CanopyEvent[];
+  }
+): FederationTransportMessage {
+  const envelope = {
+    ...phase9.federationExport.envelope,
+    id: `export-envelope.${input.peerToken}.phase-9-conflicts`,
+    exportedByRef: {
+      ...phase9.refs.federationPeerRef,
+      id: `organization.${input.peerToken}-peer-commons`
+    },
+    contentHash: `sha256:${input.peerToken}-phase-9-conflicts`
+  };
+
+  return {
+    id: `message.federation.${input.peerToken}.phase-9-conflicts`,
+    federationRuleRef:
+      envelope.federationRuleRef ??
+      phase9.refs.dataStewardshipAgreementRef,
+    sentAt: "2026-06-14T12:00:00.000Z",
+    receivedAt: "2026-06-14T12:00:00.000Z",
+    eventIds: input.events.map((event) => event.id),
+    objectRefs: input.events.map((event) => event.objectRef),
+    payload: {
+      envelope,
+      events: input.events,
+      peerLabel: input.peerLabel
+    },
+    contentHash: envelope.contentHash,
+    schemaVersion: envelope.schemaVersion
+  };
+}
+
+function peerConflictEvent(
+  event: CanopyEvent,
+  input: {
+    readonly summary: string;
+    readonly dataState: NonNullable<CanopyEvent["dataState"]>;
+    readonly visibility?: CanopyEvent["visibility"];
+  }
+): CanopyEvent {
+  return {
+    ...event,
+    dataState: input.dataState,
+    ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
+    payload: {
+      ...event.payload,
+      summary: input.summary,
+      phase9PeerConflictFixture: true
+    }
+  };
+}
+
+function requiredEvent(
+  events: readonly CanopyEvent[],
+  eventId: string
+): CanopyEvent {
+  const event = events.find((item) => item.id === eventId);
+
+  if (event === undefined) {
+    throw new Error(`Missing Phase 9 fixture event ${eventId}.`);
+  }
+
+  return event;
+}

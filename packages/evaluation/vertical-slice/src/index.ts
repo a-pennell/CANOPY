@@ -21,6 +21,8 @@ import type {
   CanopyEventType,
   CanopyId,
   CanopyObjectType,
+  DataStewardshipAgreement,
+  ExportedDataStewardshipAgreement,
   IsoDateTime,
   ObjectRef
 } from "@canopy/contracts-kernel";
@@ -234,6 +236,9 @@ export interface RiverbendPersistedRuntimeScenario {
     readonly federation: CanopyShellSession;
   };
 }
+
+type RiverbendExportAgreement = ExportedDataStewardshipAgreement &
+  Partial<DataStewardshipAgreement>;
 
 const occurredAt = "2026-06-14T12:00:00.000Z";
 const namespace = "canopy.phase-7.riverbend";
@@ -878,9 +883,10 @@ export function executeRiverbendCyberneticSlice(): RiverbendCyberneticSliceResul
     governedRef: refs.retrospectiveRef,
     stewardRefs: [refs.actorRef, refs.watershedGuardianRef],
     visibility: "federation",
-    allowedUses: ["coordinate", "govern", "federate"],
+    allowedUses: ["coordinate", "govern", "export", "federate"],
     prohibitedUses: ["commercialize"],
     consentRequired: false,
+    agreement: makeRiverbendExportAgreement(refs),
     authorityRefs: [refs.decisionRef],
     orgId,
     placeId,
@@ -1845,6 +1851,49 @@ function makeAdaptiveDecisionPacket(refs: RiverbendCyberneticSliceRefs): Decisio
     contentHash: "sha256:riverbend-adaptive-decision-packet",
     createdAt: occurredAt,
     createdByRef: refs.actorRef
+  };
+}
+
+function makeRiverbendExportAgreement(
+  refs: RiverbendCyberneticSliceRefs
+): RiverbendExportAgreement {
+  return {
+    id: "dsa.riverbend-phase-7-federation",
+    governedRef: refs.retrospectiveRef,
+    stewardRefs: [refs.actorRef, refs.watershedGuardianRef],
+    visibility: "federation",
+    allowedUses: ["coordinate", "govern", "export", "federate"],
+    prohibitedUses: ["commercialize"],
+    consentRequired: false,
+    exportRule: {
+      id: "export-rule.riverbend-phase-7-learning",
+      exportAllowed: true,
+      allowedFormats: ["json"],
+      allowedObjectTypes: [
+        "threshold",
+        "claim",
+        "proposal",
+        "amendment",
+        "objection",
+        "conflict",
+        "guardian-review",
+        "decision",
+        "decision-packet",
+        "use-right",
+        "flow",
+        "task",
+        "evidence",
+        "policy"
+      ],
+      allowedRecipientRefs: [refs.federationPeerRef],
+      prohibitedRecipientRefs: [],
+      includeRedactionStubs: true,
+      consentRequired: false,
+      authorityRefs: [refs.decisionRef, refs.dataStewardshipAgreementRef]
+    },
+    federationRuleRef: refs.dataStewardshipAgreementRef,
+    reviewAt: "2026-07-14T12:00:00.000Z",
+    schemaVersion: 1
   };
 }
 

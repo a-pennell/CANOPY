@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ObjectRef } from "@canopy/contracts-kernel";
+import type { CanopyEvent, ObjectRef } from "@canopy/contracts-kernel";
 import type {
   Appeal,
   Amendment,
@@ -59,7 +59,10 @@ import type {
   PostLedgerEntryCommand,
   ReverseLedgerEntryCommand
 } from "@canopy/capabilities-allocation-accounting";
-import { createInMemoryCanonicalPersistence } from "@canopy/database-runtime";
+import {
+  createInMemoryCanonicalPersistence,
+  type CanonicalPersistenceRuntime
+} from "@canopy/database-runtime";
 import { createInMemoryCivicMemory } from "@canopy/kernel-civic-memory";
 import { createObjectRegistry } from "@canopy/kernel-object-registry";
 import {
@@ -67,6 +70,7 @@ import {
   executeCompleteGuardianReviewCommand,
   executeCompleteLearningRetrospectiveCommand,
   executeCompleteTaskCommand,
+  executeAcceptFederationQuarantineCommand,
   executeCreateClaimCommand,
   executeCreateCommitmentCommand,
   executeCreateLivingSystemCommand,
@@ -93,6 +97,8 @@ import {
   executeRecordFoodFlowCommand,
   executeRecordLearningOutcomeCommand,
   executeRecordThresholdBreachCommand,
+  executeRejectFederationQuarantineCommand,
+  executeRemediateFederationQuarantineCommand,
   executeRequestRedactionCommand,
   executeRequestGuardianReviewCommand,
   executeReviewConflictCommand,
@@ -100,7 +106,9 @@ import {
   executeReverseLedgerEntryCommand,
   executeRevokeUseRightCommand,
   executeSubmitAmendmentCommand,
-  executeVersionPolicyCommand
+  executeVersionPolicyCommand,
+  type FederationQuarantineGovernanceAction,
+  type FederationQuarantineGovernanceCommand
 } from "./index.js";
 
 const occurredAt = "2026-06-13T19:00:00.000Z";
@@ -160,6 +168,13 @@ const retrospectiveRef = ref("retrospective.food-delivery", "evidence");
 const needRef = ref("need.school-produce", "need");
 const offerRef = ref("offer.green-acre-produce", "offer");
 const commitmentRef = ref("commitment.food-delivery", "commitment");
+const remoteImportObjectRef = ref("claim.remote-water-quality", "claim");
+const federationAuthorityRef = refIn(
+  "policy.riverbend-federation-imports",
+  "policy",
+  "governance"
+);
+const federationSourceContentHash = "sha256:riverbend-quarantined-event";
 
 describe("command runtime", () => {
   it("executes a command through event append, outbox, and projection rebuild", async () => {
@@ -705,12 +720,215 @@ describe("command runtime", () => {
       results.map((result) => result.event.id)
     );
   });
+
+  for (const action of ["accept", "reject", "remediate"] as const) {
+    it(`executes a federation quarantine ${action} governance command without mutating import history`, async () => {
+      const runtime = createInMemoryCanonicalPersistence({ now: () => occurredAt });
+      const acceptedEvent = acceptedFederatedImportEvent();
+      const quarantinedEvent = quarantinedFederationReconciliationEvent();
+      runtime.appendEvent(acceptedEvent);
+      runtime.appendEvent(quarantinedEvent);
+      const originalAcceptedRecord = runtime.getEvent(acceptedEvent.id);
+      const originalQuarantinedRecord = runtime.getEvent(quarantinedEvent.id);
+
+      const result = await executeFederationQuarantineAction(
+        action,
+        runtime,
+        federationQuarantineCommand(action)
+      );
+
+      expect(result.event.type).toBe(federationQuarantineEventType(action));
+      expect(result.event.sourceCapability).toBe("governance");
+      expect(result.event.payload).toMatchObject({
+        action,
+        sourceEventId: "event.remote.water-quality.private",
+        localEventId: "event.federated.peer-a.event-remote-water-quality-private",
+        quarantinedEventId: "event.federated.peer-a.event-remote-water-quality-private",
+        importReportId: "import-report.federation.riverbend.peer-a-message",
+        sourceEnvelopeId: "export-envelope.riverbend.peer-a",
+        sourceContentHash: federationSourceContentHash,
+        warningCodes: ["stewardship_rule_conflict"],
+        evidenceIds: [quarantinedEvent.id],
+        preservesOriginalImportedRecord: true,
+        mutatesAcceptedImportedHistory: false,
+        outcome: federationQuarantineOutcome(action)
+      });
+      if (action === "remediate") {
+        expect(result.event.payload["remediationPlan"]).toBe(
+          "Request a stewardship agreement and re-run trust assessment before import."
+        );
+      } else {
+        expect(result.event.payload["remediationPlan"]).toBeUndefined();
+      }
+      expect(runtime.getEvent(acceptedEvent.id)).toEqual(originalAcceptedRecord);
+      expect(runtime.getEvent(quarantinedEvent.id)).toEqual(originalQuarantinedRecord);
+      expect(runtime.getEvent(result.event.id)?.event).toEqual(result.event);
+      expect(runtime.counts().events).toBe(3);
+      expect(runtime.listOutbox()).toEqual([
+        expect.objectContaining({
+          eventId: result.event.id,
+          eventType: federationQuarantineEventType(action),
+          status: "pending",
+          payload: expect.objectContaining({
+            eventId: result.event.id,
+            sourceCapability: "governance"
+          })
+        })
+      ]);
+    });
+  }
 });
 
 function servicesForTest() {
   return {
     registry: createObjectRegistry(),
     memory: createInMemoryCivicMemory()
+  };
+}
+
+function executeFederationQuarantineAction(
+  action: FederationQuarantineGovernanceAction,
+  runtime: CanonicalPersistenceRuntime,
+  command: FederationQuarantineGovernanceCommand
+) {
+  switch (action) {
+    case "accept":
+      return executeAcceptFederationQuarantineCommand({
+        command,
+        runtime,
+        rebuildProjections: false
+      });
+    case "reject":
+      return executeRejectFederationQuarantineCommand({
+        command,
+        runtime,
+        rebuildProjections: false
+      });
+    case "remediate":
+      return executeRemediateFederationQuarantineCommand({
+        command,
+        runtime,
+        rebuildProjections: false
+      });
+  }
+}
+
+function federationQuarantineCommand(
+  action: FederationQuarantineGovernanceAction
+): FederationQuarantineGovernanceCommand {
+  return {
+    action,
+    eventId: `event.command.federation.quarantine.${action}`,
+    occurredAt: "2026-06-13T20:00:00.000Z",
+    actorRef,
+    objectRef: remoteImportObjectRef,
+    authorityRefs: [federationAuthorityRef],
+    sourceEventId: "event.remote.water-quality.private",
+    localEventId: "event.federated.peer-a.event-remote-water-quality-private",
+    importReportId: "import-report.federation.riverbend.peer-a-message",
+    sourceEnvelopeId: "export-envelope.riverbend.peer-a",
+    sourceContentHash: federationSourceContentHash,
+    reason: `Governance reviewed quarantined federation import and chose ${action}.`,
+    warningCodes: ["stewardship_rule_conflict"],
+    evidenceIds: ["event.federation.reconciliation.completed.peer-a"],
+    ...(action === "remediate"
+      ? {
+          remediationPlan:
+            "Request a stewardship agreement and re-run trust assessment before import."
+        }
+      : {})
+  };
+}
+
+function federationQuarantineEventType(
+  action: FederationQuarantineGovernanceAction
+): CanopyEvent["type"] {
+  switch (action) {
+    case "accept":
+      return "federation.quarantine.accepted";
+    case "reject":
+      return "federation.quarantine.rejected";
+    case "remediate":
+      return "federation.quarantine.remediation_requested";
+  }
+}
+
+function federationQuarantineOutcome(
+  action: FederationQuarantineGovernanceAction
+): string {
+  switch (action) {
+    case "accept":
+      return "accepted_for_governed_import";
+    case "reject":
+      return "rejected_from_local_import";
+    case "remediate":
+      return "remediation_requested_before_import";
+  }
+}
+
+function acceptedFederatedImportEvent(): CanopyEvent {
+  return {
+    id: "event.federated.peer-a.accepted-water-sample",
+    type: "claim.created",
+    occurredAt,
+    systemActor: "federation_peer",
+    objectRef: ref("claim.accepted-water-sample", "claim"),
+    relatedRefs: [federationAuthorityRef],
+    authorityRefs: [federationAuthorityRef],
+    sourceCapability: "federation",
+    payload: {
+      title: "Accepted federated water sample",
+      sourceEventId: "event.remote.accepted-water-sample"
+    },
+    schemaVersion: 1,
+    visibility: "federation",
+    dataState: "unverified",
+    provenance: {
+      kind: "federated",
+      sourceEventId: "event.remote.accepted-water-sample",
+      sourceEnvelopeId: "export-envelope.riverbend.peer-a",
+      sourceContentHash: federationSourceContentHash,
+      importedAt: occurredAt
+    }
+  };
+}
+
+function quarantinedFederationReconciliationEvent(): CanopyEvent {
+  return {
+    id: "event.federation.reconciliation.completed.peer-a",
+    type: "federation.reconciliation.completed",
+    occurredAt,
+    systemActor: "federation_peer",
+    objectRef: remoteImportObjectRef,
+    relatedRefs: [federationAuthorityRef],
+    authorityRefs: [federationAuthorityRef],
+    sourceCapability: "federation",
+    payload: {
+      status: "quarantined",
+      messageId: "federation-message.peer-a",
+      importReportId: "import-report.federation.riverbend.peer-a-message",
+      sourceEnvelopeId: "export-envelope.riverbend.peer-a",
+      sourceContentHash: federationSourceContentHash,
+      acceptedEventIds: [],
+      duplicateEventIds: [],
+      quarantinedEventIds: [
+        "event.federated.peer-a.event-remote-water-quality-private"
+      ],
+      quarantineReview: [
+        {
+          sourceEventId: "event.remote.water-quality.private",
+          localEventId: "event.federated.peer-a.event-remote-water-quality-private",
+          warningCodes: ["stewardship_rule_conflict"],
+          nextAction: "remediate"
+        }
+      ]
+    },
+    schemaVersion: 1,
+    visibility: "commons",
+    provenance: {
+      kind: "system_generated",
+      generatedAt: occurredAt
+    }
   };
 }
 

@@ -345,7 +345,7 @@ describe("canopy operations workflow", () => {
       (alert) => alert.id === "drift.federation-import.quarantine-open"
     )).toMatchObject({
       level: "critical",
-      action: "Open the federation quarantine review, then accept, reject, or remediate each remote record."
+      action: "Open the federation quarantine review, then run executeAcceptFederationQuarantineCommand, executeRejectFederationQuarantineCommand, or executeRemediateFederationQuarantineCommand for each remote record."
     });
   });
 

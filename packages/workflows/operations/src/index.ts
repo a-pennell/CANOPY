@@ -1574,7 +1574,7 @@ function collectInvariantDriftAlerts(input: {
       invariant: "federation imports resolve through explicit reconciliation",
       message: "Federation import reconciliation has quarantined or partial records.",
       evidenceIds: federationImportItems.map((item) => item.id),
-      action: "Open the federation quarantine review, then accept, reject, or remediate each remote record."
+      action: "Open the federation quarantine review, then run executeAcceptFederationQuarantineCommand, executeRejectFederationQuarantineCommand, or executeRemediateFederationQuarantineCommand for each remote record."
     });
   }
 

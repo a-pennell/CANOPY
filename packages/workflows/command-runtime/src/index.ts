@@ -4,7 +4,13 @@ import type {
   OutboxDestination,
   OutboxRecord
 } from "@canopy/contracts-database";
-import type { CanopyEvent, CanopyId, IsoDateTime } from "@canopy/contracts-kernel";
+import type {
+  CanopyEvent,
+  CanopyId,
+  ContentHash,
+  IsoDateTime,
+  ObjectRef
+} from "@canopy/contracts-kernel";
 import type { CivicMemoryService } from "@canopy/kernel-civic-memory";
 import type { ObjectRegistry } from "@canopy/kernel-object-registry";
 import type { CanonicalPersistenceRuntime } from "@canopy/database-runtime";
@@ -150,6 +156,35 @@ export interface ExecuteCanopyCommandResult {
   readonly projectionRebuild?: PersistentProjectionRebuildResult;
   readonly shell?: PersistedCanopyShellSnapshotResult;
 }
+
+export type FederationQuarantineGovernanceAction =
+  | "accept"
+  | "reject"
+  | "remediate";
+
+export interface FederationQuarantineGovernanceCommand {
+  readonly action: FederationQuarantineGovernanceAction;
+  readonly eventId?: CanopyId;
+  readonly occurredAt: IsoDateTime;
+  readonly actorRef: ObjectRef;
+  readonly objectRef: ObjectRef;
+  readonly authorityRefs: readonly ObjectRef[];
+  readonly sourceEventId: CanopyId;
+  readonly localEventId: CanopyId;
+  readonly importReportId: CanopyId;
+  readonly sourceEnvelopeId: CanopyId;
+  readonly sourceContentHash: ContentHash;
+  readonly reason: string;
+  readonly warningCodes: readonly string[];
+  readonly evidenceIds: readonly CanopyId[];
+  readonly remediationPlan?: string;
+}
+
+export interface ExecuteFederationQuarantineGovernanceCommandInput
+  extends Omit<
+    ExecuteCanopyCommandInput<FederationQuarantineGovernanceCommand>,
+    "handle"
+  > {}
 
 const defaultOutboxDestination: OutboxDestination = {
   kind: "workflow",
@@ -447,6 +482,12 @@ export function createCommitmentCommandHandler(
       },
       command
     ).event;
+}
+
+export function federationQuarantineGovernanceCommandHandler(): CanopyCommandHandler<
+  FederationQuarantineGovernanceCommand
+> {
+  return (command) => buildFederationQuarantineGovernanceEvent(command);
 }
 
 export function executeCreateClaimCommand(
@@ -773,6 +814,186 @@ export function executeCreateCommitmentCommand(
     ...input,
     handle: createCommitmentCommandHandler(input.services)
   });
+}
+
+export function executeFederationQuarantineGovernanceCommand(
+  input: ExecuteFederationQuarantineGovernanceCommandInput
+): Promise<ExecuteCanopyCommandResult> {
+  return executeCanopyCommand({
+    ...input,
+    handle: federationQuarantineGovernanceCommandHandler()
+  });
+}
+
+export function executeAcceptFederationQuarantineCommand(
+  input: ExecuteFederationQuarantineGovernanceCommandInput
+): Promise<ExecuteCanopyCommandResult> {
+  assertFederationQuarantineAction(input.command, "accept");
+  return executeFederationQuarantineGovernanceCommand(input);
+}
+
+export function executeRejectFederationQuarantineCommand(
+  input: ExecuteFederationQuarantineGovernanceCommandInput
+): Promise<ExecuteCanopyCommandResult> {
+  assertFederationQuarantineAction(input.command, "reject");
+  return executeFederationQuarantineGovernanceCommand(input);
+}
+
+export function executeRemediateFederationQuarantineCommand(
+  input: ExecuteFederationQuarantineGovernanceCommandInput
+): Promise<ExecuteCanopyCommandResult> {
+  assertFederationQuarantineAction(input.command, "remediate");
+  return executeFederationQuarantineGovernanceCommand(input);
+}
+
+export function buildFederationQuarantineGovernanceEvent(
+  command: FederationQuarantineGovernanceCommand
+): CanopyEvent {
+  validateFederationQuarantineGovernanceCommand(command);
+  const eventType = federationQuarantineGovernanceEventType(command.action);
+
+  return {
+    id: command.eventId ?? federationQuarantineGovernanceEventId(command),
+    type: eventType,
+    occurredAt: command.occurredAt,
+    actorRef: command.actorRef,
+    objectRef: command.objectRef,
+    relatedRefs: dedupeRefs(command.authorityRefs),
+    authorityRefs: command.authorityRefs,
+    sourceCapability: "governance",
+    payload: optionalRemediationPlan({
+      action: command.action,
+      sourceEventId: command.sourceEventId,
+      localEventId: command.localEventId,
+      quarantinedEventId: command.localEventId,
+      importReportId: command.importReportId,
+      sourceEnvelopeId: command.sourceEnvelopeId,
+      sourceContentHash: command.sourceContentHash,
+      reason: command.reason,
+      warningCodes: command.warningCodes,
+      evidenceIds: command.evidenceIds,
+      preservesOriginalImportedRecord: true,
+      mutatesAcceptedImportedHistory: false,
+      outcome: federationQuarantineGovernanceOutcome(command.action),
+      ...(command.remediationPlan === undefined
+        ? {}
+        : { remediationPlan: command.remediationPlan })
+    }),
+    schemaVersion: 1,
+    visibility: "commons",
+    dataState: command.action === "remediate" ? "contested" : "locally_verified",
+    provenance: {
+      kind: "human_submitted",
+      actorRef: command.actorRef,
+      notes: "Generated by the federation quarantine governance command runtime."
+    }
+  };
+}
+
+function assertFederationQuarantineAction(
+  command: FederationQuarantineGovernanceCommand,
+  action: FederationQuarantineGovernanceAction
+): void {
+  if (command.action !== action) {
+    throw new Error(
+      `Expected federation quarantine ${action} command, received ${command.action}.`
+    );
+  }
+}
+
+function validateFederationQuarantineGovernanceCommand(
+  command: FederationQuarantineGovernanceCommand
+): void {
+  if (command.authorityRefs.length === 0) {
+    throw new Error("Federation quarantine governance commands require authority refs.");
+  }
+
+  if (command.reason.trim().length === 0) {
+    throw new Error("Federation quarantine governance commands require a reason.");
+  }
+
+  if (command.action === "remediate" && command.remediationPlan === undefined) {
+    throw new Error(
+      "Federation quarantine remediation commands require a remediation plan."
+    );
+  }
+}
+
+function federationQuarantineGovernanceEventType(
+  action: FederationQuarantineGovernanceAction
+): CanopyEvent["type"] {
+  switch (action) {
+    case "accept":
+      return "federation.quarantine.accepted";
+    case "reject":
+      return "federation.quarantine.rejected";
+    case "remediate":
+      return "federation.quarantine.remediation_requested";
+  }
+}
+
+function federationQuarantineGovernanceOutcome(
+  action: FederationQuarantineGovernanceAction
+): string {
+  switch (action) {
+    case "accept":
+      return "accepted_for_governed_import";
+    case "reject":
+      return "rejected_from_local_import";
+    case "remediate":
+      return "remediation_requested_before_import";
+  }
+}
+
+function federationQuarantineGovernanceEventId(
+  command: FederationQuarantineGovernanceCommand
+): CanopyId {
+  return `event.federation.quarantine.${command.action}.${idToken(command.localEventId)}`;
+}
+
+function dedupeRefs(refs: readonly ObjectRef[]): readonly ObjectRef[] {
+  const seen = new Set<string>();
+  const deduped: ObjectRef[] = [];
+
+  for (const ref of refs) {
+    const key = `${ref.namespace}:${ref.type}:${ref.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(ref);
+    }
+  }
+
+  return deduped;
+}
+
+function idToken(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, "-");
+}
+
+function optionalRemediationPlan(
+  payload: {
+    readonly action: FederationQuarantineGovernanceAction;
+    readonly sourceEventId: CanopyId;
+    readonly localEventId: CanopyId;
+    readonly quarantinedEventId: CanopyId;
+    readonly importReportId: CanopyId;
+    readonly sourceEnvelopeId: CanopyId;
+    readonly sourceContentHash: ContentHash;
+    readonly reason: string;
+    readonly warningCodes: readonly string[];
+    readonly evidenceIds: readonly CanopyId[];
+    readonly preservesOriginalImportedRecord: boolean;
+    readonly mutatesAcceptedImportedHistory: boolean;
+    readonly outcome: string;
+    readonly remediationPlan?: string;
+  }
+): Readonly<Record<string, unknown>> {
+  if (payload.remediationPlan === undefined) {
+    const { remediationPlan: _remediationPlan, ...rest } = payload;
+    return rest;
+  }
+
+  return payload;
 }
 
 function commandOutboxPayload(event: CanopyEvent): JsonValue {

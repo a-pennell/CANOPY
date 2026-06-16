@@ -25,6 +25,7 @@ import {
 import {
   buildRiverbendPersistedRuntimeScenario,
   executeRiverbendFederationReconciliationSlice,
+  type RiverbendFederationReconciliationSliceResult,
   type RiverbendTrustHardeningSliceResult
 } from "@canopy/evaluation-vertical-slice";
 import {
@@ -205,6 +206,23 @@ export interface CanopyWebFederationImportReview {
   readonly eventTrail: readonly string[];
   readonly quarantineReview: readonly string[];
   readonly learningOutputs: readonly string[];
+  readonly peerComparisons: readonly CanopyWebFederationPeerComparison[];
+}
+
+export interface CanopyWebFederationPeerComparison {
+  readonly id: string;
+  readonly domain: "claim" | "evidence" | "stewardship";
+  readonly localRef: ObjectRef;
+  readonly localEventId: string;
+  readonly localRecord: string;
+  readonly remoteRef: ObjectRef;
+  readonly remoteEventId: string;
+  readonly remoteRecord: string;
+  readonly peerSource: string;
+  readonly trustStatus: string;
+  readonly provenance: string;
+  readonly conflictReason: string;
+  readonly proposedAction: string;
 }
 
 export interface CanopyWebAdaptiveBranchReview {
@@ -516,7 +534,8 @@ export function getCanopyWebModel(options: GetCanopyWebModelOptions = {}): Canop
   const federationImportReview = buildFederationImportReview({
     runtime,
     session,
-    federationReview
+    federationReview,
+    phase9Slice
   });
   const adaptiveBranchReview = buildAdaptiveBranchReview({
     events: phase7Slice.events,
@@ -1090,6 +1109,7 @@ function buildFederationImportReview(input: {
   readonly runtime: CanonicalPersistenceRuntime;
   readonly session: CanopyShellSession;
   readonly federationReview: CanopyWebFederationReview | undefined;
+  readonly phase9Slice: RiverbendFederationReconciliationSliceResult;
 }): CanopyWebFederationImportReview {
   const events = input.runtime.queryEvents().items.map((record) => record.event);
   const importEvents = events.filter((event) => event.type === "federation.import.received");
@@ -1179,6 +1199,7 @@ function buildFederationImportReview(input: {
     federationLearningOutputs(coreState),
     federationLearningOutputs(latestReconciliationPayload)
   );
+  const peerComparisons = buildFederationPeerComparisons(input.phase9Slice);
 
   return {
     importedEnvelopeId,
@@ -1190,8 +1211,167 @@ function buildFederationImportReview(input: {
     warnings,
     eventTrail: [...importEvents, ...federatedEvents, ...reconciliationEvents].map((event) => event.id).slice(0, 8),
     quarantineReview,
-    learningOutputs
+    learningOutputs,
+    peerComparisons
   };
+}
+
+function buildFederationPeerComparisons(
+  slice: RiverbendFederationReconciliationSliceResult
+): readonly CanopyWebFederationPeerComparison[] {
+  const localEvents = slice.events;
+  const claimEvent = findEventById(localEvents, "event.claim.created.school-meal-need");
+  const evidenceEvent = findEventById(localEvents, "event.evidence.created.school-kitchen-intake");
+  const useRightEvent = findEventById(localEvents, "event.stewardship.use_right.granted.school-crop-share");
+  const basePeer = "Riverbend Food Commons";
+
+  return [
+    peerComparison({
+      id: "riverbend-claim-baseline",
+      domain: "claim",
+      localEvent: claimEvent,
+      remoteEvent: claimEvent,
+      peerSource: basePeer,
+      trustStatus: slice.federationReconciliation.trustAssessment.status,
+      provenance: `envelope ${slice.federationExport.envelope.id}`,
+      conflictReason: "baseline agreement: exported claim matches local school meal need record",
+      proposedAction: "accept as mapped federation baseline"
+    }),
+    peerComparison({
+      id: "downstream-claim-divergence",
+      domain: "claim",
+      localEvent: claimEvent,
+      remoteEvent: divergentPeerEvent(claimEvent, {
+        peerToken: "downstream",
+        eventId: "event.claim.created.school-meal-need.downstream",
+        summary: "Downstream peer reports only twelve produce boxes can be absorbed before the next meal cycle.",
+        dataState: "testimony_derived"
+      }),
+      peerSource: "Downstream School Commons",
+      trustStatus: "warning",
+      provenance: "derived peer fixture from Riverbend Phase 9 export",
+      conflictReason: "same claim ref diverges on quantity and confidence",
+      proposedAction: "open claim reconciliation before replacing local record"
+    }),
+    peerComparison({
+      id: "downstream-evidence-divergence",
+      domain: "evidence",
+      localEvent: evidenceEvent,
+      remoteEvent: divergentPeerEvent(evidenceEvent, {
+        peerToken: "downstream",
+        eventId: "event.evidence.created.school-kitchen-intake.downstream",
+        summary: "Downstream kitchen note confirms twelve boxes and flags cold-storage uncertainty.",
+        dataState: "unverified",
+        visibility: "role_restricted"
+      }),
+      peerSource: "Downstream School Commons",
+      trustStatus: "warning",
+      provenance: "derived peer fixture from Riverbend Phase 9 export",
+      conflictReason: "same evidence ref has different capacity and stricter visibility",
+      proposedAction: "remediate through evidence review and data-stewardship check"
+    }),
+    peerComparison({
+      id: "hilltown-stewardship-divergence",
+      domain: "stewardship",
+      localEvent: useRightEvent,
+      remoteEvent: divergentPeerEvent(useRightEvent, {
+        peerToken: "hilltown",
+        eventId: "event.stewardship.use_right.granted.school-crop-share.hilltown",
+        summary: "Hilltown steward proposes a ten-box cap until watershed follow-up is complete.",
+        dataState: "contested"
+      }),
+      peerSource: "Hilltown Stewardship Circle",
+      trustStatus: "warning",
+      provenance: "derived peer fixture from Riverbend Phase 9 export",
+      conflictReason: "same use-right ref diverges on grant conditions",
+      proposedAction: "compare stewardship obligations before applying remote grant terms"
+    })
+  ].filter((row): row is CanopyWebFederationPeerComparison => row !== undefined);
+}
+
+function peerComparison(input: {
+  readonly id: string;
+  readonly domain: CanopyWebFederationPeerComparison["domain"];
+  readonly localEvent: CanopyEvent | undefined;
+  readonly remoteEvent: CanopyEvent | undefined;
+  readonly peerSource: string;
+  readonly trustStatus: string;
+  readonly provenance: string;
+  readonly conflictReason: string;
+  readonly proposedAction: string;
+}): CanopyWebFederationPeerComparison | undefined {
+  if (input.localEvent === undefined || input.remoteEvent === undefined) {
+    return undefined;
+  }
+
+  return {
+    id: input.id,
+    domain: input.domain,
+    localRef: input.localEvent.objectRef,
+    localEventId: input.localEvent.id,
+    localRecord: summarizeFederationComparisonRecord(input.localEvent),
+    remoteRef: input.remoteEvent.objectRef,
+    remoteEventId: input.remoteEvent.id,
+    remoteRecord: summarizeFederationComparisonRecord(input.remoteEvent),
+    peerSource: input.peerSource,
+    trustStatus: input.trustStatus,
+    provenance: input.provenance,
+    conflictReason: input.conflictReason,
+    proposedAction: input.proposedAction
+  };
+}
+
+function divergentPeerEvent(
+  event: CanopyEvent | undefined,
+  input: {
+    readonly peerToken: string;
+    readonly eventId: string;
+    readonly summary: string;
+    readonly dataState: NonNullable<CanopyEvent["dataState"]>;
+    readonly visibility?: CanopyEvent["visibility"];
+  }
+): CanopyEvent | undefined {
+  if (event === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...event,
+    id: input.eventId,
+    dataState: input.dataState,
+    ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
+    payload: {
+      ...event.payload,
+      summary: input.summary,
+      peerFixture: input.peerToken
+    },
+    provenance: {
+      kind: "federated",
+      sourceEventId: event.id,
+      sourceEnvelopeId: `export-envelope.${input.peerToken}.phase-9-conflict`,
+      sourceContentHash: `sha256:${input.peerToken}-phase-9-conflict`,
+      importedAt: generatedAt
+    }
+  };
+}
+
+function summarizeFederationComparisonRecord(event: CanopyEvent): string {
+  const payload = event.payload;
+  const title = payloadString(payload, "title");
+  const summary = payloadString(payload, "summary");
+  const rationale = payloadString(payload, "rationale");
+  const grantNote = payloadString(payload, "grantNote");
+  const disposition = payloadString(payload, "disposition");
+  const record = title ?? summary ?? rationale ?? grantNote ?? disposition ?? event.type;
+
+  return `${record} (${event.dataState ?? "unspecified"}, ${event.visibility ?? "unspecified"})`;
+}
+
+function findEventById(
+  events: readonly CanopyEvent[],
+  eventId: string
+): CanopyEvent | undefined {
+  return events.find((event) => event.id === eventId);
 }
 
 function buildAdaptiveBranchReview(input: {
