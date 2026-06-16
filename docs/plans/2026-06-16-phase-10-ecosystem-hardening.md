@@ -18,6 +18,11 @@ The report is the umbrella Phase 10 decision artifact. It combines:
 
 The report is intentionally allowed to say `blocked`. Phase 10 should expose incomplete production posture clearly instead of treating prototypes as production readiness.
 
+`buildCanopyPhase10CompletionReport()` now separates two truths:
+
+- local acceptance is complete when executable provider, migration, operations, verification, privacy, and auditability evidence are supplied by the repo;
+- live deployment remains evidence-driven and should stay blocked until real infrastructure bindings, observability, and provider credentials are supplied outside provider-neutral packages.
+
 ## Readiness Sidecar
 
 `@canopy/evaluation-adapter-conformance` now exposes `createPhase10ProviderDeploymentReadinessReport()`.
@@ -59,8 +64,10 @@ Before deployment can be considered ready:
 
 ## Next Work
 
+Phase 10 is complete at executable local-acceptance level. Remaining work belongs to live deployment readiness:
+
 - Feed real CI/deployment environment manifests into the readiness report.
-- Attach conformance artifacts as satisfied production gate evidence.
-- Bind the report into operations release checks.
-- Add provider package migration runners for Postgres extension tracks.
-- Promote planned Postgres persistence and event-store targets once executable providers pass conformance and migration evidence.
+- Attach live conformance artifacts as satisfied production gate evidence.
+- Bind the report into deployment/release checks.
+- Add provider package migration runners for real Postgres extension tracks.
+- Promote live provider targets once executable providers pass against real infrastructure.

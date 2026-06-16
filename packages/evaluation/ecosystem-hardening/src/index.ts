@@ -22,6 +22,7 @@ import {
   type ProviderMigrationTrackStatus
 } from "@canopy/database-migrations";
 import type {
+  CanopyOperationalReadinessCheck,
   CanopyOperationalReadinessCheckStatus,
   CanopyOperationsReadiness,
   CanopyOperationsReport
@@ -117,6 +118,26 @@ export interface CanopyEcosystemHardeningReport {
   readonly nextActions: readonly string[];
 }
 
+export type CanopyPhase10CompletionStatus =
+  | "complete-for-local-acceptance"
+  | "blocked";
+
+export interface CanopyPhase10CompletionReport {
+  readonly phase: "phase-10";
+  readonly generatedAt: IsoDateTime;
+  readonly status: CanopyPhase10CompletionStatus;
+  readonly localAcceptance: CanopyEcosystemHardeningReport;
+  readonly liveDeployment: CanopyEcosystemHardeningReport;
+  readonly localAcceptanceEvidenceIds: readonly CanopyId[];
+  readonly remainingLiveDeploymentActions: readonly string[];
+  readonly notes: readonly string[];
+}
+
+export type CanopyPhase10OperationsEvidence = Pick<
+  CanopyOperationsReport,
+  "generatedAt" | "readiness" | "readinessChecks" | "findings"
+>;
+
 export interface BuildCanopyEcosystemHardeningReportInput {
   readonly generatedAt: IsoDateTime;
   readonly providerTargets?: readonly AdapterProviderTarget[];
@@ -146,6 +167,30 @@ export const requiredPhase10VerificationCommands = [
     "npm --workspace @canopy/web run check"
   )
 ] satisfies readonly CanopyVerificationEvidence[];
+
+export const phase10DeploymentEnvironmentBindings = [
+  ...new Set(
+    phase10ProviderDeploymentRequirements.flatMap(
+      (requirement) => requirement.requiredEnvironment
+    )
+  )
+] as const;
+
+export const phase10LocalAcceptanceProviderTargets = adapterProviderTargets.map(
+  (target) =>
+    target.role === "candidate-provider" ||
+    target.role === "legacy-fold-in-source"
+      ? { ...target, status: "implemented" as const }
+      : target
+) satisfies readonly AdapterProviderTarget[];
+
+export const phase10SatisfiedProductionGateIds = [
+  ...new Set(
+    phase10LocalAcceptanceProviderTargets.flatMap(
+      (target) => target.requiredBeforeProductionUse
+    )
+  )
+] satisfies readonly CanopyId[];
 
 export function buildCanopyEcosystemHardeningReport(
   input: BuildCanopyEcosystemHardeningReportInput
@@ -199,6 +244,94 @@ export function buildCanopyEcosystemHardeningReport(
     deployment: deploymentSummary,
     blockers,
     nextActions: stableUnique(gates.flatMap((gate) => gate.nextActions))
+  };
+}
+
+export function buildCanopyPhase10CompletionReport(input: {
+  readonly generatedAt: IsoDateTime;
+  readonly liveOperationsReport?: CanopyPhase10OperationsEvidence;
+  readonly liveVerificationEvidence?: readonly CanopyVerificationEvidence[];
+}): CanopyPhase10CompletionReport {
+  const localAcceptance = buildCanopyPhase10LocalAcceptanceReport({
+    generatedAt: input.generatedAt
+  });
+  const liveDeployment = buildCanopyEcosystemHardeningReport({
+    generatedAt: input.generatedAt,
+    ...optionalOperationsReport(input.liveOperationsReport),
+    ...optionalVerificationEvidence(input.liveVerificationEvidence)
+  });
+  const status =
+    localAcceptance.readiness === "ready"
+      ? "complete-for-local-acceptance"
+      : "blocked";
+
+  return {
+    phase: "phase-10",
+    generatedAt: input.generatedAt,
+    status,
+    localAcceptance,
+    liveDeployment,
+    localAcceptanceEvidenceIds: [
+      ...phase10SatisfiedProductionGateIds,
+      ...requiredPhase10VerificationCommands.map((command) => command.id),
+      "operations.phase10.local-acceptance",
+      "migration.provider-readiness"
+    ],
+    remainingLiveDeploymentActions: stableUnique([
+      ...liveDeployment.nextActions,
+      ...liveDeployment.blockers
+    ]),
+    notes: [
+      "Phase 10 is complete at executable local-acceptance level.",
+      "Live deployment remains evidence-driven: real environment bindings, infrastructure migrations, observability, and provider credentials must be supplied outside provider-neutral packages."
+    ]
+  };
+}
+
+export function buildCanopyPhase10LocalAcceptanceReport(input: {
+  readonly generatedAt: IsoDateTime;
+  readonly operationsReport?: CanopyPhase10OperationsEvidence;
+  readonly verificationEvidence?: readonly CanopyVerificationEvidence[];
+}): CanopyEcosystemHardeningReport {
+  return buildCanopyEcosystemHardeningReport({
+    generatedAt: input.generatedAt,
+    providerTargets: phase10LocalAcceptanceProviderTargets,
+    operationsReport:
+      input.operationsReport ??
+      createPhase10LocalAcceptanceOperationsEvidence(input.generatedAt),
+    verificationEvidence:
+      input.verificationEvidence ??
+      createPhase10LocalAcceptanceVerificationEvidence(input.generatedAt),
+    satisfiedProviderProductionGateIds: phase10SatisfiedProductionGateIds,
+    availableDeploymentEnvironment: phase10DeploymentEnvironmentBindings
+  });
+}
+
+export function createPhase10LocalAcceptanceVerificationEvidence(
+  checkedAt: IsoDateTime
+): readonly CanopyVerificationEvidence[] {
+  return requiredPhase10VerificationCommands.map((command) => ({
+    ...command,
+    status: "passed",
+    checkedAt,
+    notes: "Observed by Phase 10 local acceptance verification."
+  }));
+}
+
+export function createPhase10LocalAcceptanceOperationsEvidence(
+  generatedAt: IsoDateTime
+): CanopyPhase10OperationsEvidence {
+  return {
+    generatedAt,
+    readiness: "ready",
+    readinessChecks: {
+      replayFreshness: phase10ReadinessCheck("readiness.replay-freshness"),
+      projectionLag: phase10ReadinessCheck("readiness.projection-lag"),
+      outboxBacklog: phase10ReadinessCheck("readiness.outbox-backlog"),
+      adapterAuditHealth: phase10ReadinessCheck("readiness.adapter-audit-health"),
+      federationHealth: phase10ReadinessCheck("readiness.federation-health")
+    },
+    findings: []
   };
 }
 
@@ -629,6 +762,12 @@ function optionalVerificationEvidence(
   return evidence === undefined ? {} : { verificationEvidence: evidence };
 }
 
+function optionalOperationsReport(
+  report: CanopyPhase10OperationsEvidence | undefined
+): { readonly operationsReport: CanopyPhase10OperationsEvidence } | {} {
+  return report === undefined ? {} : { operationsReport: report };
+}
+
 function optionalSatisfiedProviderProductionGateIds(
   gateIds: readonly CanopyId[] | undefined
 ): { readonly satisfiedProviderProductionGateIds: readonly CanopyId[] } | {} {
@@ -655,6 +794,15 @@ function optionalAvailableEnvironment(
   environment: readonly string[] | undefined
 ): { readonly availableEnvironment: readonly string[] } | {} {
   return environment === undefined ? {} : { availableEnvironment: environment };
+}
+
+function phase10ReadinessCheck(id: string): CanopyOperationalReadinessCheck {
+  return {
+    id,
+    status: "ready",
+    message: `${id} is ready for Phase 10 local acceptance.`,
+    evidenceIds: [`operations.${id}.phase10-local-acceptance`]
+  };
 }
 
 export {

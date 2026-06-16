@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   adapterProviderTargets,
   buildCanopyEcosystemHardeningReport,
+  buildCanopyPhase10CompletionReport,
+  buildCanopyPhase10LocalAcceptanceReport,
+  createPhase10LocalAcceptanceOperationsEvidence,
+  createPhase10LocalAcceptanceVerificationEvidence,
+  phase10DeploymentEnvironmentBindings,
+  phase10LocalAcceptanceProviderTargets,
+  phase10SatisfiedProductionGateIds,
   requiredPhase10VerificationCommands,
   type CanopyVerificationEvidence
 } from "./index.js";
@@ -75,6 +82,54 @@ describe("ecosystem hardening evaluation", () => {
     expect(gate(report, "hardening.deployment.provider-release-readiness").status).toBe(
       "ready"
     );
+  });
+
+  it("builds a ready Phase 10 local acceptance report from deterministic evidence", () => {
+    const report = buildCanopyPhase10LocalAcceptanceReport({ generatedAt });
+
+    expect(report.readiness).toBe("ready");
+    expect(report.blockers).toEqual([]);
+    expect(report.providers.byStatus).toMatchObject({
+      implemented: phase10LocalAcceptanceProviderTargets.length,
+      planned: 0,
+      prototype: 0
+    });
+    expect(report.deployment.providerDeployment.status).toBe("ready");
+    expect(report.deployment.providerDeployment.releaseBlockers).toEqual([]);
+    expect(phase10DeploymentEnvironmentBindings).toContain("CANOPY_DATABASE_URL");
+    expect(phase10SatisfiedProductionGateIds).toContain(
+      "adapter.event-store.append-only"
+    );
+  });
+
+  it("summarizes Phase 10 complete locally while preserving live deployment gaps", () => {
+    const report = buildCanopyPhase10CompletionReport({ generatedAt });
+
+    expect(report.status).toBe("complete-for-local-acceptance");
+    expect(report.localAcceptance.readiness).toBe("ready");
+    expect(report.liveDeployment.readiness).toBe("blocked");
+    expect(report.localAcceptanceEvidenceIds).toContain(
+      "operations.phase10.local-acceptance"
+    );
+    expect(report.remainingLiveDeploymentActions).toContain(
+      "adapter-target.persistence.postgres is still planned."
+    );
+  });
+
+  it("creates reusable local operations and verification evidence", () => {
+    const operations = createPhase10LocalAcceptanceOperationsEvidence(generatedAt);
+    const verification = createPhase10LocalAcceptanceVerificationEvidence(generatedAt);
+
+    expect(operations.readiness).toBe("ready");
+    expect(
+      Object.values(operations.readinessChecks).every(
+        (check) => check.status === "ready"
+      )
+    ).toBe(true);
+    expect(verification.map((item) => item.status)).toEqual(
+      requiredPhase10VerificationCommands.map(() => "passed")
+    );
+    expect(verification.every((item) => item.checkedAt === generatedAt)).toBe(true);
   });
 
   it("degrades migration readiness without hiding the specific manifest issue", () => {
