@@ -940,7 +940,8 @@ a {
 .citizenPanel,
 .citizenContextItem,
 .citizenAttentionItem,
-.citizenActionLink {
+.citizenActionLink,
+.citizenTaskSurfaceItem {
   border: 1px solid var(--canopy-line);
   border-radius: var(--canopy-radius);
   background: rgba(21, 29, 25, 0.72);
@@ -971,7 +972,8 @@ a {
 .citizenContextItem:hover,
 .citizenContextItem.active,
 .citizenAttentionItem:hover,
-.citizenActionLink:hover {
+.citizenActionLink:hover,
+.citizenTaskSurfaceItem:hover {
   border-color: var(--canopy-line-strong);
   background: var(--canopy-panel-raised);
   color: var(--canopy-text);
@@ -984,6 +986,11 @@ a {
   color: var(--canopy-text);
   font-size: 13px;
   font-weight: 680;
+}
+
+.citizenTaskSurfaceItem {
+  color: inherit;
+  text-decoration: none;
 }
 
 .citizenTaskLink small,

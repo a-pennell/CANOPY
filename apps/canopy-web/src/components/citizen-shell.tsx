@@ -9,6 +9,9 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
   const isDecisionsRoute = model.routePath === "/citizen/decisions";
   const isTrustDataRoute = model.routePath === "/citizen/trust-data";
   const isReleaseReadinessRoute = model.routePath === "/citizen/release-readiness";
+  const isTaskSurfaceRoute = ["/citizen/today", "/citizen/contexts", "/citizen/around", "/citizen/search"].includes(
+    model.routePath
+  );
 
   return (
     <main className="citizenShell">
@@ -49,6 +52,8 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
         renderTrustData(model)
       ) : isReleaseReadinessRoute ? (
         renderReleaseReadiness(model)
+      ) : isTaskSurfaceRoute ? (
+        renderTaskSurface(model)
       ) : (
       <section className="citizenHomeGrid" aria-label="Citizen home">
         <article className="citizenPanel citizenActiveContext">
@@ -123,6 +128,80 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
       </section>
       )}
     </main>
+  );
+}
+
+function renderTaskSurface(model: CitizenCanopyModel) {
+  const taskSurface = model.taskSurface;
+
+  return (
+    <section className="citizenWorkflowGrid" aria-label={taskSurface.label}>
+      <article className="citizenPanel citizenWorkflowPrimary">
+        <p className="eyebrow">Citizen task</p>
+        <h2>{taskSurface.label}</h2>
+        <p>{taskSurface.summary}</p>
+      </article>
+
+      <article className="citizenPanel citizenWorkflowPreview">
+        <p className="eyebrow">Active role</p>
+        <h2>{model.activeContext.activeRole}</h2>
+        <p>{model.activeContext.authoritySummary}</p>
+        <dl className="citizenContextFacts">
+          <div>
+            <dt>Context</dt>
+            <dd>{model.activeContext.label}</dd>
+          </div>
+          <div>
+            <dt>Data</dt>
+            <dd>{model.activeContext.dataPosture}</dd>
+          </div>
+        </dl>
+      </article>
+
+      {model.routePath === "/citizen/contexts" ? renderRoleSwitchPanel(model) : null}
+
+      {taskSurface.items.map((item) => (
+        <Link href={item.route} className="citizenPanel citizenTaskSurfaceItem" key={item.id}>
+          <p className="eyebrow">{item.contextLabel ?? "task"}</p>
+          <h2>{item.label}</h2>
+          <p>{item.summary}</p>
+        </Link>
+      ))}
+
+      {model.suggestedActions.length === 0 ? null : (
+        <article className="citizenPanel">
+          <p className="eyebrow">Available now</p>
+          <h2>Suggested actions</h2>
+          <div className="citizenActionList">
+            {model.suggestedActions.map((action) => (
+              <Link href={action.route} className="citizenActionLink" key={action.id}>
+                {action.label}
+              </Link>
+            ))}
+          </div>
+        </article>
+      )}
+    </section>
+  );
+}
+
+function renderRoleSwitchPanel(model: CitizenCanopyModel) {
+  return (
+    <article className="citizenPanel">
+      <p className="eyebrow">Roles</p>
+      <h2>Switch role</h2>
+      <div className="citizenActionList">
+        {model.activeContext.availableRoles.map((role) => (
+          <Link
+            href={`/citizen/contexts?context=${encodeURIComponent(model.activeContext.id)}&role=${encodeURIComponent(role)}`}
+            className="citizenActionLink"
+            key={role}
+          >
+            {role}
+          </Link>
+        ))}
+      </div>
+    </article>
   );
 }
 

@@ -369,6 +369,78 @@ describe("Phase 11 citizen surface acceptance", () => {
     ]);
   });
 
+  it("builds route-specific task surfaces for mobile-first citizen routes", async () => {
+    const routes = [
+      {
+        routeSegments: ["citizen", "today"],
+        surfaceId: "today",
+        expectedText: "What needs attention today"
+      },
+      {
+        routeSegments: ["citizen", "contexts"],
+        surfaceId: "contexts",
+        expectedText: "Groups and roles"
+      },
+      {
+        routeSegments: ["citizen", "around"],
+        surfaceId: "around",
+        expectedText: "Near this place"
+      },
+      {
+        routeSegments: ["citizen", "search"],
+        surfaceId: "search",
+        expectedText: "Find public records"
+      }
+    ] as const;
+
+    for (const route of routes) {
+      const element = await CanopyPage({
+        routeSegments: route.routeSegments
+      });
+
+      expect(isValidElement(element)).toBe(true);
+      expect(element.type).toBe(CitizenShell);
+
+      const model = (element.props as { readonly model: CitizenCanopyModel }).model;
+      const shellText = collectElementStrings(CitizenShell({ model })).join("\n");
+
+      expect(model.taskSurface.id).toBe(route.surfaceId);
+      expect(model.taskSurface.items.length).toBeGreaterThan(0);
+      expect(shellText).toContain(route.expectedText);
+      expect(shellText).not.toContain("A separate Phase 11 surface for public, citizen, steward, and operator workflows.");
+    }
+  });
+
+  it("switches role inside a context and changes authority, data posture, attention, and actions", async () => {
+    const element = await CanopyPage({
+      routeSegments: ["citizen", "contexts"],
+      searchParams: Promise.resolve({
+        context: "neighborhood.riverbend",
+        role: "neighbor reviewer"
+      })
+    });
+
+    expect(isValidElement(element)).toBe(true);
+    expect(element.type).toBe(CitizenShell);
+
+    const model = (element.props as { readonly model: CitizenCanopyModel }).model;
+    const shellText = collectElementStrings(CitizenShell({ model })).join("\n");
+
+    expect(model.activeContext).toMatchObject({
+      id: "neighborhood.riverbend",
+      activeRole: "neighbor reviewer",
+      dataPosture: "public",
+      authoritySummary: "You can review public neighborhood priorities and recommend next steps."
+    });
+    expect(model.activeAttentionItems.map((item) => item.role)).toEqual(["neighbor reviewer"]);
+    expect(model.suggestedActions.map((action) => action.id)).toEqual([
+      "review-neighborhood-priority",
+      "open-public-summary"
+    ]);
+    expect(shellText).toContain("neighbor reviewer");
+    expect(shellText).toContain("Open public summary");
+  });
+
   it("keeps existing shell routes on the current dashboard", async () => {
     const element = await CanopyPage({
       routeSegments: ["scope"]

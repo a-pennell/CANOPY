@@ -24,6 +24,7 @@ export async function CanopyPage({
       <CitizenShell
         model={buildCitizenCanopyModel({
           activeContextId: contextIdFromParams(params.context),
+          activeRole: roleFromParams(params.role),
           audienceMode: audienceModeFromParams(params.mode),
           routePath
         })}
@@ -48,6 +49,10 @@ function isCitizenRoute(routeSegments: readonly string[]): boolean {
 }
 
 function contextIdFromParams(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function roleFromParams(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 

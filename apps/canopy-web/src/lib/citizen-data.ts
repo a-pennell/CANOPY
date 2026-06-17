@@ -11,6 +11,7 @@ export interface CitizenCanopyModel {
   readonly activeAttentionItems: readonly CitizenAttentionItem[];
   readonly suggestedActions: readonly CitizenSuggestedAction[];
   readonly taskNavigation: readonly CitizenTaskNavigationItem[];
+  readonly taskSurface: CitizenTaskSurface;
   readonly reportConcernDraft: ConcernReportDraft;
   readonly needsOffers: NeedsOffersOverview;
   readonly decisionSummary: CitizenDecisionSummary;
@@ -210,12 +211,29 @@ export interface MobileTaskRoute {
   readonly route: string;
 }
 
+export interface CitizenTaskSurface {
+  readonly id: "home" | "today" | "contexts" | "around" | "search" | "workflow";
+  readonly label: string;
+  readonly summary: string;
+  readonly items: readonly CitizenTaskSurfaceItem[];
+}
+
+export interface CitizenTaskSurfaceItem {
+  readonly id: string;
+  readonly label: string;
+  readonly summary: string;
+  readonly route: string;
+  readonly contextLabel?: string;
+}
+
 export function buildCitizenCanopyModel({
   activeContextId,
+  activeRole,
   audienceMode = "participant",
   routePath = "/citizen"
 }: {
   readonly activeContextId?: string | undefined;
+  readonly activeRole?: string | undefined;
   readonly audienceMode?: CitizenAudienceMode | undefined;
   readonly routePath?: string | undefined;
 } = {}): CitizenCanopyModel {
@@ -226,25 +244,32 @@ export function buildCitizenCanopyModel({
   }
 
   const activeContext =
-    citizenContexts.find((context) => context.id === activeContextId) ?? defaultContext;
+    applyRoleSelection(
+      citizenContexts.find((context) => context.id === activeContextId) ?? defaultContext,
+      activeRole
+    );
   const activeAttentionItems = citizenAttentionItems.filter(
-    (item) => item.contextId === activeContext.id
+    (item) => item.contextId === activeContext.id && item.role === activeContext.activeRole
+  );
+  const contexts = citizenContexts.map((context) =>
+    context.id === activeContext.id ? activeContext : context
   );
 
   return {
     routePath,
     surfaceLabel: "Citizen Canopy",
     status: "prototype",
-    summary: "A separate Phase 11 surface for public, citizen, steward, and operator workflows.",
+    summary: summaryForRoute(routePath),
     primaryAction: {
       label: "Report something",
       route: "/citizen/report"
     },
-    contexts: citizenContexts,
+    contexts,
     activeContext,
     activeAttentionItems,
     suggestedActions: activeContext.suggestedActionIds.map(resolveSuggestedAction),
     taskNavigation: citizenTaskNavigation,
+    taskSurface: buildTaskSurface(routePath, contexts, activeContext, activeAttentionItems),
     reportConcernDraft: buildConcernReportDraft(activeContext),
     needsOffers: needsOffersOverview,
     decisionSummary,
@@ -253,6 +278,140 @@ export function buildCitizenCanopyModel({
     releaseReadiness,
     publicObserver: buildPublicObserverBoundary(audienceMode),
     mobileTaskRoutes
+  };
+}
+
+function summaryForRoute(routePath: string): string {
+  if (routePath === "/citizen/today") {
+    return "What needs attention today across your active groups and roles.";
+  }
+
+  if (routePath === "/citizen/contexts") {
+    return "Groups and roles where you participate, review, steward, or observe.";
+  }
+
+  if (routePath === "/citizen/around") {
+    return "Near this place, see connected commons, thresholds, and public issues.";
+  }
+
+  if (routePath === "/citizen/search") {
+    return "Find public records, decisions, commitments, evidence, and outcomes.";
+  }
+
+  return "A separate Phase 11 surface for public, citizen, steward, and operator workflows.";
+}
+
+function applyRoleSelection(context: CitizenContext, activeRole: string | undefined): CitizenContext {
+  if (activeRole === undefined || !context.availableRoles.includes(activeRole)) {
+    return context;
+  }
+
+  const override = roleOverrides[`${context.id}:${activeRole}`];
+
+  return {
+    ...context,
+    activeRole,
+    authoritySummary: override?.authoritySummary ?? context.authoritySummary,
+    dataPosture: override?.dataPosture ?? context.dataPosture,
+    suggestedActionIds: override?.suggestedActionIds ?? context.suggestedActionIds
+  };
+}
+
+function buildTaskSurface(
+  routePath: string,
+  contexts: readonly CitizenContext[],
+  activeContext: CitizenContext,
+  activeAttentionItems: readonly CitizenAttentionItem[]
+): CitizenTaskSurface {
+  if (routePath === "/citizen/today") {
+    return {
+      id: "today",
+      label: "What needs attention today",
+      summary: "Start with the work that is timely, role-aware, and close to your current context.",
+      items: activeAttentionItems.map((item) => ({
+        id: item.id,
+        label: item.label,
+        summary: item.summary,
+        route: item.route,
+        contextLabel: activeContext.label
+      }))
+    };
+  }
+
+  if (routePath === "/citizen/contexts") {
+    return {
+      id: "contexts",
+      label: "Groups and roles",
+      summary: "Switch between the groups, levels, and roles that shape what you can see and do.",
+      items: contexts.map((context) => ({
+        id: context.id,
+        label: context.label,
+        summary: `${context.activeRole} at ${context.level}; ${context.authoritySummary}`,
+        route: `/citizen/contexts?context=${encodeURIComponent(context.id)}`,
+        contextLabel: context.dataPosture
+      }))
+    };
+  }
+
+  if (routePath === "/citizen/around") {
+    return {
+      id: "around",
+      label: "Near this place",
+      summary: "Place-based records connect neighborhoods, schools, commons, and living systems.",
+      items: [
+        {
+          id: "around.active-context",
+          label: activeContext.label,
+          summary: activeContext.relationshipPath.join(" / "),
+          route: `/citizen/contexts?context=${encodeURIComponent(activeContext.id)}`,
+          contextLabel: activeContext.level
+        },
+        {
+          id: "around.mill-creek-threshold",
+          label: "Mill Creek threshold review",
+          summary: "Watershed threshold review is connected to the current food routing decision.",
+          route: "/citizen/around?context=living-system.mill-creek",
+          contextLabel: "living-system"
+        }
+      ]
+    };
+  }
+
+  if (routePath === "/citizen/search") {
+    return {
+      id: "search",
+      label: "Find public records",
+      summary: "Search starts with public records and explains when something is restricted.",
+      items: [
+        {
+          id: "search.public-issues",
+          label: "Public issues",
+          summary: "Open issues visible to public observers and commons participants.",
+          route: "/citizen/trust-data?mode=public",
+          contextLabel: "public"
+        },
+        {
+          id: "search.published-decisions",
+          label: "Published decisions",
+          summary: "Decision records with public summaries, objections, and outcomes.",
+          route: "/citizen/decisions",
+          contextLabel: "public"
+        }
+      ]
+    };
+  }
+
+  return {
+    id: routePath === "/citizen" ? "home" : "workflow",
+    label: "Citizen home",
+    summary: "Home combines active context, top attention, suggested actions, and groups.",
+    items: activeAttentionItems.map((item) => ({
+      id: item.id,
+      label: item.label,
+      summary: item.summary,
+      route: item.route,
+      contextLabel: activeContext.label
+    }))
   };
 }
 
@@ -265,6 +424,21 @@ function resolveSuggestedAction(id: string): CitizenSuggestedAction {
 
   return action;
 }
+
+const roleOverrides: Record<
+  string,
+  {
+    readonly authoritySummary?: string;
+    readonly dataPosture?: CitizenDataPosture;
+    readonly suggestedActionIds?: readonly string[];
+  }
+> = {
+  "neighborhood.riverbend:neighbor reviewer": {
+    authoritySummary: "You can review public neighborhood priorities and recommend next steps.",
+    dataPosture: "public",
+    suggestedActionIds: ["review-neighborhood-priority", "open-public-summary"]
+  }
+};
 
 function buildConcernReportDraft(activeContext: CitizenContext): ConcernReportDraft {
   return {
@@ -383,6 +557,15 @@ const citizenAttentionItems: readonly CitizenAttentionItem[] = [
     route: "/citizen/decisions"
   },
   {
+    id: "attention.neighborhood.public-summary",
+    contextId: "neighborhood.riverbend",
+    role: "neighbor reviewer",
+    urgency: "medium",
+    label: "Prepare public summary for neighborhood review",
+    summary: "A plain-language public summary can help neighbors review the food resilience priority.",
+    route: "/citizen/search"
+  },
+  {
     id: "attention.school.need",
     contextId: "organization.northside-school",
     role: "school steward",
@@ -439,6 +622,11 @@ const suggestedActionsById: Record<string, CitizenSuggestedAction> = {
     id: "review-neighborhood-priority",
     label: "Review neighborhood priority",
     route: "/citizen/decisions"
+  },
+  "open-public-summary": {
+    id: "open-public-summary",
+    label: "Open public summary",
+    route: "/citizen/search"
   },
   "review-school-need": {
     id: "review-school-need",
