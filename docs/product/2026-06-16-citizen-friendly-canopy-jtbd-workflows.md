@@ -16,6 +16,31 @@ The UI should not force users to understand that hierarchy up front. It should h
 
 The system can remain object-based and holonic underneath, but the public surface should be organized around jobs, situations, plain-language workflows, and visible consequences.
 
+## Multi-Group And Multi-Level Participation
+
+Most users will not belong to only one group or operate at only one level. A person may simultaneously be:
+
+- a resident in a neighborhood;
+- a parent in a school community;
+- a steward in a food commons;
+- a member of a mutual aid group;
+- a guardian for a watershed issue;
+- a delegate in a citywide process;
+- an observer in a regional federation;
+- an operator for one deployment or commons.
+
+Canopy should treat this as normal. The product must help users switch context, understand which role they are currently using, and see how work at one level affects another.
+
+Product rules:
+
+- A user has many memberships, roles, mandates, and observer relationships.
+- One object can appear in many groups and levels without being duplicated.
+- Work can start at any level: household, block, neighborhood, school, commons, watershed, city, bioregion, federation, or public observer context.
+- The UI must show the user's current role before consequential action.
+- The UI must show when an issue crosses levels, such as a school meal need constrained by a watershed threshold.
+- Attention should be grouped by context and role, not dumped into one undifferentiated inbox.
+- Users should be able to pivot between "my work today" and "the wider system this belongs to."
+
 ## Primary Audiences
 
 ### Citizen / Resident
@@ -41,6 +66,22 @@ Wants trustworthy visibility into decisions, progress, outcomes, and unresolved 
 ### Operator / Administrator
 
 Maintains deployment readiness, federation, imports, provider health, data stewardship, and incident response.
+
+## Context Model
+
+The first product question is not only "what scope am I in?" It is also "which role am I acting through?"
+
+Required context fields:
+
+- active context: the group, place, commons, living system, or federation currently being viewed;
+- active role: resident, steward, guardian, delegate, organizer, contributor, observer, operator;
+- level: personal, household, block, neighborhood, organization, commons, living system, city, region, federation;
+- authority: what the user can do here and why;
+- relationship path: how this context relates to broader or narrower contexts;
+- data posture: what is visible, restricted, private, redacted, or exportable;
+- attention count: what needs this user in this context.
+
+The UI should make context switching feel like changing lenses, not like entering a different app.
 
 ## Core JTBD
 
@@ -131,6 +172,18 @@ Acceptance signals:
 - Operators see Phase 10 hardening, provider readiness, replay, projection, outbox, audit, federation, and deployment evidence.
 - Problems become explainable incidents with next actions.
 
+### 9. Move Between My Groups And Roles
+
+When I participate in several groups or levels, I want to see what needs me in each context, switch roles safely, and understand how local work connects to wider systems.
+
+Acceptance signals:
+
+- Home shows a multi-context attention view grouped by role and urgency.
+- Users can switch from resident to steward, guardian, delegate, observer, or operator where authorized.
+- Consequential actions show the active role and authority source.
+- Cross-level issues show relationship paths, such as block -> neighborhood -> city or school -> foodshed -> watershed.
+- Users can filter attention by "mine", "my groups", "near me", "things I steward", and "public".
+
 ## Citizen-Friendly Navigation
 
 The current object/scope model should remain, but the primary navigation should become task-first:
@@ -138,6 +191,7 @@ The current object/scope model should remain, but the primary navigation should 
 | Public Label | User Question | Underlying Canopy Surface |
 | --- | --- | --- |
 | Home | What needs my attention? | scope, attention, civic memory |
+| My Contexts | Which groups, roles, and levels am I part of? | memberships, scopes, mandates, roles |
 | Around Me | What is happening in this place or commons? | map, graph, scopes, living systems |
 | Needs & Offers | Who needs what and who can help? | needs, offers, commitments, allocation |
 | Decisions | What are we deciding and why? | issues, proposals, decision packets, governance |
@@ -157,6 +211,15 @@ Operator-only or advanced surfaces can remain available as role-based tools:
 - Audit trails
 
 ## Workflow Model
+
+### Workflow 0: User Switches Context Or Role
+
+1. Open `My Contexts` from Home.
+2. See groups and levels where the user has membership, stewardship, guardianship, delegation, observer access, or operator duty.
+3. Review attention grouped by context and role.
+4. Select a context, such as neighborhood resident, food commons steward, watershed guardian, or regional observer.
+5. Canopy updates visible objects, local language, permissions, data posture, and suggested actions.
+6. Consequential commands show the active role and authority source before execution.
 
 ### Workflow A: Citizen Reports A Local Concern
 
@@ -182,11 +245,12 @@ Operator-only or advanced surfaces can remain available as role-based tools:
 
 1. Open `Decisions`.
 2. Select active issue or create issue from a concern.
-3. Review options, evidence, affected scopes, objections, and constraints.
-4. Request guardian or data stewardship review where required.
-5. Choose decision method.
-6. Record decision with rationale, unresolved objections, commitments, and review date.
-7. Publish decision packet and make appeal path visible.
+3. Review options, evidence, affected contexts, objections, and constraints.
+4. See which level owns which part of the decision, such as school kitchen, food commons, watershed guardian, or city procurement.
+5. Request guardian or data stewardship review where required.
+6. Choose decision method.
+7. Record decision with rationale, unresolved objections, commitments, and review date.
+8. Publish decision packet and make appeal path visible.
 
 ### Workflow D: Citizen Challenges Or Appeals
 
@@ -220,9 +284,13 @@ Canopy should support nested, overlapping, and emergent systems without presenti
 
 - Show scopes as contexts, not folders.
 - Show objects as belonging to many contexts.
+- Show people as multi-role participants, not single-role accounts.
+- Make the active role visible before action.
+- Group attention by context, role, urgency, and consequence.
 - Let users move by place, issue, relationship, commitment, or decision.
 - Use breadcrumbs as relationship paths, not single parent paths.
 - Use "lenses" for different views: place, commons, living system, governance, stewardship, federation.
+- Support cross-level paths: household -> block -> neighborhood -> city; school -> food commons -> watershed; commons -> federation.
 - Reveal canonical object types only when useful for trust, audit, or power users.
 - Prefer "related to" and "affects" over strict hierarchy language.
 - Make federation feel like relationships between communities, not data plumbing.
@@ -233,6 +301,9 @@ Canopy should support nested, overlapping, and emergent systems without presenti
 | --- | --- |
 | ObjectRef | Record / thing / item |
 | Scope | Place, group, commons, or context |
+| Role assignment | My role here |
+| Mandate | Permission / responsibility |
+| Federation context | Shared work with another community |
 | Projection | View / summary |
 | Outbox | Pending send / pending sync |
 | Adapter audit | Connection history |
@@ -252,6 +323,8 @@ The UI can expose internal terms in advanced detail, but the first layer should 
 Replace the current capability-dense first screen with a citizen operating home:
 
 - What needs attention now
+- Which context and role am I acting in?
+- Which of my groups need me?
 - What changed recently
 - Active decisions
 - Needs and offers nearby
@@ -265,6 +338,7 @@ Replace the current capability-dense first screen with a citizen operating home:
 Mobile should be task-short:
 
 - Today
+- My groups
 - Around me
 - Report
 - Review

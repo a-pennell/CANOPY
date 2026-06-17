@@ -17,6 +17,7 @@ Inputs reviewed:
 | Priority | Gap | Why It Matters | Suggested Next Step |
 | --- | --- | --- | --- |
 | P1 | No explicit onboarding path for a new commons operator. | The shell demonstrates rich capability, but a first operator still needs to understand what scope they are entering, what is live, what is simulated, and what action is safe to take first. | Add an operator orientation flow that starts from scope, role, current risks, and first safe action. |
+| P1 | Multi-group and multi-role participation is not yet a primary UI model. | People may act across neighborhood, school, commons, watershed, city, federation, and operator contexts with different roles and authority. A single flat scope switcher is not enough for citizen-friendly use. | Add `My Contexts` and a multi-context attention model grouped by role, urgency, and level. |
 | P1 | Phase 10 hardening is not yet visible in the product surface. | The backend now knows local acceptance versus live deployment readiness, but operators cannot see those release gates in the shell. | Add a hardening/release-readiness panel fed by `buildCanopyPhase10CompletionReport()`. |
 | P1 | Command preview is not yet a full command lifecycle. | Users can preview authority and persistence effects, but the product needs a clearer path from draft to submit, review, approval, execution, and appeal. | Add command lifecycle states and an operator queue for pending approvals, rejected commands, executed commands, and appeals. |
 | P1 | Federation conflict resolution is visible but not yet deeply guided. | Multi-peer comparisons are powerful, but users need help choosing accept, reject, remediate, merge, or defer without reading raw event semantics. | Add decision support around quarantined imports, including recommended actions, risk explanations, and precedent links. |
@@ -31,6 +32,7 @@ Inputs reviewed:
 ## Product Requirement Gaps
 
 - Define operator personas and permissions beyond the current fixture actors.
+- Define multi-context participation requirements: memberships, roles, mandates, observer access, cross-level attention, and role switching.
 - Define first-run setup for a new commons, including scope creation, seed data, policies, roles, and provider choices.
 - Define live deployment promotion requirements using the Phase 10 hardening report.
 - Define incident response workflows for failed imports, projection drift, audit failures, and federation disputes.
