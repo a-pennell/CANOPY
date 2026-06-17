@@ -73,9 +73,9 @@
 ## Phase 11: Responsive And Browser Verification
 
 - [x] T041 Add responsive acceptance tests for mobile task routes: Today, My Groups, Around Me, Report, Review, Search.
-- [ ] T042 Run `npm --workspace @canopy/web run check`.
-- [ ] T043 Run `npm run check`.
-- [ ] T044 Start local dev server and browser-verify `/citizen` desktop and mobile.
+- [x] T042 Run `npm --workspace @canopy/web run check`.
+- [x] T043 Run `npm run check`.
+- [x] T044 Start local dev server and browser-verify `/citizen` desktop and mobile.
 
 ## TDD Rules
 

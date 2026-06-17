@@ -76,10 +76,10 @@ Review checkpoint: operator detail is role-specific and public mode is privacy-s
 
 ### Batch 6: Verification
 
-- [ ] T024: Run focused Phase 11 tests.
-- [ ] T025: Run `npm --workspace @canopy/web run check`.
-- [ ] T026: Run `npm run check`.
-- [ ] T027: Browser verify `/citizen` desktop and mobile.
+- [x] T024: Run focused Phase 11 tests.
+- [x] T025: Run `npm --workspace @canopy/web run check`.
+- [x] T026: Run `npm run check`.
+- [x] T027: Browser verify `/citizen` desktop and mobile.
 
 ## Review Checkpoints
 
