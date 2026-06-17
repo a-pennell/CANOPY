@@ -339,6 +339,7 @@ export function buildCitizenCanopyModel({
   selectedCommandId,
   commandRecords,
   commandAction,
+  reportDescription,
   workflowStep,
   routePath = "/citizen"
 }: {
@@ -351,6 +352,7 @@ export function buildCitizenCanopyModel({
   readonly selectedCommandId?: string | undefined;
   readonly commandRecords?: readonly CitizenCommandRecord[] | undefined;
   readonly commandAction?: string | undefined;
+  readonly reportDescription?: string | undefined;
   readonly workflowStep?: string | undefined;
   readonly routePath?: string | undefined;
 } = {}): CitizenCanopyModel {
@@ -375,6 +377,7 @@ export function buildCitizenCanopyModel({
     activeContext,
     commandAction,
     commandRecords,
+    reportDescription,
     selectedNeedId,
     selectedOfferId
   });
@@ -766,12 +769,14 @@ function buildCommandRecords({
   activeContext,
   commandAction,
   commandRecords,
+  reportDescription,
   selectedNeedId,
   selectedOfferId
 }: {
   readonly activeContext: CitizenContext;
   readonly commandAction?: string | undefined;
   readonly commandRecords?: readonly CitizenCommandRecord[] | undefined;
+  readonly reportDescription?: string | undefined;
   readonly selectedNeedId?: string | undefined;
   readonly selectedOfferId?: string | undefined;
 }): {
@@ -786,7 +791,8 @@ function buildCommandRecords({
   if (commandAction === "save-report-draft") {
     const command = provider.saveDraft(
       createReportConcernCommandInput({
-        contextLabel: activeContext.label
+        contextLabel: activeContext.label,
+        description: reportDescription
       })
     );
 

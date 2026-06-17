@@ -164,13 +164,20 @@ export function createPersistentCitizenCommandProvider({
 }
 
 export function createReportConcernCommandInput({
-  contextLabel = "Riverbend Neighborhood"
+  contextLabel = "Riverbend Neighborhood",
+  description
 }: {
   readonly contextLabel?: string;
+  readonly description?: string | undefined;
 } = {}): CitizenCommandDraftInput {
+  const label =
+    description === undefined || description.trim().length === 0
+      ? "Report concern from citizen form"
+      : `Report: ${description.trim()}`;
+
   return {
     id: "command.report.generated-neighborhood-concern",
-    label: "Report concern from citizen form",
+    label,
     type: "report",
     contextLabel,
     reviewOwner: "Riverbend neighborhood reviewers",

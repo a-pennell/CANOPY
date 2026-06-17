@@ -696,6 +696,37 @@ function renderNeedsOffers(model: CitizenCanopyModel) {
         </dl>
       </article>
 
+      <article className="citizenPanel citizenWorkflowPreview">
+        <p className="eyebrow">Submit match</p>
+        <h2>Submit match</h2>
+        <form className="citizenForm" method="get" action="/citizen/needs-offers">
+          <input type="hidden" name="action" value="submit-match" />
+          <label>
+            <span>Choose a need</span>
+            <select name="need" defaultValue={overview.selectedNeedId}>
+              {overview.unmatchedNeeds.map((need) => (
+                <option value={need.id} key={need.id}>
+                  {need.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Choose an offer</span>
+            <select name="offer" defaultValue={overview.selectedOfferId}>
+              {overview.availableOffers.map((offer) => (
+                <option value={offer.id} key={offer.id}>
+                  {offer.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="citizenActionLink">
+            Submit match
+          </button>
+        </form>
+      </article>
+
       {renderLifecycle(overview.lifecycle)}
       {renderCommandActionResult(model)}
     </section>
@@ -737,6 +768,21 @@ function renderCitizenReportFlow(model: CitizenCanopyModel) {
             ))}
           </div>
         </div>
+        <form className="citizenForm" method="get" action="/citizen/report">
+          <input type="hidden" name="action" value="save-report-draft" />
+          <label>
+            <span>Describe what happened</span>
+            <textarea
+              name="description"
+              defaultValue=""
+              rows={4}
+              placeholder="What should reviewers know?"
+            />
+          </label>
+          <button type="submit" className="citizenActionLink">
+            Save draft
+          </button>
+        </form>
       </article>
 
       <article className="citizenPanel">
