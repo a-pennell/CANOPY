@@ -30,6 +30,7 @@ export async function CanopyPage({
           selectedOfferId: singleParam(params.offer),
           selectedPublicRecordId: singleParam(params.record),
           selectedCommandId: singleParam(params.command),
+          commandAction: singleParam(params.action),
           workflowStep: singleParam(params.step),
           routePath
         })}

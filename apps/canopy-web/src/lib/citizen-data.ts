@@ -1,3 +1,9 @@
+import {
+  createInMemoryCitizenCommandProvider,
+  createNeedOfferMatchCommandInput,
+  createReportConcernCommandInput
+} from "./citizen-command-provider";
+
 export type CitizenCanopyStatus = "prototype";
 
 export interface CitizenCanopyModel {
@@ -313,7 +319,14 @@ export interface CitizenCommandCenter {
   readonly submittedCommands: readonly CitizenCommandRecord[];
   readonly reviewQueue: readonly CitizenCommandRecord[];
   readonly selectedCommand: CitizenCommandRecord | undefined;
+  readonly actionResult: CitizenCommandActionResult | undefined;
   readonly queueSummary: string;
+}
+
+export interface CitizenCommandActionResult {
+  readonly label: string;
+  readonly summary: string;
+  readonly commandId: string;
 }
 
 export function buildCitizenCanopyModel({
@@ -324,6 +337,8 @@ export function buildCitizenCanopyModel({
   selectedOfferId,
   selectedPublicRecordId,
   selectedCommandId,
+  commandRecords,
+  commandAction,
   workflowStep,
   routePath = "/citizen"
 }: {
@@ -334,6 +349,8 @@ export function buildCitizenCanopyModel({
   readonly selectedOfferId?: string | undefined;
   readonly selectedPublicRecordId?: string | undefined;
   readonly selectedCommandId?: string | undefined;
+  readonly commandRecords?: readonly CitizenCommandRecord[] | undefined;
+  readonly commandAction?: string | undefined;
   readonly workflowStep?: string | undefined;
   readonly routePath?: string | undefined;
 } = {}): CitizenCanopyModel {
@@ -354,7 +371,18 @@ export function buildCitizenCanopyModel({
   const contexts = citizenContexts.map((context) =>
     context.id === activeContext.id ? activeContext : context
   );
-  const commandCenter = buildCommandCenter(selectedCommandId);
+  const commandState = buildCommandRecords({
+    activeContext,
+    commandAction,
+    commandRecords,
+    selectedNeedId,
+    selectedOfferId
+  });
+  const commandCenter = buildCommandCenter(
+    selectedCommandId ?? commandState.selectedCommandId,
+    commandState.records,
+    commandState.actionResult
+  );
 
   return {
     routePath,
@@ -734,12 +762,82 @@ function buildNeedsOffersOverview({
   };
 }
 
-function buildCommandCenter(selectedCommandId: string | undefined): CitizenCommandCenter {
-  const savedDrafts = citizenCommandRecords.filter((command) => command.status === "draft");
-  const submittedCommands = citizenCommandRecords.filter((command) => command.status === "submitted");
-  const reviewQueue = citizenCommandRecords.filter((command) => command.status === "needs-review");
+function buildCommandRecords({
+  activeContext,
+  commandAction,
+  commandRecords,
+  selectedNeedId,
+  selectedOfferId
+}: {
+  readonly activeContext: CitizenContext;
+  readonly commandAction?: string | undefined;
+  readonly commandRecords?: readonly CitizenCommandRecord[] | undefined;
+  readonly selectedNeedId?: string | undefined;
+  readonly selectedOfferId?: string | undefined;
+}): {
+  readonly records: readonly CitizenCommandRecord[];
+  readonly selectedCommandId?: string | undefined;
+  readonly actionResult?: CitizenCommandActionResult | undefined;
+} {
+  const provider = createInMemoryCitizenCommandProvider({
+    initialCommands: commandRecords ?? citizenCommandRecords
+  });
+
+  if (commandAction === "save-report-draft") {
+    const command = provider.saveDraft(
+      createReportConcernCommandInput({
+        contextLabel: activeContext.label
+      })
+    );
+
+    return {
+      records: provider.listCommands(),
+      selectedCommandId: command.id,
+      actionResult: {
+        label: "Draft saved from report",
+        summary: command.civicMemoryEffect,
+        commandId: command.id
+      }
+    };
+  }
+
+  if (commandAction === "submit-match") {
+    const need = resolveNeed(selectedNeedId);
+    const offer = resolveOffer(selectedOfferId);
+    const draft = provider.saveDraft(
+      createNeedOfferMatchCommandInput({
+        needLabel: need.label,
+        offerLabel: offer.label
+      })
+    );
+    const command = provider.submitCommand(draft.id);
+
+    return {
+      records: provider.listCommands(),
+      selectedCommandId: command.id,
+      actionResult: {
+        label: "Command submitted",
+        summary: command.civicMemoryEffect,
+        commandId: command.id
+      }
+    };
+  }
+
+  return {
+    records: provider.listCommands()
+  };
+}
+
+function buildCommandCenter(
+  selectedCommandId: string | undefined,
+  records: readonly CitizenCommandRecord[],
+  actionResult: CitizenCommandActionResult | undefined
+): CitizenCommandCenter {
+  const savedDrafts = records.filter((command) => command.status === "draft");
+  const submittedCommands = records.filter((command) => command.status === "submitted");
+  const reviewQueue = records.filter((command) => command.status === "needs-review");
   const selectedCommand =
-    citizenCommandRecords.find((command) => command.id === selectedCommandId) ??
+    records.find((command) => command.id === selectedCommandId) ??
     reviewQueue[0] ??
     savedDrafts[0];
 
@@ -748,6 +846,7 @@ function buildCommandCenter(selectedCommandId: string | undefined): CitizenComma
     submittedCommands,
     reviewQueue,
     selectedCommand,
+    actionResult,
     queueSummary: `${savedDrafts.length} draft, ${submittedCommands.length} submitted, ${reviewQueue.length} needing review`
   };
 }

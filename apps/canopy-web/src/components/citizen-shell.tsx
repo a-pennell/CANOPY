@@ -697,6 +697,7 @@ function renderNeedsOffers(model: CitizenCanopyModel) {
       </article>
 
       {renderLifecycle(overview.lifecycle)}
+      {renderCommandActionResult(model)}
     </section>
   );
 }
@@ -776,7 +777,44 @@ function renderCitizenReportFlow(model: CitizenCanopyModel) {
       </article>
 
       {renderLifecycle(draft.lifecycle)}
+      {renderCommandActionResult(model)}
     </section>
+  );
+}
+
+function renderCommandActionResult(model: CitizenCanopyModel) {
+  const actionResult = model.commandCenter.actionResult;
+  const selectedCommand = model.commandCenter.selectedCommand;
+
+  if (actionResult === undefined || selectedCommand === undefined) {
+    return null;
+  }
+
+  return (
+    <article className="citizenPanel citizenWorkflowPreview">
+      <p className="eyebrow">Command record</p>
+      <h2>{actionResult.label}</h2>
+      <p>{actionResult.summary}</p>
+      <dl className="citizenReportPreviewList">
+        <div>
+          <dt>Command</dt>
+          <dd>{selectedCommand.label}</dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd>{selectedCommand.status}</dd>
+        </div>
+        <div>
+          <dt>Review owner</dt>
+          <dd>{selectedCommand.reviewOwner}</dd>
+        </div>
+      </dl>
+      <div className="citizenActionList">
+        <Link href={selectedCommand.route} className="citizenActionLink">
+          Open review queue
+        </Link>
+      </div>
+    </article>
   );
 }
 
