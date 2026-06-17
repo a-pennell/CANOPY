@@ -851,6 +851,366 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.citizenShell {
+  display: grid;
+  align-content: start;
+  gap: calc(var(--canopy-grid) * 6);
+  min-height: 100vh;
+  padding: clamp(24px, 5vw, 64px);
+  background:
+    linear-gradient(180deg, rgba(127, 182, 194, 0.08), transparent 420px),
+    var(--canopy-void);
+}
+
+.citizenHero {
+  display: grid;
+  gap: calc(var(--canopy-grid) * 4);
+  max-width: 760px;
+}
+
+.citizenHero h1 {
+  margin: 0;
+  color: var(--canopy-text);
+  font-size: clamp(36px, 6vw, 72px);
+  font-weight: 720;
+  line-height: 1;
+}
+
+.citizenHero p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--canopy-text-soft);
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.citizenPrimaryAction {
+  display: inline-grid;
+  width: fit-content;
+  min-height: 44px;
+  align-items: center;
+  padding: 0 calc(var(--canopy-grid) * 5);
+  border: 1px solid rgba(143, 216, 172, 0.32);
+  border-radius: var(--canopy-radius);
+  background: rgba(143, 216, 172, 0.12);
+  color: var(--canopy-mint);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.citizenPlaceholder {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 240px));
+  gap: calc(var(--canopy-grid) * 3);
+}
+
+.citizenPlaceholder div {
+  display: grid;
+  gap: var(--canopy-grid);
+  padding: calc(var(--canopy-grid) * 4);
+  border: 1px solid var(--canopy-line);
+  border-radius: var(--canopy-radius);
+  background: var(--canopy-panel);
+}
+
+.citizenPlaceholder span {
+  color: var(--canopy-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.citizenPlaceholder strong {
+  color: var(--canopy-text);
+  font-size: 16px;
+}
+
+.citizenTaskNav {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: calc(var(--canopy-grid) * 2);
+}
+
+.citizenMobileTaskNav {
+  display: none;
+}
+
+.citizenTaskLink,
+.citizenMobileTaskLink,
+.citizenPanel,
+.citizenContextItem,
+.citizenAttentionItem,
+.citizenActionLink {
+  border: 1px solid var(--canopy-line);
+  border-radius: var(--canopy-radius);
+  background: rgba(21, 29, 25, 0.72);
+}
+
+.citizenTaskLink {
+  display: grid;
+  gap: var(--canopy-grid);
+  min-height: 96px;
+  align-content: start;
+  padding: calc(var(--canopy-grid) * 3);
+  color: var(--canopy-text-soft);
+}
+
+.citizenMobileTaskLink {
+  min-height: 40px;
+  align-content: center;
+  justify-content: center;
+  padding: 0 calc(var(--canopy-grid) * 2);
+  color: var(--canopy-text-soft);
+  font-size: 12px;
+  font-weight: 680;
+  text-align: center;
+}
+
+.citizenTaskLink:hover,
+.citizenMobileTaskLink:hover,
+.citizenContextItem:hover,
+.citizenContextItem.active,
+.citizenAttentionItem:hover,
+.citizenActionLink:hover {
+  border-color: var(--canopy-line-strong);
+  background: var(--canopy-panel-raised);
+  color: var(--canopy-text);
+}
+
+.citizenTaskLink span,
+.citizenAttentionItem strong,
+.citizenContextItem strong,
+.citizenActionLink {
+  color: var(--canopy-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.citizenTaskLink small,
+.citizenAttentionItem small,
+.citizenContextItem small,
+.citizenPanel p,
+.citizenPath {
+  color: var(--canopy-text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.citizenTaskLink strong,
+.citizenContextItem em {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: var(--canopy-radius);
+  background: rgba(143, 216, 172, 0.1);
+  color: var(--canopy-mint);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.citizenHomeGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: calc(var(--canopy-grid) * 4);
+}
+
+.citizenPanel {
+  display: grid;
+  gap: calc(var(--canopy-grid) * 4);
+  align-content: start;
+  padding: calc(var(--canopy-grid) * 5);
+}
+
+.citizenPanel h2 {
+  margin: 0;
+  color: var(--canopy-text);
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.citizenContextFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: calc(var(--canopy-grid) * 2);
+  margin: 0;
+}
+
+.citizenContextFacts div {
+  display: grid;
+  gap: var(--canopy-grid);
+  padding: calc(var(--canopy-grid) * 3);
+  border: 1px solid var(--canopy-line);
+  border-radius: var(--canopy-radius);
+  background: var(--canopy-inset);
+}
+
+.citizenContextFacts dt,
+.citizenAttentionItem span,
+.citizenContextItem span {
+  color: var(--canopy-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.citizenContextFacts dd {
+  margin: 0;
+  color: var(--canopy-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.citizenPath {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.citizenAttentionList,
+.citizenActionList,
+.citizenContextList {
+  display: grid;
+  gap: calc(var(--canopy-grid) * 2);
+}
+
+.citizenAttentionItem,
+.citizenContextItem {
+  display: grid;
+  gap: var(--canopy-grid);
+  padding: calc(var(--canopy-grid) * 3);
+}
+
+.citizenActionLink {
+  display: grid;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 calc(var(--canopy-grid) * 3);
+}
+
+.citizenContextsPanel {
+  grid-column: span 2;
+}
+
+.citizenContextList {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.citizenContextItem {
+  position: relative;
+  min-height: 112px;
+  padding-right: calc(var(--canopy-grid) * 12);
+}
+
+.citizenContextItem em {
+  position: absolute;
+  top: calc(var(--canopy-grid) * 3);
+  right: calc(var(--canopy-grid) * 3);
+}
+
+.citizenReportGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.6fr);
+  gap: calc(var(--canopy-grid) * 4);
+}
+
+.citizenReportForm {
+  grid-row: span 2;
+}
+
+.citizenPromptBlock,
+.citizenReportAffected,
+.citizenReportPreviewList div {
+  display: grid;
+  gap: var(--canopy-grid);
+  padding: calc(var(--canopy-grid) * 4);
+  border: 1px solid var(--canopy-line);
+  border-radius: var(--canopy-radius);
+  background: var(--canopy-inset);
+}
+
+.citizenPromptBlock span,
+.citizenReportAffected span,
+.citizenReportPreviewList dt {
+  color: var(--canopy-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.citizenPromptBlock strong,
+.citizenReportAffected strong,
+.citizenReportPreviewList dd {
+  margin: 0;
+  color: var(--canopy-text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.citizenPromptBlock small {
+  color: var(--canopy-text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.citizenReportAffected div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--canopy-grid) * 2);
+}
+
+.citizenReportAffected strong {
+  min-height: 28px;
+  padding: calc(var(--canopy-grid) * 1.5) calc(var(--canopy-grid) * 3);
+  border-radius: calc(var(--canopy-radius) - 2px);
+  background: rgba(127, 182, 194, 0.1);
+  color: var(--canopy-lake);
+  font-size: 12px;
+}
+
+.citizenReportPreview {
+  border-color: rgba(143, 216, 172, 0.2);
+}
+
+.citizenReportPreviewList {
+  display: grid;
+  gap: calc(var(--canopy-grid) * 2);
+  margin: 0;
+}
+
+.citizenWorkflowGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(var(--canopy-grid) * 4);
+}
+
+.citizenWorkflowPrimary,
+.citizenWorkflowPreview {
+  grid-column: span 2;
+}
+
+.citizenWorkflowPreview {
+  border-color: rgba(127, 182, 194, 0.24);
+}
+
+.citizenPlainList {
+  display: grid;
+  gap: calc(var(--canopy-grid) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.citizenPlainList li {
+  padding: calc(var(--canopy-grid) * 3);
+  border: 1px solid var(--canopy-line);
+  border-radius: var(--canopy-radius);
+  background: var(--canopy-inset);
+  color: var(--canopy-text-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 @media (max-width: 1100px) {
   .shell {
     grid-template-columns: 1fr;
@@ -879,6 +1239,26 @@ a {
   .pathway,
   .commandDetailGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .citizenTaskNav,
+  .citizenContextList {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .citizenHomeGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .citizenReportGrid,
+  .citizenWorkflowGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .citizenContextsPanel,
+  .citizenWorkflowPrimary,
+  .citizenWorkflowPreview {
+    grid-column: auto;
   }
 
   .splitSurface {
@@ -945,5 +1325,29 @@ a {
   .mutationActions {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .citizenPlaceholder {
+    grid-template-columns: 1fr;
+  }
+
+  .citizenTaskNav {
+    display: none;
+  }
+
+  .citizenMobileTaskNav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: calc(var(--canopy-grid) * 2);
+  }
+
+  .citizenTaskNav,
+  .citizenContextList,
+  .citizenContextFacts {
+    grid-template-columns: 1fr;
+  }
+
+  .citizenReportAffected div {
+    display: grid;
   }
 }
