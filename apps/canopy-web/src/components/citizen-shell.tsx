@@ -208,6 +208,18 @@ function renderRoleSwitchPanel(model: CitizenCanopyModel) {
 function renderReleaseReadiness(model: CitizenCanopyModel) {
   const readiness = model.releaseReadiness;
 
+  if (!model.releaseReadinessAccess.allowed) {
+    return (
+      <section className="citizenWorkflowGrid" aria-label="Release readiness access">
+        <article className="citizenPanel citizenWorkflowPrimary">
+          <p className="eyebrow">Release Readiness</p>
+          <h2>Operator access needed</h2>
+          <p>{model.releaseReadinessAccess.reason}</p>
+        </article>
+      </section>
+    );
+  }
+
   return (
     <section className="citizenWorkflowGrid" aria-label="Release readiness">
       <article className="citizenPanel citizenWorkflowPrimary">
@@ -321,6 +333,39 @@ function renderTrustData(model: CitizenCanopyModel) {
           </div>
         </dl>
       </article>
+
+      <article className="citizenPanel citizenWorkflowPreview">
+        <p className="eyebrow">Recommendation</p>
+        <h2>Recommended next step</h2>
+        <p>{conflict.recommendationRationale}</p>
+      </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Consequences</p>
+        <h2>Action consequences</h2>
+        <ul className="citizenPlainList">
+          {conflict.consequencePreviews.map((preview) => (
+            <li key={preview.action}>
+              <strong>{preview.action}</strong>
+              <span>{preview.consequence}</span>
+            </li>
+          ))}
+        </ul>
+      </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Precedent</p>
+        <h2>Related civic memory</h2>
+        <div className="citizenActionList">
+          {conflict.precedentLinks.map((link) => (
+            <Link href={link.route} className="citizenActionLink" key={link.route}>
+              {link.label}
+            </Link>
+          ))}
+        </div>
+      </article>
+
+      {renderLifecycle(conflict.lifecycle)}
     </section>
   );
 }
@@ -337,7 +382,7 @@ function renderPublicObserver(model: CitizenCanopyModel) {
       </article>
 
       <article className="citizenPanel">
-        <p className="eyebrow">Visible records</p>
+        <p className="eyebrow">Visible categories</p>
         <h2>Visible records</h2>
         <ul className="citizenPlainList">
           {observer.visibleRecords.map((record) => (
@@ -345,6 +390,42 @@ function renderPublicObserver(model: CitizenCanopyModel) {
           ))}
         </ul>
       </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Browse records</p>
+        <h2>Public record detail</h2>
+        <ul className="citizenPlainList">
+          {observer.publicRecords.map((record) => (
+            <li key={record.id}>
+              <Link href={record.route}>{record.label}</Link>
+              <span>{record.summary}</span>
+            </li>
+          ))}
+        </ul>
+      </article>
+
+      {observer.selectedRecord === undefined ? null : (
+        <article className="citizenPanel citizenWorkflowPreview">
+          <p className="eyebrow">Selected record</p>
+          <h2>{observer.selectedRecord.label}</h2>
+          <dl className="citizenReportPreviewList">
+            <div>
+              <dt>Visibility</dt>
+              <dd>{observer.selectedRecord.visibility}</dd>
+            </div>
+            <div>
+              <dt>Summary</dt>
+              <dd>{observer.selectedRecord.summary}</dd>
+            </div>
+            {observer.selectedRecord.redactionExplanation === undefined ? null : (
+              <div>
+                <dt>Redaction</dt>
+                <dd>{observer.selectedRecord.redactionExplanation}</dd>
+              </div>
+            )}
+          </dl>
+        </article>
+      )}
 
       <article className="citizenPanel">
         <p className="eyebrow">Redaction explanations</p>
@@ -461,6 +542,8 @@ function renderDecisions(model: CitizenCanopyModel) {
 
 function renderNeedsOffers(model: CitizenCanopyModel) {
   const overview = model.needsOffers;
+  const selectedNeed = overview.unmatchedNeeds.find((need) => need.id === overview.selectedNeedId);
+  const selectedOffer = overview.availableOffers.find((offer) => offer.id === overview.selectedOfferId);
 
   return (
     <section className="citizenWorkflowGrid" aria-label="Needs and offers">
@@ -496,7 +579,9 @@ function renderNeedsOffers(model: CitizenCanopyModel) {
 
       <article className="citizenPanel citizenWorkflowPreview">
         <p className="eyebrow">Match preview</p>
-        <h2>Match preview</h2>
+        <h2>
+          {selectedNeed?.label ?? "Selected need"} with {selectedOffer?.label ?? "selected offer"}
+        </h2>
         <dl className="citizenReportPreviewList">
           <div>
             <dt>Timing</dt>
@@ -524,6 +609,8 @@ function renderNeedsOffers(model: CitizenCanopyModel) {
           </div>
         </dl>
       </article>
+
+      {renderLifecycle(overview.lifecycle)}
     </section>
   );
 }
@@ -601,6 +688,42 @@ function renderCitizenReportFlow(model: CitizenCanopyModel) {
           </div>
         </dl>
       </article>
+
+      {renderLifecycle(draft.lifecycle)}
     </section>
   );
+}
+
+function renderLifecycle(lifecycle: CitizenCanopyModel["reportConcernDraft"]["lifecycle"]) {
+  return (
+    <article className="citizenPanel citizenWorkflowPreview">
+      <p className="eyebrow">Workflow state</p>
+      <h2>{labelWorkflowStep(lifecycle.currentStep)}</h2>
+      <p>{lifecycle.confirmationSummary}</p>
+      <dl className="citizenReportPreviewList">
+        <div>
+          <dt>Lifecycle</dt>
+          <dd>{lifecycle.steps.map(labelWorkflowStep).join(" -> ")}</dd>
+        </div>
+        <div>
+          <dt>Next action</dt>
+          <dd>{lifecycle.nextActionLabel}</dd>
+        </div>
+      </dl>
+      <div className="citizenActionList">
+        {lifecycle.availableCommands.map((command) => (
+          <Link href={command.route} className="citizenActionLink" key={command.label}>
+            {command.label}
+          </Link>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function labelWorkflowStep(step: string): string {
+  return step
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }

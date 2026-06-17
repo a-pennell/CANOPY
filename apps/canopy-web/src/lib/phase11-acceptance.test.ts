@@ -441,6 +441,116 @@ describe("Phase 11 citizen surface acceptance", () => {
     expect(shellText).toContain("Open public summary");
   });
 
+  it("models interactive report and match lifecycle states through route params", async () => {
+    const reportElement = await CanopyPage({
+      routeSegments: ["citizen", "report"],
+      searchParams: Promise.resolve({ step: "submitted" })
+    });
+    const matchElement = await CanopyPage({
+      routeSegments: ["citizen", "needs-offers"],
+      searchParams: Promise.resolve({
+        need: "need.neighborhood-cooling-meals",
+        offer: "offer.volunteer-cold-storage",
+        step: "confirmed"
+      })
+    });
+
+    expect(isValidElement(reportElement)).toBe(true);
+    expect(isValidElement(matchElement)).toBe(true);
+
+    const reportModel = (reportElement.props as { readonly model: CitizenCanopyModel }).model;
+    const matchModel = (matchElement.props as { readonly model: CitizenCanopyModel }).model;
+    const reportText = collectElementStrings(CitizenShell({ model: reportModel })).join("\n");
+    const matchText = collectElementStrings(CitizenShell({ model: matchModel })).join("\n");
+
+    expect(reportModel.reportConcernDraft.lifecycle).toMatchObject({
+      currentStep: "submitted",
+      confirmationSummary: "Concern submitted for Riverbend neighborhood reviewers"
+    });
+    expect(matchModel.needsOffers).toMatchObject({
+      selectedNeedId: "need.neighborhood-cooling-meals",
+      selectedOfferId: "offer.volunteer-cold-storage",
+      lifecycle: {
+        currentStep: "confirmed",
+        confirmationSummary: "Match confirmed for steward follow-through"
+      }
+    });
+    expect(reportText).toContain("Submitted");
+    expect(matchText).toContain("Volunteer cold storage");
+    expect(matchText).toContain("Match confirmed for steward follow-through");
+  });
+
+  it("provides public observer record detail and blocks release readiness for non-operators", async () => {
+    const publicElement = await CanopyPage({
+      routeSegments: ["citizen", "trust-data"],
+      searchParams: Promise.resolve({
+        mode: "public",
+        record: "public.decision.school-produce-routing"
+      })
+    });
+    const blockedElement = await CanopyPage({
+      routeSegments: ["citizen", "release-readiness"],
+      searchParams: Promise.resolve({ context: "neighborhood.riverbend" })
+    });
+
+    expect(isValidElement(publicElement)).toBe(true);
+    expect(isValidElement(blockedElement)).toBe(true);
+
+    const publicModel = (publicElement.props as { readonly model: CitizenCanopyModel }).model;
+    const blockedModel = (blockedElement.props as { readonly model: CitizenCanopyModel }).model;
+    const publicText = collectElementStrings(CitizenShell({ model: publicModel })).join("\n");
+    const blockedText = collectElementStrings(CitizenShell({ model: blockedModel })).join("\n");
+
+    expect(publicModel.publicObserver.selectedRecord).toMatchObject({
+      id: "public.decision.school-produce-routing",
+      label: "School produce routing decision",
+      visibility: "public-summary",
+      redactionExplanation: "Student and pickup details are hidden for guardian review"
+    });
+    expect(blockedModel.releaseReadinessAccess).toMatchObject({
+      allowed: false,
+      reason: "Release readiness is limited to operator roles."
+    });
+    expect(publicText).toContain("School produce routing decision");
+    expect(publicText).toContain("Student and pickup details are hidden for guardian review");
+    expect(blockedText).toContain("Operator access needed");
+    expect(blockedText).not.toContain("Production provider credentials are not connected");
+  });
+
+  it("adds federation consequence guidance, recommendation rationale, and precedent links", async () => {
+    const element = await CanopyPage({
+      routeSegments: ["citizen", "trust-data"],
+      searchParams: Promise.resolve({ context: "federation.downstream" })
+    });
+
+    expect(isValidElement(element)).toBe(true);
+    expect(element.type).toBe(CitizenShell);
+
+    const model = (element.props as { readonly model: CitizenCanopyModel }).model;
+    const shellText = collectElementStrings(CitizenShell({ model })).join("\n");
+
+    expect(model.federationConflictReview).toMatchObject({
+      recommendationRationale:
+        "Request review before merging because the peer total changes school meal planning.",
+      consequencePreviews: expect.arrayContaining([
+        expect.objectContaining({
+          action: "merge",
+          consequence: "Creates a reconciled public summary while preserving both histories"
+        })
+      ]),
+      precedentLinks: expect.arrayContaining([
+        expect.objectContaining({
+          label: "Prior school meal reconciliation",
+          route: "/citizen/trust-data?precedent=school-meal-reconciliation"
+        })
+      ])
+    });
+    expect(shellText).toContain("Recommendation");
+    expect(shellText).toContain("Request review before merging");
+    expect(shellText).toContain("Creates a reconciled public summary");
+    expect(shellText).toContain("Prior school meal reconciliation");
+  });
+
   it("keeps existing shell routes on the current dashboard", async () => {
     const element = await CanopyPage({
       routeSegments: ["scope"]

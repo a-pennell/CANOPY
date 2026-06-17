@@ -18,6 +18,7 @@ export interface CitizenCanopyModel {
   readonly challengeAppealPreview: ChallengeAppealPreview;
   readonly federationConflictReview: FederationConflictReview;
   readonly releaseReadiness: ReleaseReadinessSummary;
+  readonly releaseReadinessAccess: ReleaseReadinessAccess;
   readonly publicObserver: PublicObserverBoundary;
   readonly mobileTaskRoutes: readonly MobileTaskRoute[];
 }
@@ -97,6 +98,7 @@ export interface ConcernReportDraft {
   readonly visibilityPreference: CitizenVisibilityPreference;
   readonly relatedSuggestions: readonly ConcernReportSuggestion[];
   readonly preview: ConcernReportPreview;
+  readonly lifecycle: CitizenCommandLifecycle;
 }
 
 export interface ConcernReportSuggestion {
@@ -117,6 +119,9 @@ export interface NeedsOffersOverview {
   readonly unmatchedNeeds: readonly NeedOfferRecord[];
   readonly availableOffers: readonly NeedOfferRecord[];
   readonly matchPreview: NeedOfferMatchPreview;
+  readonly selectedNeedId: string;
+  readonly selectedOfferId: string;
+  readonly lifecycle: CitizenCommandLifecycle;
 }
 
 export interface NeedOfferRecord {
@@ -183,6 +188,20 @@ export interface FederationConflictReview {
   ];
   readonly provenanceSummary: string;
   readonly redactionContinuitySummary: string;
+  readonly recommendationRationale: string;
+  readonly consequencePreviews: readonly FederationConsequencePreview[];
+  readonly precedentLinks: readonly CitizenRecordLink[];
+  readonly lifecycle: CitizenCommandLifecycle;
+}
+
+export interface FederationConsequencePreview {
+  readonly action: FederationConflictReview["availableActions"][number];
+  readonly consequence: string;
+}
+
+export interface CitizenRecordLink {
+  readonly label: string;
+  readonly route: string;
 }
 
 export interface ReleaseReadinessSummary {
@@ -196,13 +215,29 @@ export interface ReleaseReadinessSummary {
   readonly nextActions: readonly string[];
 }
 
+export interface ReleaseReadinessAccess {
+  readonly allowed: boolean;
+  readonly reason: string;
+}
+
 export type CitizenAudienceMode = "participant" | "public";
 
 export interface PublicObserverBoundary {
   readonly enabled: boolean;
   readonly visibleRecords: readonly string[];
+  readonly publicRecords: readonly PublicObserverRecord[];
+  readonly selectedRecord: PublicObserverRecord | undefined;
   readonly redactionExplanations: readonly string[];
   readonly unavailableCommands: readonly string[];
+}
+
+export interface PublicObserverRecord {
+  readonly id: string;
+  readonly label: string;
+  readonly summary: string;
+  readonly visibility: "public" | "public-summary" | "redacted";
+  readonly route: string;
+  readonly redactionExplanation?: string;
 }
 
 export interface MobileTaskRoute {
@@ -226,15 +261,41 @@ export interface CitizenTaskSurfaceItem {
   readonly contextLabel?: string;
 }
 
+export type CitizenWorkflowStep =
+  | "draft"
+  | "preview"
+  | "submitted"
+  | "cancelled"
+  | "confirmed"
+  | "review";
+
+export interface CitizenCommandLifecycle {
+  readonly id: string;
+  readonly label: string;
+  readonly currentStep: CitizenWorkflowStep;
+  readonly steps: readonly CitizenWorkflowStep[];
+  readonly availableCommands: readonly CitizenCanopyAction[];
+  readonly nextActionLabel: string;
+  readonly confirmationSummary: string;
+}
+
 export function buildCitizenCanopyModel({
   activeContextId,
   activeRole,
   audienceMode = "participant",
+  selectedNeedId,
+  selectedOfferId,
+  selectedPublicRecordId,
+  workflowStep,
   routePath = "/citizen"
 }: {
   readonly activeContextId?: string | undefined;
   readonly activeRole?: string | undefined;
   readonly audienceMode?: CitizenAudienceMode | undefined;
+  readonly selectedNeedId?: string | undefined;
+  readonly selectedOfferId?: string | undefined;
+  readonly selectedPublicRecordId?: string | undefined;
+  readonly workflowStep?: string | undefined;
   readonly routePath?: string | undefined;
 } = {}): CitizenCanopyModel {
   const defaultContext = citizenContexts[0];
@@ -270,14 +331,60 @@ export function buildCitizenCanopyModel({
     suggestedActions: activeContext.suggestedActionIds.map(resolveSuggestedAction),
     taskNavigation: citizenTaskNavigation,
     taskSurface: buildTaskSurface(routePath, contexts, activeContext, activeAttentionItems),
-    reportConcernDraft: buildConcernReportDraft(activeContext),
-    needsOffers: needsOffersOverview,
+    reportConcernDraft: buildConcernReportDraft(activeContext, normalizeWorkflowStep(workflowStep)),
+    needsOffers: buildNeedsOffersOverview({
+      selectedNeedId,
+      selectedOfferId,
+      workflowStep: normalizeWorkflowStep(workflowStep)
+    }),
     decisionSummary,
     challengeAppealPreview,
     federationConflictReview,
     releaseReadiness,
-    publicObserver: buildPublicObserverBoundary(audienceMode),
+    releaseReadinessAccess: buildReleaseReadinessAccess(activeContext, audienceMode),
+    publicObserver: buildPublicObserverBoundary(audienceMode, selectedPublicRecordId),
     mobileTaskRoutes
+  };
+}
+
+function normalizeWorkflowStep(step: string | undefined): CitizenWorkflowStep {
+  return step === "preview" ||
+    step === "submitted" ||
+    step === "cancelled" ||
+    step === "confirmed" ||
+    step === "review"
+    ? step
+    : "draft";
+}
+
+function buildLifecycle({
+  id,
+  label,
+  currentStep,
+  confirmationSummary
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly currentStep: CitizenWorkflowStep;
+  readonly confirmationSummary: string;
+}): CitizenCommandLifecycle {
+  return {
+    id,
+    label,
+    currentStep,
+    steps: ["draft", "preview", "submitted", "confirmed"],
+    availableCommands: [
+      { label: "Preview", route: `${id}?step=preview` },
+      { label: "Submit", route: `${id}?step=submitted` },
+      { label: "Cancel", route: `${id}?step=cancelled` }
+    ],
+    nextActionLabel:
+      currentStep === "draft"
+        ? "Preview before submitting"
+        : currentStep === "preview"
+          ? "Submit for review"
+          : "Review civic memory entry",
+    confirmationSummary
   };
 }
 
@@ -440,7 +547,10 @@ const roleOverrides: Record<
   }
 };
 
-function buildConcernReportDraft(activeContext: CitizenContext): ConcernReportDraft {
+function buildConcernReportDraft(
+  activeContext: CitizenContext,
+  workflowStep: CitizenWorkflowStep
+): ConcernReportDraft {
   return {
     descriptionPrompt: "What is happening?",
     contextId: activeContext.id,
@@ -455,20 +565,105 @@ function buildConcernReportDraft(activeContext: CitizenContext): ConcernReportDr
       visibilityEffect: `Visible to participants in ${activeContext.label}`,
       civicMemoryEffect: "Creates a concern record for review",
       possibleDecisionPath: "May become a decision if reviewers confirm impact"
-    }
+    },
+    lifecycle: buildLifecycle({
+      id: "/citizen/report",
+      label: "Report lifecycle",
+      currentStep: workflowStep,
+      confirmationSummary:
+        workflowStep === "submitted"
+          ? "Concern submitted for Riverbend neighborhood reviewers"
+          : "Concern draft is still editable before review"
+    })
   };
 }
 
-function buildPublicObserverBoundary(audienceMode: CitizenAudienceMode): PublicObserverBoundary {
+function buildPublicObserverBoundary(
+  audienceMode: CitizenAudienceMode,
+  selectedRecordId: string | undefined
+): PublicObserverBoundary {
+  const selectedRecord =
+    publicObserverRecords.find((record) => record.id === selectedRecordId) ??
+    publicObserverRecords[0];
+
   return {
     enabled: audienceMode === "public",
     visibleRecords: ["Public issues", "Published decisions", "Shared commitments", "Recorded outcomes"],
+    publicRecords: publicObserverRecords,
+    selectedRecord,
     redactionExplanations: [
       "Student contact details are hidden because they are guardian-restricted",
       "Pickup notes stay unavailable until the school guardian review clears a public summary"
     ],
     unavailableCommands: ["Submit match", "Resolve federation conflict", "Review release readiness"]
   };
+}
+
+function buildReleaseReadinessAccess(
+  activeContext: CitizenContext,
+  audienceMode: CitizenAudienceMode
+): ReleaseReadinessAccess {
+  const allowed = audienceMode === "participant" && activeContext.level === "operator";
+
+  return {
+    allowed,
+    reason: allowed
+      ? "Operator role can review local acceptance and live blockers."
+      : "Release readiness is limited to operator roles."
+  };
+}
+
+function buildNeedsOffersOverview({
+  selectedNeedId,
+  selectedOfferId,
+  workflowStep
+}: {
+  readonly selectedNeedId?: string | undefined;
+  readonly selectedOfferId?: string | undefined;
+  readonly workflowStep: CitizenWorkflowStep;
+}): NeedsOffersOverview {
+  const selectedNeed = resolveNeed(selectedNeedId);
+  const selectedOffer = resolveOffer(selectedOfferId);
+
+  return {
+    ...needsOffersOverview,
+    selectedNeedId: selectedNeed.id,
+    selectedOfferId: selectedOffer.id,
+    matchPreview: {
+      ...needsOffersOverview.matchPreview,
+      needId: selectedNeed.id,
+      offerId: selectedOffer.id
+    },
+    lifecycle: buildLifecycle({
+      id: "/citizen/needs-offers",
+      label: "Match lifecycle",
+      currentStep: workflowStep,
+      confirmationSummary:
+        workflowStep === "confirmed"
+          ? "Match confirmed for steward follow-through"
+          : "Match can still be changed before steward confirmation"
+    })
+  };
+}
+
+function resolveNeed(selectedNeedId: string | undefined): NeedOfferRecord {
+  const fallbackNeed = needsOffersOverview.unmatchedNeeds[0];
+
+  if (fallbackNeed === undefined) {
+    throw new Error("Needs/offers fixture must include at least one need.");
+  }
+
+  return needsOffersOverview.unmatchedNeeds.find((need) => need.id === selectedNeedId) ?? fallbackNeed;
+}
+
+function resolveOffer(selectedOfferId: string | undefined): NeedOfferRecord {
+  const fallbackOffer = needsOffersOverview.availableOffers[0];
+
+  if (fallbackOffer === undefined) {
+    throw new Error("Needs/offers fixture must include at least one offer.");
+  }
+
+  return needsOffersOverview.availableOffers.find((offer) => offer.id === selectedOfferId) ?? fallbackOffer;
 }
 
 const citizenContexts: readonly CitizenContext[] = [
@@ -838,7 +1033,15 @@ const needsOffersOverview: NeedsOffersOverview = {
       "living-system.mill-creek"
     ],
     followThroughStates: ["offer", "match", "commitment", "task", "outcome"]
-  }
+  },
+  selectedNeedId: "need.school-kitchen-produce-gap",
+  selectedOfferId: "offer.green-acre-surplus-produce",
+  lifecycle: buildLifecycle({
+    id: "/citizen/needs-offers",
+    label: "Match lifecycle",
+    currentStep: "draft",
+    confirmationSummary: "Match can still be changed before steward confirmation"
+  })
 };
 
 const decisionSummary: CitizenDecisionSummary = {
@@ -895,8 +1098,62 @@ const federationConflictReview: FederationConflictReview = {
   availableActions: ["accept", "reject", "remediate", "merge", "defer", "request-review"],
   provenanceSummary: "Keeps both local and peer histories visible for reviewer comparison",
   redactionContinuitySummary:
-    "Sensitive school contact and pickup details stay local until guardian review"
+    "Sensitive school contact and pickup details stay local until guardian review",
+  recommendationRationale:
+    "Request review before merging because the peer total changes school meal planning.",
+  consequencePreviews: [
+    {
+      action: "accept",
+      consequence: "Applies the peer count after steward review and keeps local history visible"
+    },
+    {
+      action: "merge",
+      consequence: "Creates a reconciled public summary while preserving both histories"
+    },
+    {
+      action: "request-review",
+      consequence: "Routes the conflict to school and federation stewards before any public change"
+    }
+  ],
+  precedentLinks: [
+    {
+      label: "Prior school meal reconciliation",
+      route: "/citizen/trust-data?precedent=school-meal-reconciliation"
+    }
+  ],
+  lifecycle: buildLifecycle({
+    id: "/citizen/trust-data",
+    label: "Federation review lifecycle",
+    currentStep: "review",
+    confirmationSummary: "Conflict is held for provenance-preserving review"
+  })
 };
+
+const publicObserverRecords: readonly PublicObserverRecord[] = [
+  {
+    id: "public.decision.school-produce-routing",
+    label: "School produce routing decision",
+    summary: "A public summary of the produce-routing decision, objections, and outcome.",
+    visibility: "public-summary",
+    route: "/citizen/trust-data?mode=public&record=public.decision.school-produce-routing",
+    redactionExplanation: "Student and pickup details are hidden for guardian review"
+  },
+  {
+    id: "public.issue.food-resilience-priority",
+    label: "Neighborhood food resilience priority",
+    summary: "A public issue record residents can review before it enters a decision path.",
+    visibility: "public",
+    route: "/citizen/trust-data?mode=public&record=public.issue.food-resilience-priority"
+  },
+  {
+    id: "public.outcome.cooling-center-meals",
+    label: "Cooling center meal support outcome",
+    summary: "Recorded outcome for meal support during the heat response window.",
+    visibility: "redacted",
+    route: "/citizen/trust-data?mode=public&record=public.outcome.cooling-center-meals",
+    redactionExplanation: "Volunteer contact details stay restricted while the outcome remains public"
+  }
+];
 
 const releaseReadiness: ReleaseReadinessSummary = {
   localAcceptanceStatus: "passed",
