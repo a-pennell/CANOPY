@@ -1,4 +1,6 @@
 import type {
+  CitizenCommandAuditAction,
+  CitizenCommandAuditRecord,
   CitizenCommandRecord,
   CitizenCommandStatus,
   CitizenCommandType,
@@ -24,6 +26,7 @@ export interface CitizenCommandProvider {
   submitCommand(commandId: string): CitizenCommandRecord;
   cancelCommand(commandId: string): CitizenCommandRecord;
   moveToReview(commandId: string): CitizenCommandRecord;
+  approveCommand(commandId: string, audit: CitizenCommandAuditRecord): CitizenCommandRecord;
 }
 
 export interface CitizenCommandStorageRecord {
@@ -34,6 +37,7 @@ export interface CitizenCommandStorageRecord {
   readonly updatedAt: string;
   readonly payload: CitizenCommandStoragePayload;
   readonly statusHistory: readonly CitizenCommandStatusHistoryEntry[];
+  readonly auditTrail?: readonly CitizenCommandAuditRecord[];
 }
 
 export interface CitizenCommandStoragePayload {
@@ -56,6 +60,19 @@ export interface CitizenCommandRepository {
   list(): readonly CitizenCommandStorageRecord[];
   upsert(record: CitizenCommandStorageRecord): void;
   get(commandId: string): CitizenCommandStorageRecord | undefined;
+}
+
+export interface ExecuteCitizenCommandReviewInput {
+  readonly provider: CitizenCommandProvider;
+  readonly commandId: string;
+  readonly action: CitizenCommandAuditAction;
+  readonly reviewer: string;
+  readonly now?: string | undefined;
+}
+
+export interface ExecuteCitizenCommandReviewResult {
+  readonly command: CitizenCommandRecord;
+  readonly audit: CitizenCommandAuditRecord;
 }
 
 export function createInMemoryCitizenCommandProvider({
@@ -93,6 +110,16 @@ export function createInMemoryCitizenCommandProvider({
       const review = { ...command, status: "needs-review" as const };
       commandsById.set(commandId, review);
       return review;
+    },
+    approveCommand(commandId, audit) {
+      const command = requireCommand(commandsById, commandId);
+      const approved = {
+        ...command,
+        status: "approved" as const,
+        auditTrail: [...(command.auditTrail ?? []), audit]
+      };
+      commandsById.set(commandId, approved);
+      return approved;
     }
   };
 }
@@ -159,7 +186,28 @@ export function createPersistentCitizenCommandProvider({
     },
     moveToReview(commandId) {
       return updatePersistentStatus(repository, commandId, "needs-review", now());
+    },
+    approveCommand(commandId, audit) {
+      return updatePersistentStatus(repository, commandId, "approved", audit.occurredAt, audit);
     }
+  };
+}
+
+export function executeCitizenCommandReview(
+  input: ExecuteCitizenCommandReviewInput
+): ExecuteCitizenCommandReviewResult {
+  const occurredAt = input.now ?? new Date().toISOString();
+  const audit = createCitizenCommandAuditRecord({
+    action: input.action,
+    commandId: input.commandId,
+    occurredAt,
+    reviewer: input.reviewer
+  });
+  const command = input.provider.approveCommand(input.commandId, audit);
+
+  return {
+    command,
+    audit
   };
 }
 
@@ -247,7 +295,8 @@ function commandFromStorageRecord(record: CitizenCommandStorageRecord): CitizenC
     route: `/citizen/review-queue?command=${encodeURIComponent(record.commandId)}`,
     civicMemoryEffect: record.payload.civicMemoryEffect,
     reviewActionLabel: record.payload.reviewActionLabel,
-    dueLabel: record.payload.dueLabel
+    dueLabel: record.payload.dueLabel,
+    ...(record.auditTrail === undefined ? {} : { auditTrail: record.auditTrail })
   };
 }
 
@@ -255,7 +304,8 @@ function updatePersistentStatus(
   repository: CitizenCommandRepository,
   commandId: string,
   status: CitizenCommandStatus,
-  changedAt: string
+  changedAt: string,
+  audit?: CitizenCommandAuditRecord | undefined
 ): CitizenCommandRecord {
   const record = repository.get(commandId);
 
@@ -273,12 +323,44 @@ function updatePersistentStatus(
         status,
         changedAt
       }
-    ]
+    ],
+    ...(audit === undefined && record.auditTrail === undefined
+      ? {}
+      : {
+          auditTrail:
+            audit === undefined ? record.auditTrail : [...(record.auditTrail ?? []), audit]
+        })
   };
 
   repository.upsert(updated);
 
   return commandFromStorageRecord(updated);
+}
+
+function createCitizenCommandAuditRecord({
+  action,
+  commandId,
+  occurredAt,
+  reviewer
+}: {
+  readonly action: CitizenCommandAuditAction;
+  readonly commandId: string;
+  readonly occurredAt: string;
+  readonly reviewer: string;
+}): CitizenCommandAuditRecord {
+  switch (action) {
+    case "approve":
+      return {
+        auditId: `audit.${commandId}.approved.${occurredAt}`,
+        commandId,
+        action,
+        eventType: "citizen.command.approved",
+        outboxDestination: "projection-rebuild",
+        projectionEffect: "Review queue and civic memory projections queued for rebuild",
+        reviewer,
+        occurredAt
+      };
+  }
 }
 
 function requireCommand(

@@ -190,12 +190,58 @@ function renderReviewQueue(model: CitizenCanopyModel) {
             </div>
           </dl>
           <div className="citizenActionList">
-            <Link href={selectedCommand.route} className="citizenActionLink">
+            <Link href={reviewActionRoute(selectedCommand.route)} className="citizenActionLink">
               {selectedCommand.reviewActionLabel}
             </Link>
           </div>
+          {renderCommandAuditTrail(selectedCommand)}
         </article>
       )}
+    </section>
+  );
+}
+
+function reviewActionRoute(route: string): string {
+  const separator = route.includes("?") ? "&" : "?";
+
+  return `${route}${separator}reviewAction=approve-command`;
+}
+
+function renderCommandAuditTrail(
+  selectedCommand: NonNullable<CitizenCanopyModel["commandCenter"]["selectedCommand"]>
+) {
+  const auditTrail = selectedCommand.auditTrail ?? [];
+
+  if (auditTrail.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="citizenAuditTrail" aria-label="Command audit trail">
+      <p className="eyebrow">Audit event</p>
+      <h3>Command approved</h3>
+      <dl className="citizenReportPreviewList">
+        {auditTrail.map((audit) => (
+          <React.Fragment key={audit.auditId}>
+            <div>
+              <dt>Audit event</dt>
+              <dd>{audit.eventType}</dd>
+            </div>
+            <div>
+              <dt>Outbox</dt>
+              <dd>{audit.outboxDestination}</dd>
+            </div>
+            <div>
+              <dt>Projection</dt>
+              <dd>{audit.projectionEffect}</dd>
+            </div>
+            <div>
+              <dt>Reviewer</dt>
+              <dd>{audit.reviewer}</dd>
+            </div>
+          </React.Fragment>
+        ))}
+      </dl>
     </section>
   );
 }

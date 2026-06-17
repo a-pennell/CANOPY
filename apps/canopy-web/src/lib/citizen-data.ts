@@ -1,7 +1,8 @@
 import {
   createInMemoryCitizenCommandProvider,
   createNeedOfferMatchCommandInput,
-  createReportConcernCommandInput
+  createReportConcernCommandInput,
+  executeCitizenCommandReview
 } from "./citizen-command-provider";
 
 export type CitizenCanopyStatus = "prototype";
@@ -312,6 +313,20 @@ export interface CitizenCommandRecord {
   readonly civicMemoryEffect: string;
   readonly reviewActionLabel: string;
   readonly dueLabel: string;
+  readonly auditTrail?: readonly CitizenCommandAuditRecord[];
+}
+
+export type CitizenCommandAuditAction = "approve";
+
+export interface CitizenCommandAuditRecord {
+  readonly auditId: string;
+  readonly commandId: string;
+  readonly action: CitizenCommandAuditAction;
+  readonly eventType: string;
+  readonly outboxDestination: string;
+  readonly projectionEffect: string;
+  readonly reviewer: string;
+  readonly occurredAt: string;
 }
 
 export interface CitizenCommandCenter {
@@ -339,6 +354,7 @@ export function buildCitizenCanopyModel({
   selectedCommandId,
   commandRecords,
   commandAction,
+  reviewAction,
   reportDescription,
   workflowStep,
   routePath = "/citizen"
@@ -352,6 +368,7 @@ export function buildCitizenCanopyModel({
   readonly selectedCommandId?: string | undefined;
   readonly commandRecords?: readonly CitizenCommandRecord[] | undefined;
   readonly commandAction?: string | undefined;
+  readonly reviewAction?: string | undefined;
   readonly reportDescription?: string | undefined;
   readonly workflowStep?: string | undefined;
   readonly routePath?: string | undefined;
@@ -378,6 +395,8 @@ export function buildCitizenCanopyModel({
     commandAction,
     commandRecords,
     reportDescription,
+    reviewAction,
+    selectedCommandId,
     selectedNeedId,
     selectedOfferId
   });
@@ -770,6 +789,8 @@ function buildCommandRecords({
   commandAction,
   commandRecords,
   reportDescription,
+  reviewAction,
+  selectedCommandId,
   selectedNeedId,
   selectedOfferId
 }: {
@@ -777,6 +798,8 @@ function buildCommandRecords({
   readonly commandAction?: string | undefined;
   readonly commandRecords?: readonly CitizenCommandRecord[] | undefined;
   readonly reportDescription?: string | undefined;
+  readonly reviewAction?: string | undefined;
+  readonly selectedCommandId?: string | undefined;
   readonly selectedNeedId?: string | undefined;
   readonly selectedOfferId?: string | undefined;
 }): {
@@ -825,6 +848,34 @@ function buildCommandRecords({
         label: "Command submitted",
         summary: command.civicMemoryEffect,
         commandId: command.id
+      }
+    };
+  }
+
+  if (reviewAction === "approve-command") {
+    const selectedCommand =
+      provider.listCommands().find((command) => command.id === selectedCommandId) ??
+      provider.listCommands()[0];
+
+    if (selectedCommand === undefined) {
+      throw new Error("Cannot approve a citizen command without a selected command.");
+    }
+
+    const result = executeCitizenCommandReview({
+      provider,
+      commandId: selectedCommand.id,
+      action: "approve",
+      reviewer: selectedCommand.reviewOwner,
+      now: "2026-06-17T17:00:00.000Z"
+    });
+
+    return {
+      records: provider.listCommands(),
+      selectedCommandId: result.command.id,
+      actionResult: {
+        label: "Command approved",
+        summary: result.audit.projectionEffect,
+        commandId: result.command.id
       }
     };
   }
