@@ -27,6 +27,11 @@ export interface CitizenCommandProvider {
   cancelCommand(commandId: string): CitizenCommandRecord;
   moveToReview(commandId: string): CitizenCommandRecord;
   approveCommand(commandId: string, audit: CitizenCommandAuditRecord): CitizenCommandRecord;
+  rejectCommand(commandId: string, audit: CitizenCommandAuditRecord): CitizenCommandRecord;
+  requestChangesCommand(
+    commandId: string,
+    audit: CitizenCommandAuditRecord
+  ): CitizenCommandRecord;
 }
 
 export interface CitizenCommandStorageRecord {
@@ -113,13 +118,21 @@ export function createInMemoryCitizenCommandProvider({
     },
     approveCommand(commandId, audit) {
       const command = requireCommand(commandsById, commandId);
-      const approved = {
-        ...command,
-        status: "approved" as const,
-        auditTrail: [...(command.auditTrail ?? []), audit]
-      };
+      const approved = applyCommandReviewAudit(command, "approved", audit);
       commandsById.set(commandId, approved);
       return approved;
+    },
+    rejectCommand(commandId, audit) {
+      const command = requireCommand(commandsById, commandId);
+      const rejected = applyCommandReviewAudit(command, "rejected", audit);
+      commandsById.set(commandId, rejected);
+      return rejected;
+    },
+    requestChangesCommand(commandId, audit) {
+      const command = requireCommand(commandsById, commandId);
+      const changesRequested = applyCommandReviewAudit(command, "changes-requested", audit);
+      commandsById.set(commandId, changesRequested);
+      return changesRequested;
     }
   };
 }
@@ -189,6 +202,18 @@ export function createPersistentCitizenCommandProvider({
     },
     approveCommand(commandId, audit) {
       return updatePersistentStatus(repository, commandId, "approved", audit.occurredAt, audit);
+    },
+    rejectCommand(commandId, audit) {
+      return updatePersistentStatus(repository, commandId, "rejected", audit.occurredAt, audit);
+    },
+    requestChangesCommand(commandId, audit) {
+      return updatePersistentStatus(
+        repository,
+        commandId,
+        "changes-requested",
+        audit.occurredAt,
+        audit
+      );
     }
   };
 }
@@ -203,12 +228,28 @@ export function executeCitizenCommandReview(
     occurredAt,
     reviewer: input.reviewer
   });
-  const command = input.provider.approveCommand(input.commandId, audit);
+  const command = executeReviewProviderAction(input.provider, input.commandId, input.action, audit);
 
   return {
     command,
     audit
   };
+}
+
+function executeReviewProviderAction(
+  provider: CitizenCommandProvider,
+  commandId: string,
+  action: CitizenCommandAuditAction,
+  audit: CitizenCommandAuditRecord
+): CitizenCommandRecord {
+  switch (action) {
+    case "approve":
+      return provider.approveCommand(commandId, audit);
+    case "reject":
+      return provider.rejectCommand(commandId, audit);
+    case "request-changes":
+      return provider.requestChangesCommand(commandId, audit);
+  }
 }
 
 export function createReportConcernCommandInput({
@@ -337,6 +378,18 @@ function updatePersistentStatus(
   return commandFromStorageRecord(updated);
 }
 
+function applyCommandReviewAudit(
+  command: CitizenCommandRecord,
+  status: CitizenCommandStatus,
+  audit: CitizenCommandAuditRecord
+): CitizenCommandRecord {
+  return {
+    ...command,
+    status,
+    auditTrail: [...(command.auditTrail ?? []), audit]
+  };
+}
+
 function createCitizenCommandAuditRecord({
   action,
   commandId,
@@ -357,6 +410,28 @@ function createCitizenCommandAuditRecord({
         eventType: "citizen.command.approved",
         outboxDestination: "projection-rebuild",
         projectionEffect: "Review queue and civic memory projections queued for rebuild",
+        reviewer,
+        occurredAt
+      };
+    case "reject":
+      return {
+        auditId: `audit.${commandId}.rejected.${occurredAt}`,
+        commandId,
+        action,
+        eventType: "citizen.command.rejected",
+        outboxDestination: "projection-rebuild",
+        projectionEffect: "Review queue and civic memory projections queued after rejection",
+        reviewer,
+        occurredAt
+      };
+    case "request-changes":
+      return {
+        auditId: `audit.${commandId}.changes-requested.${occurredAt}`,
+        commandId,
+        action,
+        eventType: "citizen.command.changes_requested",
+        outboxDestination: "review-follow-up",
+        projectionEffect: "Review queue projections queued with requested changes",
         reviewer,
         occurredAt
       };

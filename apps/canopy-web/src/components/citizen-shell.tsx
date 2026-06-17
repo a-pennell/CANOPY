@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import type { CitizenCanopyModel } from "../lib/citizen-data";
+import type { CitizenCanopyModel, CitizenCommandAuditAction } from "../lib/citizen-data";
 
 export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) {
   const activeContext = model.activeContext;
@@ -190,8 +190,14 @@ function renderReviewQueue(model: CitizenCanopyModel) {
             </div>
           </dl>
           <div className="citizenActionList">
-            <Link href={reviewActionRoute(selectedCommand.route)} className="citizenActionLink">
+            <Link href={reviewActionRoute(selectedCommand.route, "approve-command")} className="citizenActionLink">
               {selectedCommand.reviewActionLabel}
+            </Link>
+            <Link href={reviewActionRoute(selectedCommand.route, "request-changes")} className="citizenActionLink">
+              Request changes
+            </Link>
+            <Link href={reviewActionRoute(selectedCommand.route, "reject-command")} className="citizenActionLink">
+              Reject command
             </Link>
           </div>
           {renderCommandAuditTrail(selectedCommand)}
@@ -201,10 +207,10 @@ function renderReviewQueue(model: CitizenCanopyModel) {
   );
 }
 
-function reviewActionRoute(route: string): string {
+function reviewActionRoute(route: string, reviewAction: string): string {
   const separator = route.includes("?") ? "&" : "?";
 
-  return `${route}${separator}reviewAction=approve-command`;
+  return `${route}${separator}reviewAction=${reviewAction}`;
 }
 
 function renderCommandAuditTrail(
@@ -219,7 +225,7 @@ function renderCommandAuditTrail(
   return (
     <section className="citizenAuditTrail" aria-label="Command audit trail">
       <p className="eyebrow">Audit event</p>
-      <h3>Command approved</h3>
+      <h3>{reviewAuditHeading(auditTrail[0]?.action)}</h3>
       <dl className="citizenReportPreviewList">
         {auditTrail.map((audit) => (
           <React.Fragment key={audit.auditId}>
@@ -244,6 +250,19 @@ function renderCommandAuditTrail(
       </dl>
     </section>
   );
+}
+
+function reviewAuditHeading(action: CitizenCommandAuditAction | undefined): string {
+  switch (action) {
+    case "approve":
+      return "Command approved";
+    case "reject":
+      return "Command rejected";
+    case "request-changes":
+      return "Changes requested";
+    default:
+      return "Review action recorded";
+  }
 }
 
 function renderCommandList(commands: CitizenCanopyModel["commandCenter"]["savedDrafts"]) {

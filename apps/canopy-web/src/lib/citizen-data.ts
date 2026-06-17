@@ -298,6 +298,8 @@ export type CitizenCommandStatus =
   | "submitted"
   | "needs-review"
   | "approved"
+  | "rejected"
+  | "changes-requested"
   | "cancelled";
 
 export interface CitizenCommandRecord {
@@ -316,7 +318,7 @@ export interface CitizenCommandRecord {
   readonly auditTrail?: readonly CitizenCommandAuditRecord[];
 }
 
-export type CitizenCommandAuditAction = "approve";
+export type CitizenCommandAuditAction = "approve" | "reject" | "request-changes";
 
 export interface CitizenCommandAuditRecord {
   readonly auditId: string;
@@ -655,6 +657,10 @@ function labelCommandStatus(status: CitizenCommandStatus): string {
       return "Needs review";
     case "approved":
       return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "changes-requested":
+      return "Changes requested";
     case "cancelled":
       return "Cancelled";
   }
@@ -852,7 +858,9 @@ function buildCommandRecords({
     };
   }
 
-  if (reviewAction === "approve-command") {
+  const auditAction = auditActionFromRoute(reviewAction);
+
+  if (auditAction !== undefined) {
     const selectedCommand =
       provider.listCommands().find((command) => command.id === selectedCommandId) ??
       provider.listCommands()[0];
@@ -864,7 +872,7 @@ function buildCommandRecords({
     const result = executeCitizenCommandReview({
       provider,
       commandId: selectedCommand.id,
-      action: "approve",
+      action: auditAction,
       reviewer: selectedCommand.reviewOwner,
       now: "2026-06-17T17:00:00.000Z"
     });
@@ -873,7 +881,7 @@ function buildCommandRecords({
       records: provider.listCommands(),
       selectedCommandId: result.command.id,
       actionResult: {
-        label: "Command approved",
+        label: reviewActionLabel(auditAction),
         summary: result.audit.projectionEffect,
         commandId: result.command.id
       }
@@ -883,6 +891,32 @@ function buildCommandRecords({
   return {
     records: provider.listCommands()
   };
+}
+
+function auditActionFromRoute(
+  reviewAction: string | undefined
+): CitizenCommandAuditAction | undefined {
+  switch (reviewAction) {
+    case "approve-command":
+      return "approve";
+    case "reject-command":
+      return "reject";
+    case "request-changes":
+      return "request-changes";
+    default:
+      return undefined;
+  }
+}
+
+function reviewActionLabel(action: CitizenCommandAuditAction): string {
+  switch (action) {
+    case "approve":
+      return "Command approved";
+    case "reject":
+      return "Command rejected";
+    case "request-changes":
+      return "Changes requested";
+  }
 }
 
 function buildCommandCenter(
