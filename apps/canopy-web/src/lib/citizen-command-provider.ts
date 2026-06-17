@@ -26,6 +26,38 @@ export interface CitizenCommandProvider {
   moveToReview(commandId: string): CitizenCommandRecord;
 }
 
+export interface CitizenCommandStorageRecord {
+  readonly commandId: string;
+  readonly commandType: CitizenCommandType;
+  readonly status: CitizenCommandStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly payload: CitizenCommandStoragePayload;
+  readonly statusHistory: readonly CitizenCommandStatusHistoryEntry[];
+}
+
+export interface CitizenCommandStoragePayload {
+  readonly label: string;
+  readonly contextLabel: string;
+  readonly reviewOwner: string;
+  readonly submittedBy: string;
+  readonly visibility: CitizenVisibilityPreference | "public-summary";
+  readonly civicMemoryEffect: string;
+  readonly reviewActionLabel: string;
+  readonly dueLabel: string;
+}
+
+export interface CitizenCommandStatusHistoryEntry {
+  readonly status: CitizenCommandStatus;
+  readonly changedAt: string;
+}
+
+export interface CitizenCommandRepository {
+  list(): readonly CitizenCommandStorageRecord[];
+  upsert(record: CitizenCommandStorageRecord): void;
+  get(commandId: string): CitizenCommandStorageRecord | undefined;
+}
+
 export function createInMemoryCitizenCommandProvider({
   initialCommands = []
 }: {
@@ -61,6 +93,72 @@ export function createInMemoryCitizenCommandProvider({
       const review = { ...command, status: "needs-review" as const };
       commandsById.set(commandId, review);
       return review;
+    }
+  };
+}
+
+export function createMemoryCitizenCommandRepository({
+  initialRecords = []
+}: {
+  readonly initialRecords?: readonly CitizenCommandStorageRecord[];
+} = {}): CitizenCommandRepository {
+  const recordsById = new Map<string, CitizenCommandStorageRecord>(
+    initialRecords.map((record) => [record.commandId, record])
+  );
+
+  return {
+    list() {
+      return Array.from(recordsById.values());
+    },
+    upsert(record) {
+      recordsById.set(record.commandId, record);
+    },
+    get(commandId) {
+      return recordsById.get(commandId);
+    }
+  };
+}
+
+export function createPersistentCitizenCommandProvider({
+  repository,
+  now = () => new Date().toISOString()
+}: {
+  readonly repository: CitizenCommandRepository;
+  readonly now?: () => string;
+}): CitizenCommandProvider {
+  return {
+    listCommands() {
+      return repository.list().map(commandFromStorageRecord);
+    },
+    saveDraft(input) {
+      const timestamp = now();
+      const record: CitizenCommandStorageRecord = {
+        commandId: input.id,
+        commandType: input.type,
+        status: "draft",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        payload: storagePayloadFromInput(input),
+        statusHistory: [
+          {
+            status: "draft",
+            changedAt: timestamp
+          }
+        ]
+      };
+
+      repository.upsert(record);
+
+      return commandFromStorageRecord(record);
+    },
+    submitCommand(commandId) {
+      return updatePersistentStatus(repository, commandId, "submitted", now());
+    },
+    cancelCommand(commandId) {
+      return updatePersistentStatus(repository, commandId, "cancelled", now());
+    },
+    moveToReview(commandId) {
+      return updatePersistentStatus(repository, commandId, "needs-review", now());
     }
   };
 }
@@ -114,6 +212,66 @@ function commandFromInput(
     status,
     route: `/citizen/review-queue?command=${encodeURIComponent(input.id)}`
   };
+}
+
+function storagePayloadFromInput(input: CitizenCommandDraftInput): CitizenCommandStoragePayload {
+  return {
+    label: input.label,
+    contextLabel: input.contextLabel,
+    reviewOwner: input.reviewOwner,
+    submittedBy: input.submittedBy,
+    visibility: input.visibility,
+    civicMemoryEffect: input.civicMemoryEffect,
+    reviewActionLabel: input.reviewActionLabel,
+    dueLabel: input.dueLabel
+  };
+}
+
+function commandFromStorageRecord(record: CitizenCommandStorageRecord): CitizenCommandRecord {
+  return {
+    id: record.commandId,
+    label: record.payload.label,
+    type: record.commandType,
+    status: record.status,
+    contextLabel: record.payload.contextLabel,
+    reviewOwner: record.payload.reviewOwner,
+    submittedBy: record.payload.submittedBy,
+    visibility: record.payload.visibility,
+    route: `/citizen/review-queue?command=${encodeURIComponent(record.commandId)}`,
+    civicMemoryEffect: record.payload.civicMemoryEffect,
+    reviewActionLabel: record.payload.reviewActionLabel,
+    dueLabel: record.payload.dueLabel
+  };
+}
+
+function updatePersistentStatus(
+  repository: CitizenCommandRepository,
+  commandId: string,
+  status: CitizenCommandStatus,
+  changedAt: string
+): CitizenCommandRecord {
+  const record = repository.get(commandId);
+
+  if (record === undefined) {
+    throw new Error(`Unknown citizen command: ${commandId}`);
+  }
+
+  const updated: CitizenCommandStorageRecord = {
+    ...record,
+    status,
+    updatedAt: changedAt,
+    statusHistory: [
+      ...record.statusHistory,
+      {
+        status,
+        changedAt
+      }
+    ]
+  };
+
+  repository.upsert(updated);
+
+  return commandFromStorageRecord(updated);
 }
 
 function requireCommand(
