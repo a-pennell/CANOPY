@@ -61,3 +61,4 @@ The next product phase should be an operator-ready Canopy shell: onboarding, dai
 Follow-up product framing:
 
 - `docs/product/2026-06-16-citizen-friendly-canopy-jtbd-workflows.md` reframes the shell around citizen-friendly jobs, workflows, plain-language navigation, and holonic UX rules.
+- `docs/product/2026-06-16-phase-11-citizen-friendly-operating-surface-prd.md` turns that framing into a formal Phase 11 PRD.

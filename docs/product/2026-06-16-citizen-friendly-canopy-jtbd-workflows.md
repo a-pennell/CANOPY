@@ -6,6 +6,10 @@ Date: 2026-06-16
 
 Canopy should feel public, civic, and humane before it feels technical. The underlying system is emergent and holonic: people, places, commons, living systems, resources, claims, decisions, commitments, and federations can all contain and belong to one another depending on context.
 
+Formal PRD:
+
+- `docs/product/2026-06-16-phase-11-citizen-friendly-operating-surface-prd.md`
+
 The UI should not force users to understand that hierarchy up front. It should help people answer simple civic questions:
 
 - What is happening near me or in a commons I care about?
