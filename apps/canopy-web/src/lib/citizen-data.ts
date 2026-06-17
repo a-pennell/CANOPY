@@ -20,6 +20,7 @@ export interface CitizenCanopyModel {
   readonly releaseReadiness: ReleaseReadinessSummary;
   readonly releaseReadinessAccess: ReleaseReadinessAccess;
   readonly publicObserver: PublicObserverBoundary;
+  readonly commandCenter: CitizenCommandCenter;
   readonly mobileTaskRoutes: readonly MobileTaskRoute[];
 }
 
@@ -247,7 +248,7 @@ export interface MobileTaskRoute {
 }
 
 export interface CitizenTaskSurface {
-  readonly id: "home" | "today" | "contexts" | "around" | "search" | "workflow";
+  readonly id: "home" | "today" | "contexts" | "around" | "search" | "review-queue" | "workflow";
   readonly label: string;
   readonly summary: string;
   readonly items: readonly CitizenTaskSurfaceItem[];
@@ -279,6 +280,42 @@ export interface CitizenCommandLifecycle {
   readonly confirmationSummary: string;
 }
 
+export type CitizenCommandType =
+  | "report"
+  | "match"
+  | "challenge"
+  | "federation-review";
+
+export type CitizenCommandStatus =
+  | "draft"
+  | "submitted"
+  | "needs-review"
+  | "approved"
+  | "cancelled";
+
+export interface CitizenCommandRecord {
+  readonly id: string;
+  readonly label: string;
+  readonly type: CitizenCommandType;
+  readonly status: CitizenCommandStatus;
+  readonly contextLabel: string;
+  readonly reviewOwner: string;
+  readonly submittedBy: string;
+  readonly visibility: CitizenVisibilityPreference | "public-summary";
+  readonly route: string;
+  readonly civicMemoryEffect: string;
+  readonly reviewActionLabel: string;
+  readonly dueLabel: string;
+}
+
+export interface CitizenCommandCenter {
+  readonly savedDrafts: readonly CitizenCommandRecord[];
+  readonly submittedCommands: readonly CitizenCommandRecord[];
+  readonly reviewQueue: readonly CitizenCommandRecord[];
+  readonly selectedCommand: CitizenCommandRecord | undefined;
+  readonly queueSummary: string;
+}
+
 export function buildCitizenCanopyModel({
   activeContextId,
   activeRole,
@@ -286,6 +323,7 @@ export function buildCitizenCanopyModel({
   selectedNeedId,
   selectedOfferId,
   selectedPublicRecordId,
+  selectedCommandId,
   workflowStep,
   routePath = "/citizen"
 }: {
@@ -295,6 +333,7 @@ export function buildCitizenCanopyModel({
   readonly selectedNeedId?: string | undefined;
   readonly selectedOfferId?: string | undefined;
   readonly selectedPublicRecordId?: string | undefined;
+  readonly selectedCommandId?: string | undefined;
   readonly workflowStep?: string | undefined;
   readonly routePath?: string | undefined;
 } = {}): CitizenCanopyModel {
@@ -315,6 +354,7 @@ export function buildCitizenCanopyModel({
   const contexts = citizenContexts.map((context) =>
     context.id === activeContext.id ? activeContext : context
   );
+  const commandCenter = buildCommandCenter(selectedCommandId);
 
   return {
     routePath,
@@ -330,7 +370,7 @@ export function buildCitizenCanopyModel({
     activeAttentionItems,
     suggestedActions: activeContext.suggestedActionIds.map(resolveSuggestedAction),
     taskNavigation: citizenTaskNavigation,
-    taskSurface: buildTaskSurface(routePath, contexts, activeContext, activeAttentionItems),
+    taskSurface: buildTaskSurface(routePath, contexts, activeContext, activeAttentionItems, commandCenter),
     reportConcernDraft: buildConcernReportDraft(activeContext, normalizeWorkflowStep(workflowStep)),
     needsOffers: buildNeedsOffersOverview({
       selectedNeedId,
@@ -343,6 +383,7 @@ export function buildCitizenCanopyModel({
     releaseReadiness,
     releaseReadinessAccess: buildReleaseReadinessAccess(activeContext, audienceMode),
     publicObserver: buildPublicObserverBoundary(audienceMode, selectedPublicRecordId),
+    commandCenter,
     mobileTaskRoutes
   };
 }
@@ -405,6 +446,10 @@ function summaryForRoute(routePath: string): string {
     return "Find public records, decisions, commitments, evidence, and outcomes.";
   }
 
+  if (routePath === "/citizen/review-queue") {
+    return "Saved drafts, submitted commands, and review work waiting for the right people.";
+  }
+
   return "A separate Phase 11 surface for public, citizen, steward, and operator workflows.";
 }
 
@@ -428,20 +473,25 @@ function buildTaskSurface(
   routePath: string,
   contexts: readonly CitizenContext[],
   activeContext: CitizenContext,
-  activeAttentionItems: readonly CitizenAttentionItem[]
+  activeAttentionItems: readonly CitizenAttentionItem[],
+  commandCenter: CitizenCommandCenter
 ): CitizenTaskSurface {
   if (routePath === "/citizen/today") {
     return {
       id: "today",
       label: "What needs attention today",
       summary: "Start with the work that is timely, role-aware, and close to your current context.",
-      items: activeAttentionItems.map((item) => ({
-        id: item.id,
-        label: item.label,
-        summary: item.summary,
-        route: item.route,
-        contextLabel: activeContext.label
-      }))
+      items: [
+        ...activeAttentionItems.map((item) => ({
+          id: item.id,
+          label: item.label,
+          summary: item.summary,
+          route: item.route,
+          contextLabel: activeContext.label
+        })),
+        ...commandCenter.savedDrafts.map(commandToTaskSurfaceItem),
+        ...commandCenter.reviewQueue.map(commandToTaskSurfaceItem)
+      ]
     };
   }
 
@@ -508,6 +558,19 @@ function buildTaskSurface(
     };
   }
 
+  if (routePath === "/citizen/review-queue") {
+    return {
+      id: "review-queue",
+      label: "Review queue",
+      summary: commandCenter.queueSummary,
+      items: [
+        ...commandCenter.savedDrafts.map(commandToTaskSurfaceItem),
+        ...commandCenter.submittedCommands.map(commandToTaskSurfaceItem),
+        ...commandCenter.reviewQueue.map(commandToTaskSurfaceItem)
+      ]
+    };
+  }
+
   return {
     id: routePath === "/citizen" ? "home" : "workflow",
     label: "Citizen home",
@@ -520,6 +583,31 @@ function buildTaskSurface(
       contextLabel: activeContext.label
     }))
   };
+}
+
+function commandToTaskSurfaceItem(command: CitizenCommandRecord): CitizenTaskSurfaceItem {
+  return {
+    id: command.id,
+    label: command.label,
+    summary: `${labelCommandStatus(command.status)} - ${command.reviewOwner}`,
+    route: command.route,
+    contextLabel: labelCommandStatus(command.status)
+  };
+}
+
+function labelCommandStatus(status: CitizenCommandStatus): string {
+  switch (status) {
+    case "draft":
+      return "Saved draft";
+    case "submitted":
+      return "Submitted";
+    case "needs-review":
+      return "Needs review";
+    case "approved":
+      return "Approved";
+    case "cancelled":
+      return "Cancelled";
+  }
 }
 
 function resolveSuggestedAction(id: string): CitizenSuggestedAction {
@@ -643,6 +731,24 @@ function buildNeedsOffersOverview({
           ? "Match confirmed for steward follow-through"
           : "Match can still be changed before steward confirmation"
     })
+  };
+}
+
+function buildCommandCenter(selectedCommandId: string | undefined): CitizenCommandCenter {
+  const savedDrafts = citizenCommandRecords.filter((command) => command.status === "draft");
+  const submittedCommands = citizenCommandRecords.filter((command) => command.status === "submitted");
+  const reviewQueue = citizenCommandRecords.filter((command) => command.status === "needs-review");
+  const selectedCommand =
+    citizenCommandRecords.find((command) => command.id === selectedCommandId) ??
+    reviewQueue[0] ??
+    savedDrafts[0];
+
+  return {
+    savedDrafts,
+    submittedCommands,
+    reviewQueue,
+    selectedCommand,
+    queueSummary: `${savedDrafts.length} draft, ${submittedCommands.length} submitted, ${reviewQueue.length} needing review`
   };
 }
 
@@ -1152,6 +1258,51 @@ const publicObserverRecords: readonly PublicObserverRecord[] = [
     visibility: "redacted",
     route: "/citizen/trust-data?mode=public&record=public.outcome.cooling-center-meals",
     redactionExplanation: "Volunteer contact details stay restricted while the outcome remains public"
+  }
+];
+
+const citizenCommandRecords: readonly CitizenCommandRecord[] = [
+  {
+    id: "command.report.riverbend-food-concern",
+    label: "Report neighborhood food concern",
+    type: "report",
+    status: "draft",
+    contextLabel: "Riverbend Neighborhood",
+    reviewOwner: "Riverbend neighborhood reviewers",
+    submittedBy: "resident",
+    visibility: "commons-visible",
+    route: "/citizen/review-queue?command=command.report.riverbend-food-concern",
+    civicMemoryEffect: "Creates a public concern record for review",
+    reviewActionLabel: "Approve for review",
+    dueLabel: "Before the next neighborhood review circle"
+  },
+  {
+    id: "command.match.school-produce",
+    label: "Match produce offer to school need",
+    type: "match",
+    status: "submitted",
+    contextLabel: "Riverbend Food Commons",
+    reviewOwner: "Commons steward and school guardian reviewers",
+    submittedBy: "commons steward",
+    visibility: "role-restricted",
+    route: "/citizen/review-queue?command=command.match.school-produce",
+    civicMemoryEffect: "Creates a commitment review entry before any task is assigned",
+    reviewActionLabel: "Send to guardian review",
+    dueLabel: "This week"
+  },
+  {
+    id: "command.federation.downstream-reconciliation",
+    label: "Review downstream reconciliation",
+    type: "federation-review",
+    status: "needs-review",
+    contextLabel: "Downstream Federation",
+    reviewOwner: "Federation conflict reviewers",
+    submittedBy: "federation steward",
+    visibility: "role-restricted",
+    route: "/citizen/review-queue?command=command.federation.downstream-reconciliation",
+    civicMemoryEffect: "Preserves both local and peer histories before any record is merged",
+    reviewActionLabel: "Request reviewer decision",
+    dueLabel: "Before accepting peer changes"
   }
 ];
 

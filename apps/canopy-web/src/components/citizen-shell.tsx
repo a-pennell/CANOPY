@@ -9,6 +9,7 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
   const isDecisionsRoute = model.routePath === "/citizen/decisions";
   const isTrustDataRoute = model.routePath === "/citizen/trust-data";
   const isReleaseReadinessRoute = model.routePath === "/citizen/release-readiness";
+  const isReviewQueueRoute = model.routePath === "/citizen/review-queue";
   const isTaskSurfaceRoute = ["/citizen/today", "/citizen/contexts", "/citizen/around", "/citizen/search"].includes(
     model.routePath
   );
@@ -52,6 +53,8 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
         renderTrustData(model)
       ) : isReleaseReadinessRoute ? (
         renderReleaseReadiness(model)
+      ) : isReviewQueueRoute ? (
+        renderReviewQueue(model)
       ) : isTaskSurfaceRoute ? (
         renderTaskSurface(model)
       ) : (
@@ -128,6 +131,89 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
       </section>
       )}
     </main>
+  );
+}
+
+function renderReviewQueue(model: CitizenCanopyModel) {
+  const selectedCommand = model.commandCenter.selectedCommand;
+
+  return (
+    <section className="citizenWorkflowGrid" aria-label="Review queue">
+      <article className="citizenPanel citizenWorkflowPrimary">
+        <p className="eyebrow">Review queue</p>
+        <h2>Review queue</h2>
+        <p>{model.commandCenter.queueSummary}</p>
+      </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Saved drafts</p>
+        <h2>Saved drafts</h2>
+        {renderCommandList(model.commandCenter.savedDrafts)}
+      </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Submitted</p>
+        <h2>Submitted commands</h2>
+        {renderCommandList(model.commandCenter.submittedCommands)}
+      </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Needs review</p>
+        <h2>Needs review</h2>
+        {renderCommandList(model.commandCenter.reviewQueue)}
+      </article>
+
+      {selectedCommand === undefined ? null : (
+        <article className="citizenPanel citizenWorkflowPreview">
+          <p className="eyebrow">Selected command</p>
+          <h2>{selectedCommand.label}</h2>
+          <dl className="citizenReportPreviewList">
+            <div>
+              <dt>Review owner</dt>
+              <dd>{selectedCommand.reviewOwner}</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{selectedCommand.status}</dd>
+            </div>
+            <div>
+              <dt>Visibility</dt>
+              <dd>{selectedCommand.visibility}</dd>
+            </div>
+            <div>
+              <dt>Civic memory</dt>
+              <dd>{selectedCommand.civicMemoryEffect}</dd>
+            </div>
+            <div>
+              <dt>Due</dt>
+              <dd>{selectedCommand.dueLabel}</dd>
+            </div>
+          </dl>
+          <div className="citizenActionList">
+            <Link href={selectedCommand.route} className="citizenActionLink">
+              {selectedCommand.reviewActionLabel}
+            </Link>
+          </div>
+        </article>
+      )}
+    </section>
+  );
+}
+
+function renderCommandList(commands: CitizenCanopyModel["commandCenter"]["savedDrafts"]) {
+  if (commands.length === 0) {
+    return <p>No work waiting here.</p>;
+  }
+
+  return (
+    <ul className="citizenPlainList">
+      {commands.map((command) => (
+        <li key={command.id}>
+          <Link href={command.route}>{command.label}</Link>
+          <span>{command.reviewOwner}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

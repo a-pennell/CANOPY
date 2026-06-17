@@ -551,6 +551,86 @@ describe("Phase 11 citizen surface acceptance", () => {
     expect(shellText).toContain("Prior school meal reconciliation");
   });
 
+  it("exposes a persisted citizen command center with drafts, submissions, and review queue items", () => {
+    const model = buildCitizenCanopyModel();
+
+    expect(model.commandCenter).toMatchObject({
+      savedDrafts: expect.arrayContaining([
+        expect.objectContaining({
+          id: "command.report.riverbend-food-concern",
+          status: "draft",
+          reviewOwner: "Riverbend neighborhood reviewers"
+        })
+      ]),
+      submittedCommands: expect.arrayContaining([
+        expect.objectContaining({
+          id: "command.match.school-produce",
+          status: "submitted",
+          civicMemoryEffect: "Creates a commitment review entry before any task is assigned"
+        })
+      ]),
+      reviewQueue: expect.arrayContaining([
+        expect.objectContaining({
+          id: "command.federation.downstream-reconciliation",
+          status: "needs-review",
+          reviewOwner: "Federation conflict reviewers"
+        })
+      ])
+    });
+  });
+
+  it("renders a dedicated review queue route with selected command detail", async () => {
+    const element = await CanopyPage({
+      routeSegments: ["citizen", "review-queue"],
+      searchParams: Promise.resolve({
+        command: "command.report.riverbend-food-concern"
+      })
+    });
+
+    expect(isValidElement(element)).toBe(true);
+    expect(element.type).toBe(CitizenShell);
+
+    const model = (element.props as { readonly model: CitizenCanopyModel }).model;
+    const shellText = collectElementStrings(CitizenShell({ model })).join("\n");
+
+    expect(model.commandCenter.selectedCommand).toMatchObject({
+      id: "command.report.riverbend-food-concern",
+      label: "Report neighborhood food concern",
+      reviewOwner: "Riverbend neighborhood reviewers",
+      reviewActionLabel: "Approve for review"
+    });
+    expect(model.taskSurface.id).toBe("review-queue");
+    expect(shellText).toContain("Review queue");
+    expect(shellText).toContain("Report neighborhood food concern");
+    expect(shellText).toContain("Riverbend neighborhood reviewers");
+    expect(shellText).toContain("Approve for review");
+    expect(shellText).toContain("Creates a public concern record for review");
+  });
+
+  it("surfaces command drafts and review queue work from Today without internal terms", async () => {
+    const element = await CanopyPage({
+      routeSegments: ["citizen", "today"]
+    });
+
+    expect(isValidElement(element)).toBe(true);
+    expect(element.type).toBe(CitizenShell);
+
+    const model = (element.props as { readonly model: CitizenCanopyModel }).model;
+    const shellText = collectElementStrings(CitizenShell({ model })).join("\n");
+
+    expect(model.taskSurface.items.map((item) => item.id)).toEqual(
+      expect.arrayContaining([
+        "command.report.riverbend-food-concern",
+        "command.federation.downstream-reconciliation"
+      ])
+    );
+    expect(shellText).toContain("Saved draft");
+    expect(shellText).toContain("Needs review");
+    expect(shellText).not.toMatch(
+      /ObjectRef|projection|outbox|canonical mapping|canonical ref|materialized/i
+    );
+  });
+
   it("keeps existing shell routes on the current dashboard", async () => {
     const element = await CanopyPage({
       routeSegments: ["scope"]
