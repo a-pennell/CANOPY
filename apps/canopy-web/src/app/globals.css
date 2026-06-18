@@ -898,6 +898,25 @@ a {
   font-weight: 700;
 }
 
+.citizenSkipLink {
+  position: absolute;
+  top: var(--canopy-grid);
+  left: var(--canopy-grid);
+  z-index: 10;
+  transform: translateY(-160%);
+  padding: calc(var(--canopy-grid) * 2) calc(var(--canopy-grid) * 3);
+  border: 1px solid var(--canopy-line-strong);
+  border-radius: var(--canopy-radius);
+  background: var(--canopy-panel-raised);
+  color: var(--canopy-text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.citizenSkipLink:focus {
+  transform: translateY(0);
+}
+
 .citizenPlaceholder {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 240px));

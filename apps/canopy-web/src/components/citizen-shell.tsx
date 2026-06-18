@@ -10,12 +10,16 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
   const isTrustDataRoute = model.routePath === "/citizen/trust-data";
   const isReleaseReadinessRoute = model.routePath === "/citizen/release-readiness";
   const isReviewQueueRoute = model.routePath === "/citizen/review-queue";
-  const isTaskSurfaceRoute = ["/citizen/today", "/citizen/contexts", "/citizen/around", "/citizen/search"].includes(
+  const isSearchRoute = model.routePath === "/citizen/search";
+  const isTaskSurfaceRoute = ["/citizen/today", "/citizen/contexts", "/citizen/around"].includes(
     model.routePath
   );
 
   return (
-    <main className="citizenShell">
+    <main className="citizenShell" id="citizen-main">
+      <Link href="#citizen-main" className="citizenSkipLink">
+        Skip to citizen content
+      </Link>
       <section className="citizenHero" aria-labelledby="citizen-title">
         <p className="eyebrow">Phase 11</p>
         <h1 id="citizen-title">{model.surfaceLabel}</h1>
@@ -55,6 +59,8 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
         renderReleaseReadiness(model)
       ) : isReviewQueueRoute ? (
         renderReviewQueue(model)
+      ) : isSearchRoute ? (
+        renderPublicRecordSearch(model)
       ) : isTaskSurfaceRoute ? (
         renderTaskSurface(model)
       ) : (
@@ -131,6 +137,50 @@ export function CitizenShell({ model }: { readonly model: CitizenCanopyModel }) 
       </section>
       )}
     </main>
+  );
+}
+
+function renderPublicRecordSearch(model: CitizenCanopyModel) {
+  const observer = model.publicObserver;
+
+  return (
+    <section className="citizenWorkflowGrid" aria-label="Public record search">
+      <article className="citizenPanel citizenWorkflowPrimary">
+        <p className="eyebrow">Search</p>
+        <h2>Public record search</h2>
+        <p>Search public records, redacted summaries, decisions, issues, and recorded outcomes.</p>
+        <dl className="citizenReportPreviewList">
+          <div>
+            <dt>Search query</dt>
+            <dd>{observer.searchQuery.length === 0 ? "All records" : observer.searchQuery}</dd>
+          </div>
+          <div>
+            <dt>Visibility filter</dt>
+            <dd>{observer.visibilityFilter}</dd>
+          </div>
+          <div>
+            <dt>Results</dt>
+            <dd>{observer.filteredRecords.length}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Results</p>
+        <h2>Matching records</h2>
+        <ul className="citizenPlainList">
+          {observer.filteredRecords.map((record) => (
+            <li key={record.id}>
+              <Link href={record.route}>{record.label}</Link>
+              <span>{record.visibility}</span>
+              <span>{record.summary}</span>
+            </li>
+          ))}
+        </ul>
+      </article>
+
+      {renderPublicRecordDetail(model)}
+    </section>
   );
 }
 
@@ -230,7 +280,7 @@ function renderCommandNotifications(model: CitizenCanopyModel) {
   }
 
   return (
-    <article className="citizenPanel citizenWorkflowPreview">
+    <article className="citizenPanel citizenWorkflowPreview" role="status" aria-live="polite">
       <p className="eyebrow">Notifications</p>
       <h2>Review notifications</h2>
       <ul className="citizenPlainList">
@@ -424,8 +474,35 @@ function renderReleaseReadiness(model: CitizenCanopyModel) {
             <dd>{readiness.liveDeploymentStatus}</dd>
           </div>
           <div>
-            <dt>Next actions</dt>
-            <dd>{readiness.nextActions.length}</dd>
+            <dt>Release gate</dt>
+            <dd>{readiness.releaseGateStatus}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article className="citizenPanel citizenWorkflowPreview">
+        <p className="eyebrow">Production wiring</p>
+        <h2>Production evidence</h2>
+        <dl className="citizenReportPreviewList">
+          <div>
+            <dt>Provider connections</dt>
+            <dd>{readiness.providerConnections}</dd>
+          </div>
+          <div>
+            <dt>Migration evidence</dt>
+            <dd>{readiness.migrationEvidence}</dd>
+          </div>
+          <div>
+            <dt>Environment evidence</dt>
+            <dd>{readiness.environmentEvidence}</dd>
+          </div>
+          <div>
+            <dt>Observability evidence</dt>
+            <dd>{readiness.observabilityEvidence}</dd>
+          </div>
+          <div>
+            <dt>Smoke evidence</dt>
+            <dd>{readiness.smokeEvidence}</dd>
           </div>
         </dl>
       </article>
@@ -442,6 +519,19 @@ function renderReleaseReadiness(model: CitizenCanopyModel) {
         <ul className="citizenPlainList">
           {readiness.nextActions.map((action) => (
             <li key={action}>{action}</li>
+          ))}
+        </ul>
+      </article>
+
+      <article className="citizenPanel citizenWorkflowPreview">
+        <p className="eyebrow">Browser workflows</p>
+        <h2>Browser workflows</h2>
+        <ul className="citizenPlainList">
+          {model.browserWorkflows.map((workflow) => (
+            <li key={workflow.id}>
+              <Link href={workflow.route}>{workflow.label}</Link>
+              <span>{workflow.expectedEvidence}</span>
+            </li>
           ))}
         </ul>
       </article>
@@ -593,28 +683,7 @@ function renderPublicObserver(model: CitizenCanopyModel) {
         </ul>
       </article>
 
-      {observer.selectedRecord === undefined ? null : (
-        <article className="citizenPanel citizenWorkflowPreview">
-          <p className="eyebrow">Selected record</p>
-          <h2>{observer.selectedRecord.label}</h2>
-          <dl className="citizenReportPreviewList">
-            <div>
-              <dt>Visibility</dt>
-              <dd>{observer.selectedRecord.visibility}</dd>
-            </div>
-            <div>
-              <dt>Summary</dt>
-              <dd>{observer.selectedRecord.summary}</dd>
-            </div>
-            {observer.selectedRecord.redactionExplanation === undefined ? null : (
-              <div>
-                <dt>Redaction</dt>
-                <dd>{observer.selectedRecord.redactionExplanation}</dd>
-              </div>
-            )}
-          </dl>
-        </article>
-      )}
+      {renderPublicRecordDetail(model)}
 
       <article className="citizenPanel">
         <p className="eyebrow">Redaction explanations</p>
@@ -636,6 +705,37 @@ function renderPublicObserver(model: CitizenCanopyModel) {
         </ul>
       </article>
     </section>
+  );
+}
+
+function renderPublicRecordDetail(model: CitizenCanopyModel) {
+  const selectedRecord = model.publicObserver.selectedRecord;
+
+  if (selectedRecord === undefined) {
+    return null;
+  }
+
+  return (
+    <article className="citizenPanel citizenWorkflowPreview">
+      <p className="eyebrow">Selected record</p>
+      <h2>{selectedRecord.label}</h2>
+      <dl className="citizenReportPreviewList">
+        <div>
+          <dt>Visibility</dt>
+          <dd>{selectedRecord.visibility}</dd>
+        </div>
+        <div>
+          <dt>Summary</dt>
+          <dd>{selectedRecord.summary}</dd>
+        </div>
+        {selectedRecord.redactionExplanation === undefined ? null : (
+          <div>
+            <dt>Redaction</dt>
+            <dd>{selectedRecord.redactionExplanation}</dd>
+          </div>
+        )}
+      </dl>
+    </article>
   );
 }
 

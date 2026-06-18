@@ -26,6 +26,8 @@ export async function CanopyPage({
           activeContextId: contextIdFromParams(params.context),
           activeRole: roleFromParams(params.role),
           audienceMode: audienceModeFromParams(params.mode),
+          publicSearchQuery: singleParam(params.q),
+          publicVisibilityFilter: singleParam(params.visibility),
           selectedNeedId: singleParam(params.need),
           selectedOfferId: singleParam(params.offer),
           selectedPublicRecordId: singleParam(params.record),
@@ -33,6 +35,13 @@ export async function CanopyPage({
           commandAction: singleParam(params.action),
           reviewAction: singleParam(params.reviewAction),
           reportDescription: singleParam(params.description),
+          productionEvidence: {
+            providers: singleParam(params.providers),
+            migrations: singleParam(params.migrations),
+            environment: singleParam(params.environment),
+            observability: singleParam(params.observability),
+            smoke: singleParam(params.smoke)
+          },
           workflowStep: singleParam(params.step),
           routePath
         })}

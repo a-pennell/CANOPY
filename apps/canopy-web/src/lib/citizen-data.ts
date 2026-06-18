@@ -28,6 +28,7 @@ export interface CitizenCanopyModel {
   readonly releaseReadinessAccess: ReleaseReadinessAccess;
   readonly publicObserver: PublicObserverBoundary;
   readonly commandCenter: CitizenCommandCenter;
+  readonly browserWorkflows: readonly CitizenBrowserWorkflow[];
   readonly mobileTaskRoutes: readonly MobileTaskRoute[];
 }
 
@@ -215,12 +216,26 @@ export interface CitizenRecordLink {
 export interface ReleaseReadinessSummary {
   readonly localAcceptanceStatus: "passed" | "attention" | "blocked";
   readonly liveDeploymentStatus: "passed" | "attention" | "blocked";
+  readonly releaseGateStatus: "ready" | "blocked";
+  readonly providerConnections: string;
+  readonly migrationEvidence: string;
+  readonly environmentEvidence: string;
+  readonly observabilityEvidence: string;
+  readonly smokeEvidence: string;
   readonly providerBlockers: readonly string[];
   readonly migrationBlockers: readonly string[];
   readonly environmentBlockers: readonly string[];
   readonly observabilityBlockers: readonly string[];
   readonly verificationBlockers: readonly string[];
   readonly nextActions: readonly string[];
+}
+
+export interface ProductionEvidenceInput {
+  readonly providers?: string | undefined;
+  readonly migrations?: string | undefined;
+  readonly environment?: string | undefined;
+  readonly observability?: string | undefined;
+  readonly smoke?: string | undefined;
 }
 
 export interface ReleaseReadinessAccess {
@@ -234,10 +249,17 @@ export interface PublicObserverBoundary {
   readonly enabled: boolean;
   readonly visibleRecords: readonly string[];
   readonly publicRecords: readonly PublicObserverRecord[];
+  readonly filteredRecords: readonly PublicObserverRecord[];
   readonly selectedRecord: PublicObserverRecord | undefined;
+  readonly searchQuery: string;
+  readonly visibilityFilter: PublicObserverVisibilityFilter;
   readonly redactionExplanations: readonly string[];
   readonly unavailableCommands: readonly string[];
 }
+
+export type PublicObserverVisibilityFilter =
+  | "all"
+  | PublicObserverRecord["visibility"];
 
 export interface PublicObserverRecord {
   readonly id: string;
@@ -252,6 +274,13 @@ export interface MobileTaskRoute {
   readonly id: string;
   readonly label: string;
   readonly route: string;
+}
+
+export interface CitizenBrowserWorkflow {
+  readonly id: string;
+  readonly label: string;
+  readonly route: string;
+  readonly expectedEvidence: string;
 }
 
 export interface CitizenTaskSurface {
@@ -368,6 +397,8 @@ export function buildCitizenCanopyModel({
   activeContextId,
   activeRole,
   audienceMode = "participant",
+  publicSearchQuery,
+  publicVisibilityFilter,
   selectedNeedId,
   selectedOfferId,
   selectedPublicRecordId,
@@ -376,12 +407,15 @@ export function buildCitizenCanopyModel({
   commandAction,
   reviewAction,
   reportDescription,
+  productionEvidence,
   workflowStep,
   routePath = "/citizen"
 }: {
   readonly activeContextId?: string | undefined;
   readonly activeRole?: string | undefined;
   readonly audienceMode?: CitizenAudienceMode | undefined;
+  readonly publicSearchQuery?: string | undefined;
+  readonly publicVisibilityFilter?: string | undefined;
   readonly selectedNeedId?: string | undefined;
   readonly selectedOfferId?: string | undefined;
   readonly selectedPublicRecordId?: string | undefined;
@@ -390,6 +424,7 @@ export function buildCitizenCanopyModel({
   readonly commandAction?: string | undefined;
   readonly reviewAction?: string | undefined;
   readonly reportDescription?: string | undefined;
+  readonly productionEvidence?: ProductionEvidenceInput | undefined;
   readonly workflowStep?: string | undefined;
   readonly routePath?: string | undefined;
 } = {}): CitizenCanopyModel {
@@ -452,10 +487,16 @@ export function buildCitizenCanopyModel({
     decisionSummary,
     challengeAppealPreview,
     federationConflictReview,
-    releaseReadiness,
+    releaseReadiness: buildReleaseReadinessSummary(productionEvidence),
     releaseReadinessAccess: buildReleaseReadinessAccess(activeContext, audienceMode),
-    publicObserver: buildPublicObserverBoundary(audienceMode, selectedPublicRecordId),
+    publicObserver: buildPublicObserverBoundary({
+      audienceMode,
+      selectedRecordId: selectedPublicRecordId,
+      searchQuery: publicSearchQuery,
+      visibilityFilter: publicVisibilityFilter
+    }),
     commandCenter,
+    browserWorkflows,
     mobileTaskRoutes
   };
 }
@@ -742,25 +783,59 @@ function buildConcernReportDraft(
   };
 }
 
-function buildPublicObserverBoundary(
-  audienceMode: CitizenAudienceMode,
-  selectedRecordId: string | undefined
-): PublicObserverBoundary {
+function buildPublicObserverBoundary({
+  audienceMode,
+  selectedRecordId,
+  searchQuery,
+  visibilityFilter
+}: {
+  readonly audienceMode: CitizenAudienceMode;
+  readonly selectedRecordId: string | undefined;
+  readonly searchQuery?: string | undefined;
+  readonly visibilityFilter?: string | undefined;
+}): PublicObserverBoundary {
+  const normalizedQuery = searchQuery?.trim().toLowerCase() ?? "";
+  const normalizedVisibility = normalizePublicVisibilityFilter(visibilityFilter);
+  const filteredRecords = publicObserverRecords.filter((record) => {
+    const matchesQuery =
+      normalizedQuery.length === 0 ||
+      record.label.toLowerCase().includes(normalizedQuery) ||
+      record.summary.toLowerCase().includes(normalizedQuery);
+    const matchesVisibility =
+      normalizedVisibility === "all" || record.visibility === normalizedVisibility;
+
+    return matchesQuery && matchesVisibility;
+  });
   const selectedRecord =
+    filteredRecords.find((record) => record.id === selectedRecordId) ??
     publicObserverRecords.find((record) => record.id === selectedRecordId) ??
+    filteredRecords[0] ??
     publicObserverRecords[0];
 
   return {
     enabled: audienceMode === "public",
     visibleRecords: ["Public issues", "Published decisions", "Shared commitments", "Recorded outcomes"],
     publicRecords: publicObserverRecords,
+    filteredRecords,
     selectedRecord,
+    searchQuery: searchQuery?.trim() ?? "",
+    visibilityFilter: normalizedVisibility,
     redactionExplanations: [
       "Student contact details are hidden because they are guardian-restricted",
       "Pickup notes stay unavailable until the school guardian review clears a public summary"
     ],
     unavailableCommands: ["Submit match", "Resolve federation conflict", "Review release readiness"]
   };
+}
+
+function normalizePublicVisibilityFilter(
+  visibilityFilter: string | undefined
+): PublicObserverVisibilityFilter {
+  return visibilityFilter === "public" ||
+    visibilityFilter === "public-summary" ||
+    visibilityFilter === "redacted"
+    ? visibilityFilter
+    : "all";
 }
 
 function buildReleaseReadinessAccess(
@@ -774,6 +849,64 @@ function buildReleaseReadinessAccess(
     reason: allowed
       ? "Operator role can review local acceptance and live blockers."
       : "Release readiness is limited to operator roles."
+  };
+}
+
+function buildReleaseReadinessSummary(
+  productionEvidence: ProductionEvidenceInput | undefined
+): ReleaseReadinessSummary {
+  const providerConnections = productionEvidence?.providers ?? releaseReadiness.providerConnections;
+  const migrationEvidence = productionEvidence?.migrations ?? releaseReadiness.migrationEvidence;
+  const environmentEvidence = productionEvidence?.environment ?? releaseReadiness.environmentEvidence;
+  const observabilityEvidence =
+    productionEvidence?.observability ?? releaseReadiness.observabilityEvidence;
+  const smokeEvidence = productionEvidence?.smoke ?? releaseReadiness.smokeEvidence;
+  const providerBlockers =
+    providerConnections === "connected"
+      ? []
+      : ["Production provider credentials are not connected"];
+  const migrationBlockers =
+    migrationEvidence === "verified" ? [] : ["Live database migration evidence is missing"];
+  const environmentBlockers =
+    environmentEvidence === "verified"
+      ? []
+      : ["Production environment variables are not verified"];
+  const observabilityBlockers =
+    observabilityEvidence === "connected"
+      ? []
+      : ["Live log drain and alert evidence is missing"];
+  const verificationBlockers =
+    smokeEvidence === "passed" ? [] : ["Post-deploy smoke evidence is missing"];
+  const allBlockers = [
+    ...providerBlockers,
+    ...migrationBlockers,
+    ...environmentBlockers,
+    ...observabilityBlockers,
+    ...verificationBlockers
+  ];
+
+  return {
+    localAcceptanceStatus: "passed",
+    liveDeploymentStatus: allBlockers.length === 0 ? "passed" : "blocked",
+    releaseGateStatus: allBlockers.length === 0 ? "ready" : "blocked",
+    providerConnections,
+    migrationEvidence,
+    environmentEvidence,
+    observabilityEvidence,
+    smokeEvidence,
+    providerBlockers,
+    migrationBlockers,
+    environmentBlockers,
+    observabilityBlockers,
+    verificationBlockers,
+    nextActions:
+      allBlockers.length === 0
+        ? []
+        : [
+            "Connect production providers",
+            "Run live migration proof",
+            "Capture post-deploy smoke evidence"
+          ]
   };
 }
 
@@ -1358,6 +1491,33 @@ const mobileTaskRoutes: readonly MobileTaskRoute[] = [
   }
 ];
 
+const browserWorkflows: readonly CitizenBrowserWorkflow[] = [
+  {
+    id: "browser.public-record-search",
+    label: "Public record search",
+    route: "/citizen/search?q=cooling&visibility=redacted&record=public.outcome.cooling-center-meals",
+    expectedEvidence: "Cooling center meal support outcome"
+  },
+  {
+    id: "browser.review-permission-block",
+    label: "Review permission block",
+    route: "/citizen/review-queue?command=command.report.riverbend-food-concern&reviewAction=reject-command",
+    expectedEvidence: "Review blocked"
+  },
+  {
+    id: "browser.reviewer-approval",
+    label: "Reviewer approval",
+    route: "/citizen/review-queue?role=neighbor%20reviewer&command=command.report.riverbend-food-concern&reviewAction=approve-command",
+    expectedEvidence: "neighbor reviewer at Riverbend Neighborhood"
+  },
+  {
+    id: "browser.release-readiness-ready",
+    label: "Release readiness ready",
+    route: "/citizen/release-readiness?context=operator.release&providers=connected&migrations=verified&environment=verified&observability=connected&smoke=passed",
+    expectedEvidence: "ready"
+  }
+];
+
 const concernSuggestionsByContext: Record<string, readonly ConcernReportSuggestion[]> = {
   "neighborhood.riverbend": [
     {
@@ -1615,6 +1775,12 @@ const citizenCommandRecords: readonly CitizenCommandRecord[] = [
 const releaseReadiness: ReleaseReadinessSummary = {
   localAcceptanceStatus: "passed",
   liveDeploymentStatus: "blocked",
+  releaseGateStatus: "blocked",
+  providerConnections: "missing",
+  migrationEvidence: "missing",
+  environmentEvidence: "missing",
+  observabilityEvidence: "missing",
+  smokeEvidence: "missing",
   providerBlockers: ["Production provider credentials are not connected"],
   migrationBlockers: ["Live database migration evidence is missing"],
   environmentBlockers: ["Production environment variables are not verified"],
