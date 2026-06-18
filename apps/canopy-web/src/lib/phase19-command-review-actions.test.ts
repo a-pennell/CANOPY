@@ -64,6 +64,7 @@ describe("Phase 19 command review actions", () => {
     const element = await CanopyPage({
       routeSegments: ["citizen", "review-queue"],
       searchParams: Promise.resolve({
+        role: "neighbor reviewer",
         command: "command.report.riverbend-food-concern",
         reviewAction: "request-changes"
       })

@@ -335,8 +335,12 @@ export interface CitizenCommandCenter {
   readonly savedDrafts: readonly CitizenCommandRecord[];
   readonly submittedCommands: readonly CitizenCommandRecord[];
   readonly reviewQueue: readonly CitizenCommandRecord[];
+  readonly myReviewQueue: readonly CitizenCommandRecord[];
+  readonly otherReviewQueue: readonly CitizenCommandRecord[];
   readonly selectedCommand: CitizenCommandRecord | undefined;
+  readonly selectedReviewAccess: CitizenCommandReviewAccess | undefined;
   readonly actionResult: CitizenCommandActionResult | undefined;
+  readonly notifications: readonly CitizenCommandNotification[];
   readonly queueSummary: string;
 }
 
@@ -344,6 +348,20 @@ export interface CitizenCommandActionResult {
   readonly label: string;
   readonly summary: string;
   readonly commandId: string;
+}
+
+export interface CitizenCommandNotification {
+  readonly id: string;
+  readonly level: "success" | "permission" | "attention";
+  readonly label: string;
+  readonly summary: string;
+  readonly commandId: string;
+}
+
+export interface CitizenCommandReviewAccess {
+  readonly allowed: boolean;
+  readonly reason: string;
+  readonly reviewer: string;
 }
 
 export function buildCitizenCanopyModel({
@@ -405,7 +423,9 @@ export function buildCitizenCanopyModel({
   const commandCenter = buildCommandCenter(
     selectedCommandId ?? commandState.selectedCommandId,
     commandState.records,
-    commandState.actionResult
+    activeContext,
+    commandState.actionResult,
+    commandState.notifications
   );
 
   return {
@@ -812,6 +832,7 @@ function buildCommandRecords({
   readonly records: readonly CitizenCommandRecord[];
   readonly selectedCommandId?: string | undefined;
   readonly actionResult?: CitizenCommandActionResult | undefined;
+  readonly notifications?: readonly CitizenCommandNotification[] | undefined;
 } {
   const provider = createInMemoryCitizenCommandProvider({
     initialCommands: commandRecords ?? citizenCommandRecords
@@ -869,22 +890,56 @@ function buildCommandRecords({
       throw new Error("Cannot approve a citizen command without a selected command.");
     }
 
+    const reviewAccess = buildReviewAccess(activeContext, selectedCommand);
+
+    if (!reviewAccess.allowed) {
+      return {
+        records: provider.listCommands(),
+        selectedCommandId: selectedCommand.id,
+        actionResult: {
+          label: "Review blocked",
+          summary: reviewAccess.reason,
+          commandId: selectedCommand.id
+        },
+        notifications: [
+          {
+            id: `notification.${selectedCommand.id}.permission`,
+            level: "permission",
+            label: "Permission needed",
+            summary: reviewAccess.reason,
+            commandId: selectedCommand.id
+          }
+        ]
+      };
+    }
+
     const result = executeCitizenCommandReview({
       provider,
       commandId: selectedCommand.id,
       action: auditAction,
-      reviewer: selectedCommand.reviewOwner,
+      reviewer: reviewAccess.reviewer,
       now: "2026-06-17T17:00:00.000Z"
     });
+
+    const label = reviewActionLabel(auditAction);
 
     return {
       records: provider.listCommands(),
       selectedCommandId: result.command.id,
       actionResult: {
-        label: reviewActionLabel(auditAction),
+        label,
         summary: result.audit.projectionEffect,
         commandId: result.command.id
-      }
+      },
+      notifications: [
+        {
+          id: `notification.${result.command.id}.${auditAction}`,
+          level: "success",
+          label,
+          summary: result.audit.projectionEffect,
+          commandId: result.command.id
+        }
+      ]
     };
   }
 
@@ -922,11 +977,20 @@ function reviewActionLabel(action: CitizenCommandAuditAction): string {
 function buildCommandCenter(
   selectedCommandId: string | undefined,
   records: readonly CitizenCommandRecord[],
-  actionResult: CitizenCommandActionResult | undefined
+  activeContext: CitizenContext,
+  actionResult: CitizenCommandActionResult | undefined,
+  notifications: readonly CitizenCommandNotification[] | undefined
 ): CitizenCommandCenter {
   const savedDrafts = records.filter((command) => command.status === "draft");
   const submittedCommands = records.filter((command) => command.status === "submitted");
   const reviewQueue = records.filter((command) => command.status === "needs-review");
+  const reviewableCommands = records.filter(isReviewableCommand);
+  const myReviewQueue = reviewableCommands.filter(
+    (command) => buildReviewAccess(activeContext, command).allowed
+  );
+  const otherReviewQueue = reviewableCommands.filter(
+    (command) => !buildReviewAccess(activeContext, command).allowed
+  );
   const selectedCommand =
     records.find((command) => command.id === selectedCommandId) ??
     reviewQueue[0] ??
@@ -936,10 +1000,62 @@ function buildCommandCenter(
     savedDrafts,
     submittedCommands,
     reviewQueue,
+    myReviewQueue,
+    otherReviewQueue,
     selectedCommand,
+    selectedReviewAccess:
+      selectedCommand === undefined ? undefined : buildReviewAccess(activeContext, selectedCommand),
     actionResult,
+    notifications: notifications ?? [],
     queueSummary: `${savedDrafts.length} draft, ${submittedCommands.length} submitted, ${reviewQueue.length} needing review`
   };
+}
+
+function isReviewableCommand(command: CitizenCommandRecord): boolean {
+  return (
+    command.status === "draft" ||
+    command.status === "submitted" ||
+    command.status === "needs-review" ||
+    command.status === "changes-requested"
+  );
+}
+
+function buildReviewAccess(
+  activeContext: CitizenContext,
+  command: CitizenCommandRecord
+): CitizenCommandReviewAccess {
+  const reviewer = `${activeContext.activeRole} at ${activeContext.label}`;
+
+  if (command.contextLabel === activeContext.label && isReviewRole(activeContext.activeRole)) {
+    return {
+      allowed: true,
+      reason: `${reviewer} can review this command.`,
+      reviewer
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: `${reviewer} cannot review ${command.label}. ${reviewRoleInstruction(
+      activeContext,
+      command
+    )}`,
+    reviewer
+  };
+}
+
+function isReviewRole(role: string): boolean {
+  return role.includes("reviewer") || role.includes("steward") || role.includes("guardian");
+}
+
+function reviewRoleInstruction(activeContext: CitizenContext, command: CitizenCommandRecord): string {
+  const localReviewerRole = activeContext.availableRoles.find((role) => role.includes("reviewer"));
+
+  if (command.contextLabel === activeContext.label && localReviewerRole !== undefined) {
+    return `Switch to ${localReviewerRole}.`;
+  }
+
+  return `Open the ${command.reviewOwner} queue.`;
 }
 
 function resolveNeed(selectedNeedId: string | undefined): NeedOfferRecord {

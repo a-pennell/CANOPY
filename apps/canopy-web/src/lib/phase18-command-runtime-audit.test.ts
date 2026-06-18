@@ -49,6 +49,7 @@ describe("Phase 18 command runtime audit", () => {
     const element = await CanopyPage({
       routeSegments: ["citizen", "review-queue"],
       searchParams: Promise.resolve({
+        role: "neighbor reviewer",
         command: "command.report.riverbend-food-concern",
         reviewAction: "approve-command"
       })

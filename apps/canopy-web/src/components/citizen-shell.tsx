@@ -145,6 +145,21 @@ function renderReviewQueue(model: CitizenCanopyModel) {
         <p>{model.commandCenter.queueSummary}</p>
       </article>
 
+      {renderCommandNotifications(model)}
+      {renderCommandActionResult(model)}
+
+      <article className="citizenPanel">
+        <p className="eyebrow">My queue</p>
+        <h2>My review queue</h2>
+        {renderCommandList(model.commandCenter.myReviewQueue)}
+      </article>
+
+      <article className="citizenPanel">
+        <p className="eyebrow">Other reviewers</p>
+        <h2>Needs another reviewer</h2>
+        {renderCommandList(model.commandCenter.otherReviewQueue)}
+      </article>
+
       <article className="citizenPanel">
         <p className="eyebrow">Saved drafts</p>
         <h2>Saved drafts</h2>
@@ -204,6 +219,29 @@ function renderReviewQueue(model: CitizenCanopyModel) {
         </article>
       )}
     </section>
+  );
+}
+
+function renderCommandNotifications(model: CitizenCanopyModel) {
+  const notifications = model.commandCenter.notifications;
+
+  if (notifications.length === 0) {
+    return null;
+  }
+
+  return (
+    <article className="citizenPanel citizenWorkflowPreview">
+      <p className="eyebrow">Notifications</p>
+      <h2>Review notifications</h2>
+      <ul className="citizenPlainList">
+        {notifications.map((notification) => (
+          <li key={notification.id}>
+            <strong>{notification.label}</strong>
+            <span>{notification.summary}</span>
+          </li>
+        ))}
+      </ul>
+    </article>
   );
 }
 
